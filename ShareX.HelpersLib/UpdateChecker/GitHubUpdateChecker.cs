@@ -145,7 +145,9 @@ namespace ShareX.HelpersLib
         {
             if (release != null && !string.IsNullOrEmpty(release.tag_name) && release.tag_name.Length > 1 && release.tag_name[0] == 'v')
             {
-                LatestVersion = new Version(release.tag_name.Substring(1));
+                var tagName = release.tag_name;
+                if (tagName.EndsWith("-hdr")) tagName = tagName.Substring(0, tagName.Length - 4);
+                LatestVersion = new Version(tagName.Substring(1));
 
                 if (release.assets != null && release.assets.Length > 0)
                 {

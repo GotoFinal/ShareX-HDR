@@ -33,24 +33,12 @@ namespace ShareX
 
         public override GitHubUpdateChecker CreateUpdateChecker()
         {
-            if (UpdateChannel == UpdateChannel.Dev)
-            {
-                return new GitHubUpdateChecker("ShareX", "DevBuilds")
-                {
-                    IsDev = true,
-                    IsPortable = Program.Portable,
-                    IgnoreRevision = true
-                };
-            }
-            else
-            {
-                return new GitHubUpdateChecker("ShareX", "ShareX")
+                return new GitHubUpdateChecker("GotoFinal", "ShareX-HDR")
                 {
                     IsPortable = Program.Portable,
-                    IncludePreRelease = UpdateChannel == UpdateChannel.PreRelease,
+                    IncludePreRelease = UpdateChannel != UpdateChannel.Release,
                     IgnoreRevision = true
                 };
-            }
         }
     }
 }
