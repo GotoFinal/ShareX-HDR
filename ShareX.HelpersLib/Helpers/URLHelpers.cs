@@ -30,6 +30,7 @@ using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Security;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -55,6 +56,7 @@ namespace ShareX.HelpersLib
                 {
                     try
                     {
+
                         using (Process process = new Process())
                         {
                             ProcessStartInfo psi = new ProcessStartInfo();
@@ -67,6 +69,7 @@ namespace ShareX.HelpersLib
                             else
                             {
                                 psi.FileName = url;
+                                psi.UseShellExecute = true;
                             }
 
                             process.StartInfo = psi;

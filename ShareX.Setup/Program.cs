@@ -221,7 +221,7 @@ namespace ShareX.Setup
             {
                 Console.WriteLine("Invalid parent directory: " + ParentDir);
 
-                ParentDir = FileHelpers.GetAbsolutePath(@"..\..\..\");
+                ParentDir = FileHelpers.GetAbsolutePath(@"..\..\..\..\");
 
                 if (!File.Exists(SolutionPath))
                 {
@@ -251,7 +251,7 @@ namespace ShareX.Setup
             }
             else
             {
-                Configuration = "Release";
+                Configuration = "Release\\win-x64";
             }
 
             Console.WriteLine("Configuration: " + Configuration);
@@ -363,7 +363,7 @@ namespace ShareX.Setup
             Directory.CreateDirectory(destination);
 
             FileHelpers.CopyFiles(Path.Combine(source, "ShareX.exe"), destination);
-            FileHelpers.CopyFiles(Path.Combine(source, "ShareX.exe.config"), destination);
+            // FileHelpers.CopyFiles(Path.Combine(source, "ShareX.exe.config"), destination);
             FileHelpers.CopyFiles(source, destination, "*.dll");
 
             if (job == SetupJobs.CreateDebug || job == SetupJobs.CreateMicrosoftStoreDebugFolder)
@@ -383,7 +383,8 @@ namespace ShareX.Setup
                 FileHelpers.CopyFiles(RecorderDevicesSetupPath, destination);
 
                 FileHelpers.CopyFiles(Path.Combine(source, "ShareX_File_Icon.ico"), destination);
-                FileHelpers.CopyFiles(Path.Combine(source, "ShareX_NativeMessagingHost.exe"), destination);
+                // TODO: why is that one not copied correctly during build??
+                FileHelpers.CopyFiles(Path.Combine(source, "ShareX_NativeMessagingHost.exe").Replace("\\ShareX\\bin", "\\ShareX.NativeMessagingHost\\bin"), destination);
                 FileHelpers.CopyFiles(Path.Combine(source, "host-manifest-chrome.json"), destination);
                 FileHelpers.CopyFiles(Path.Combine(source, "host-manifest-firefox.json"), destination);
             }

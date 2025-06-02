@@ -1,11 +1,13 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net48</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.20348.0</TargetFramework>
     <OutputType>Exe</OutputType>
+    <NoWarn>WFO1000</NoWarn>
+    <AllowPreviewSdk>true</AllowPreviewSdk>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
   </PropertyGroup>
-  <ItemGroup>
-    <Reference Include="System.IO.Compression" />
-  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\ShareX.HelpersLib\ShareX.HelpersLib.csproj" />
   </ItemGroup>

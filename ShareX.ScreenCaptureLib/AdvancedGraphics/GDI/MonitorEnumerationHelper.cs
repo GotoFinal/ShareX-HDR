@@ -19,6 +19,7 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics.GDI
         }
 
         private const int CCHDEVICENAME = 32;
+
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
         internal struct MonitorInfoEx
         {
@@ -26,6 +27,7 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics.GDI
             public RECT Monitor;
             public RECT WorkArea;
             public uint Flags;
+
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = CCHDEVICENAME)]
             public string DeviceName;
         }
@@ -36,31 +38,47 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics.GDI
         [DllImport("user32.dll", CharSet = CharSet.Auto)]
         public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MonitorInfoEx lpmi);
 
-        public static IEnumerable<MonitorInfo> GetMonitors()
+        public static List<MonitorInfo> GetMonitors()
         {
             var result = new List<MonitorInfo>();
 
             EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero,
-                delegate (IntPtr hMonitor, IntPtr hdcMonitor, ref RECT lprcMonitor, IntPtr dwData)
+                delegate(IntPtr hMonitor, IntPtr hdcMonitor, ref RECT lprcMonitor, IntPtr dwData)
                 {
                     MonitorInfoEx mi = new MonitorInfoEx();
                     mi.Size = Marshal.SizeOf(mi);
                     bool success = GetMonitorInfo(hMonitor, ref mi);
                     if (success)
                     {
+
                         var info = new MonitorInfo
                         {
-                            MonitorArea = new Rectangle(mi.Monitor.left, mi.Monitor.top, mi.Monitor.right - mi.Monitor.left, mi.Monitor.bottom - mi.Monitor.top),
-                            WorkArea = new Rectangle(mi.WorkArea.left, mi.WorkArea.top, mi.WorkArea.right - mi.WorkArea.left, mi.WorkArea.bottom - mi.WorkArea.top),
+                            MonitorArea =
+                                new Rectangle(mi.Monitor.left, mi.Monitor.top, mi.Monitor.right - mi.Monitor.left, mi.Monitor.bottom - mi.Monitor.top),
+                            WorkArea = new Rectangle(mi.WorkArea.left, mi.WorkArea.top, mi.WorkArea.right - mi.WorkArea.left,
+                                mi.WorkArea.bottom - mi.WorkArea.top),
                             IsPrimary = mi.Flags > 0,
                             Hmon = hMonitor,
-                            DeviceName = mi.DeviceName,
+                            DeviceName = mi.DeviceName
                         };
                         result.Add(info);
                     }
+
                     return true;
                 }, IntPtr.Zero);
             return result;
+        }
+
+        public static int GetMonitorsCount()
+        {
+            int i = 0;
+            EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero,
+                delegate
+                {
+                    i++;
+                    return true;
+                }, IntPtr.Zero);
+            return i;
         }
     }
 }

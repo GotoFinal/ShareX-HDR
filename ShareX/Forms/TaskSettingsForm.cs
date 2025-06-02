@@ -274,7 +274,7 @@ namespace ShareX
 
             cbShowCursor.Checked = TaskSettings.CaptureSettings.ShowCursor;
             cbUseWinRTCapture.Checked = TaskSettings.CaptureSettings.UseWinRTGraphicsCaptureAPI;
-            cbUseWinRTCapture.Enabled = ModernCaptureSignletonManager.Instance.IsAvailable;
+            cbUseWinRTCapture.Enabled = true;
             nudScreenshotDelay.SetValue(TaskSettings.CaptureSettings.ScreenshotDelay);
             cbCaptureTransparent.Checked = TaskSettings.CaptureSettings.CaptureTransparent;
             cbCaptureShadow.Enabled = TaskSettings.CaptureSettings.CaptureTransparent;

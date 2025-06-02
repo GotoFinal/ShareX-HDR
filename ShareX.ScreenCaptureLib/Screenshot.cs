@@ -31,6 +31,8 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Threading;
+using Veldrid;
 
 namespace ShareX.ScreenCaptureLib
 {
@@ -127,8 +129,12 @@ namespace ShareX.ScreenCaptureLib
                 return null;
             }
 
-            if (UseWinRTCaptureAPI && ModernCaptureSignletonManager.Instance.IsAvailable)
+            // TODO: some setting?
+            if (UseWinRTCaptureAPI)
             {
+                // TODO: only in debug?
+                SharpGen.Runtime.Configuration.EnableObjectTracking = true;
+                SharpGen.Runtime.Configuration.EnableReleaseOnFinalizer = true;
                 return CaptureRectangleDirect3D11(handle, rect, captureCursor);
             }
             else
@@ -162,6 +168,8 @@ namespace ShareX.ScreenCaptureLib
             }
         }
 
+        private static ModernCapture _captureInstance;
+        private static Lock _captureInstanceLock = new Lock();
         private Bitmap CaptureRectangleDirect3D11(IntPtr handle, Rectangle rect, bool captureCursor = false)
         {
             var captureMonRegions = new List<ModernCaptureMonitorDescription>();
@@ -182,7 +190,6 @@ namespace ShareX.ScreenCaptureLib
                     captureMonRegions.Add(new ModernCaptureMonitorDescription
                     {
                         DestGdiRect = screenBoundCopy,
-                        HdrMetadata = HdrMetadataUtility.GetHdrMetadataForMonitor(monitor.DeviceName),
                         MonitorInfo = monitor,
                         CaptureCursor = captureCursor,
                     });
@@ -197,9 +204,12 @@ namespace ShareX.ScreenCaptureLib
             // 3.2 Capture and wait for content
             // 3.3 Shader and draw passes
             // 3.4 Datastream pass, copy
-            var d3dCapture = ModernCaptureSignletonManager.Instance.Take();
-            bmp = d3dCapture.CaptureAndProcess(catpureItem);
-            ModernCaptureSignletonManager.Instance.Release();
+            lock (_captureInstanceLock)
+            {
+                // TODO: HdrSettings should be stored somehwere?
+                if (_captureInstance == null) _captureInstance = new ModernCapture(HdrSettings.Instance);
+                bmp = _captureInstance.CaptureAndProcess(catpureItem);
+            }
 
             return bmp;
         }

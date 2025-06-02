@@ -1,15 +1,13 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net48</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.20348.0</TargetFramework>
     <OutputType>WinExe</OutputType>
     <PlatformTarget>x86</PlatformTarget>
     <AssemblyName>ShareX_Launcher</AssemblyName>
     <ApplicationIcon>ShareX_Icon.ico</ApplicationIcon>
     <UseWindowsForms>true</UseWindowsForms>
+    <NoWarn>WFO1000</NoWarn>
   </PropertyGroup>
-  <ItemGroup>
-    <Reference Include="System.Management" />
-  </ItemGroup>
   <ItemGroup>
     <None Update="steam_appid.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

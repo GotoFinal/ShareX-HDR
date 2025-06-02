@@ -1,16 +1,28 @@
-#include "ShaderInputStructure.hlsl"
+#pragma warning ( disable : 3571 )
 
-VS_OUTPUT VxQuadEntry(VS_INPUT v)
+cbuffer vertexBuffer : register (b0)
 {
-    VS_OUTPUT vout;
+    float4 Luminance;
+};
 
-    vout.TexCoord = v.TexCoord;
-    vout.Position = v.Position;
-
-    return vout;
-}
-
-VS_OUTPUT main(VS_INPUT v)
+struct VS_INPUT
 {
-    return VxQuadEntry(v);
+    float2 pos : POSITION;
+    float2 uv : TEXCOORD0;
+};
+
+struct PS_INPUT
+{
+    float4 pos : SV_POSITION;
+    float2 uv : TEXCOORD0;
+    float4 lum : COLOR1; // constant_buffer->luminance_scale
+};
+
+PS_INPUT main(VS_INPUT input)
+{
+    PS_INPUT output;
+    output.pos = float4(input.pos.xy, 0.f, 1.f);
+    output.uv = input.uv;
+    output.lum = Luminance.xyzw;
+    return output;
 }

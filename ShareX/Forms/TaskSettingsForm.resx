@@ -3079,7 +3079,7 @@
     <value>0</value>
   </data>
   <data name="cbUseWinRTCapture.Text" xml:space="preserve">
-    <value>Use WinRT API (HDR color correction)</value>
+    <value>HDR support</value>
   </data>
   <data name="&gt;&gt;cbUseWinRTCapture.Name" xml:space="preserve">
     <value>cbUseWinRTCapture</value>

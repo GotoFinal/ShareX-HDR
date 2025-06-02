@@ -380,7 +380,7 @@ namespace ShareX
         public bool CaptureAutoHideTaskbar = false;
         public Rectangle CaptureCustomRegion = new Rectangle(0, 0, 0, 0);
         public string CaptureCustomWindow = "";
-        public bool UseWinRTGraphicsCaptureAPI = false;
+        public bool UseWinRTGraphicsCaptureAPI = true;
 
         #endregion Capture / General
 

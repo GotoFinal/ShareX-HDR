@@ -26,7 +26,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Management;
+// using System.Management; TODO
 using System.Threading;
 using System.Windows.Forms;
 
@@ -208,29 +208,29 @@ namespace ShareX.Steam
                 {
                     // Workarounds to not show "In-Game" on Steam.
 
-                    // Workaround 1.
-                    try
-                    {
-                        using (ManagementClass managementClass = new ManagementClass("Win32_Process"))
-                        {
-                            ManagementClass processInfo = new ManagementClass("Win32_ProcessStartup");
-                            processInfo.Properties["CreateFlags"].Value = 0x00000008;
-
-                            ManagementBaseObject inParameters = managementClass.GetMethodParameters("Create");
-                            inParameters["CommandLine"] = $"\"{ContentExecutablePath}\" {arguments}";
-                            inParameters["ProcessStartupInformation"] = processInfo;
-
-                            ManagementBaseObject result = managementClass.InvokeMethod("Create", inParameters, null);
-                            // Returns a value of 0 (zero) if the process was successfully created, and any other number to indicate an error.
-                            if (result != null && (uint)result.Properties["ReturnValue"].Value == 0)
-                            {
-                                return;
-                            }
-                        }
-                    }
-                    catch
-                    {
-                    }
+                    // Workaround 1. TODO
+                    // try
+                    // {
+                    //     using (ManagementClass managementClass = new ManagementClass("Win32_Process"))
+                    //     {
+                    //         ManagementClass processInfo = new ManagementClass("Win32_ProcessStartup");
+                    //         processInfo.Properties["CreateFlags"].Value = 0x00000008;
+                    //
+                    //         ManagementBaseObject inParameters = managementClass.GetMethodParameters("Create");
+                    //         inParameters["CommandLine"] = $"\"{ContentExecutablePath}\" {arguments}";
+                    //         inParameters["ProcessStartupInformation"] = processInfo;
+                    //
+                    //         ManagementBaseObject result = managementClass.InvokeMethod("Create", inParameters, null);
+                    //         // Returns a value of 0 (zero) if the process was successfully created, and any other number to indicate an error.
+                    //         if (result != null && (uint)result.Properties["ReturnValue"].Value == 0)
+                    //         {
+                    //             return;
+                    //         }
+                    //     }
+                    // }
+                    // catch
+                    // {
+                    // }
 
                     // Workaround 2.
                     try

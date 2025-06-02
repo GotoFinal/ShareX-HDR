@@ -1,7 +1,8 @@
 #define MyAppName "ShareX"
 #define MyAppRootDirectory "..\.."
 #define MyAppOutputDirectory MyAppRootDirectory + "\Output"
-#define MyAppReleaseDirectory MyAppRootDirectory + "\" + MyAppName + "\bin\Release"
+#define MyAppReleaseDirectory MyAppRootDirectory + "\" + MyAppName + "\bin\Release\win-x64"
+#define MyAppReleaseDirectoryHost MyAppRootDirectory + "\" + MyAppName + ".NativeMessagingHost\bin\Release\win-x64"
 #define MyAppFileName MyAppName + ".exe"
 #define MyAppFilePath MyAppReleaseDirectory + "\" + MyAppFileName
 #define MyAppVersion GetStringFileInfo(MyAppFilePath, "ProductVersion")
@@ -45,7 +46,6 @@ Name: "DisablePrintScreenKeyForSnippingTool"; Description: "Disable Print Screen
 
 [Files]
 Source: "{#MyAppFilePath}"; DestDir: {app}; Flags: ignoreversion
-Source: "{#MyAppFilePath}.config"; DestDir: {app}; Flags: ignoreversion
 Source: "{#MyAppReleaseDirectory}\*.dll"; DestDir: {app}; Flags: ignoreversion
 Source: "{#MyAppRootDirectory}\Licenses\*.txt"; DestDir: {app}\Licenses; Flags: ignoreversion
 Source: "{#MyAppOutputDirectory}\Recorder-devices-setup.exe"; DestDir: {app}; Flags: ignoreversion
@@ -53,7 +53,7 @@ Source: "{#MyAppOutputDirectory}\ffmpeg.exe"; DestDir: {app}; Flags: ignoreversi
 Source: "{#MyAppOutputDirectory}\exiftool.exe"; DestDir: {app}; Flags: ignoreversion
 Source: "{#MyAppOutputDirectory}\exiftool_files\*"; DestDir: {app}\exiftool_files; Flags: ignoreversion recursesubdirs
 Source: "{#MyAppReleaseDirectory}\ShareX_File_Icon.ico"; DestDir: {app}; Flags: ignoreversion
-Source: "{#MyAppReleaseDirectory}\ShareX_NativeMessagingHost.exe"; DestDir: {app}; Flags: ignoreversion
+Source: "{#MyAppReleaseDirectoryHost}\ShareX_NativeMessagingHost.exe"; DestDir: {app}; Flags: ignoreversion
 Source: "{#MyAppReleaseDirectory}\host-manifest-chrome.json"; DestDir: {app}; Flags: ignoreversion
 Source: "{#MyAppReleaseDirectory}\host-manifest-firefox.json"; DestDir: {app}; Flags: ignoreversion
 Source: "{#MyAppReleaseDirectory}\ar-YE\*.resources.dll"; DestDir: {app}\Languages\ar-YE; Flags: ignoreversion
@@ -140,7 +140,6 @@ end;
 
 function InitializeSetup(): Boolean;
 begin
-  Dependency_AddDotNet48;
   Result := true;
 end;
 
