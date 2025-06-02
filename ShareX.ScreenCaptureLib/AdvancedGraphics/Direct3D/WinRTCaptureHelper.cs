@@ -1,6 +1,5 @@
 using System;
 using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Graphics.Capture;
 
 namespace ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D
@@ -26,9 +25,7 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D
 
         public static GraphicsCaptureItem CreateItemForMonitor(IntPtr hmon)
         {
-            var factory = WindowsRuntimeMarshal.GetActivationFactory(typeof(GraphicsCaptureItem));
-            var interop = (IGraphicsCaptureItemInterop)factory;
-            var temp = typeof(GraphicsCaptureItem);
+            var interop = GraphicsCaptureItem.As<IGraphicsCaptureItemInterop>();
             var itemPointer = interop.CreateForMonitor(hmon, GraphicsCaptureItemGuid);
             var item = Marshal.GetObjectForIUnknown(itemPointer) as GraphicsCaptureItem;
             Marshal.Release(itemPointer);
