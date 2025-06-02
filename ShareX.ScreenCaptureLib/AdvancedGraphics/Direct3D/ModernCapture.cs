@@ -134,7 +134,7 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D
                 {
                     Direct3D11CaptureFrame f;
                     currentSession = session;
-                    currentSession.Session.IsBorderRequired = false;
+                    DisableBorders();
                     session.Session.StartCapture();
                     while ((f = session.FramePool.TryGetNextFrame()) == null)
                     {
@@ -155,6 +155,14 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D
             System.Diagnostics.Debug.WriteLine(SharpDX.Diagnostics.ObjectTracker.ReportActiveObjects());
 #endif
             return gdiPlusBitmap;
+        }
+
+        private void DisableBorders()
+        {
+            if (ApiInformation.IsPropertyPresent("Windows.Graphics.Capture.GraphicsCaptureSession", nameof(GraphicsCaptureSession.IsBorderRequired)))
+            {
+                currentSession.Session.IsBorderRequired = false;
+            }
         }
 
         private void InitializeSharedComponents()
@@ -239,7 +247,7 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D
 
         private void ProcessFrame(Direct3D11CaptureFrame frame)
         {
-            currentSession.Session.IsBorderRequired = false;
+            DisableBorders();
             // Do proecssing
             using (frame)
             {
