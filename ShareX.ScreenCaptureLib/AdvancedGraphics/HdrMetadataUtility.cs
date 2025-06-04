@@ -1,6 +1,6 @@
 using System;
 using ShareX.ScreenCaptureLib.AdvancedGraphics.GDI;
-using DXGI = SharpDX.DXGI;
+using Vortice.DXGI;
 
 namespace ShareX.ScreenCaptureLib.AdvancedGraphics
 {
@@ -84,30 +84,26 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics
                 }
             }
 
-            using (var factory = new DXGI.Factory1())
-            {
-                for (int i = 0; i < factory.GetAdapterCount1(); i++)
-                {
-                    using (var adapter = factory.GetAdapter1(i))
-                    {
-                        for (int j = 0; j < adapter.GetOutputCount(); j++)
-                        {
-                            using (var output = adapter.GetOutput(j))
-                            {
-                                if (output.Description.DeviceName != deviceName)
-                                {
-                                    continue;
-                                }
 
-                                var output6 = output.QueryInterface<DXGI.Output6>();
-                                if (output6 != null)
-                                {
-                                    hdrMetadata.MonHdrDispNits = output6.Description1.MaxFullFrameLuminance;
-                                }
-                            }
-                        }
+
+            var factory = DXGI.CreateDXGIFactory1<IDXGIFactory1>();
+            for (uint ai = 0; factory.EnumAdapters1(ai, out IDXGIAdapter1 adapter).Success; ++ai)
+            {
+                for (uint oi = 0; adapter.EnumOutputs(oi, out IDXGIOutput output).Success; ++oi)
+                {
+                    if (output.Description.DeviceName != deviceName)
+                    {
+                        continue;
+                    }
+
+                    using (var output6 = output.QueryInterface<Vortice.DXGI.IDXGIOutput6>())
+                    {
+                        // Description1 contains MaxFullFrameLuminance (in nits)
+                        var desc1 = output6.Description1;
+                        hdrMetadata.MonHdrDispNits = desc1.MaxFullFrameLuminance;
                     }
                 }
+                adapter.Dispose();
             }
 
             return hdrMetadata;

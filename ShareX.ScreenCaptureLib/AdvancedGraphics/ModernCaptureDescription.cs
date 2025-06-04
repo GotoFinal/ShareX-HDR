@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using ShareX.HelpersLib;
 using ShareX.ScreenCaptureLib.AdvancedGraphics.GDI;
 
 namespace ShareX.ScreenCaptureLib.AdvancedGraphics
@@ -11,12 +12,11 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics
         public Rectangle DestGdiRect { get; set; }
         public MonitorInfo MonitorInfo { get; set; }
 
-        // For DX use
         public ShaderHdrMetadata HdrMetadata { get; set; }
-        public SharpDX.Vector2 DestD3DVsTopLeft { get; set; }
-        public SharpDX.Vector2 DestD3DVsBottomRight { get; set; }
-        public SharpDX.Vector2 DestD3DPsSamplerTopLeft { get; set; }
-        public SharpDX.Vector2 DestD3DPsSamplerBottomRight { get; set; }
+        public Vector2 DestD3DVsTopLeft { get; set; }
+        public Vector2 DestD3DVsBottomRight { get; set; }
+        public Vector2 DestD3DPsSamplerTopLeft { get; set; }
+        public Vector2 DestD3DPsSamplerBottomRight { get; set; }
 
         // For WinRT use
         public bool CaptureCursor { get; set; }
@@ -71,8 +71,8 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics
                 var vbrX = (region.DestGdiRect.X + region.DestGdiRect.Width - CanvasMidPointX) / widthHalf;
                 var vbrY = (CanvasMidPointY - region.DestGdiRect.Y - region.DestGdiRect.Height) / heightHalf;
 
-                region.DestD3DVsTopLeft = new SharpDX.Vector2((float) vtlX, (float) vtlY);
-                region.DestD3DVsBottomRight = new SharpDX.Vector2((float)vbrX, (float)vbrY);
+                region.DestD3DVsTopLeft = new Vector2((float) vtlX, (float) vtlY);
+                region.DestD3DVsBottomRight = new Vector2((float)vbrX, (float)vbrY);
 
                 // Calculate Pixel Shader Location, reference coordinate system is the top-left (X/Y) of this screen as (0, 0)
                 var ptlX = ((double) (region.DestGdiRect.X - region.MonitorInfo.MonitorArea.X)) / region.MonitorInfo.MonitorArea.Width;
@@ -80,8 +80,8 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics
                 var pbrX = ((double) (region.DestGdiRect.X + region.DestGdiRect.Width - region.MonitorInfo.MonitorArea.X)) / region.MonitorInfo.MonitorArea.Width;
                 var pbrY = ((double) (region.DestGdiRect.Y + region.DestGdiRect.Height - region.MonitorInfo.MonitorArea.Y)) / region.MonitorInfo.MonitorArea.Height;
 
-                region.DestD3DPsSamplerTopLeft = new SharpDX.Vector2((float) ptlX, (float) ptlY);
-                region.DestD3DPsSamplerBottomRight = new SharpDX.Vector2((float) pbrX, (float) pbrY);
+                region.DestD3DPsSamplerTopLeft = new Vector2((float) ptlX, (float) ptlY);
+                region.DestD3DPsSamplerBottomRight = new Vector2((float) pbrX, (float) pbrY);
 
                 // Make sure they are not outbound
                 SamplerBoundCheck(region.DestD3DPsSamplerTopLeft.X);

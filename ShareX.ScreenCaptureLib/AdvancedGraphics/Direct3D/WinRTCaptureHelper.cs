@@ -1,36 +1,14 @@
 using System;
-using System.Runtime.InteropServices;
+using Windows.Graphics;
 using Windows.Graphics.Capture;
 
 namespace ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D
 {
     public static class WinRTCaptureHelper
     {
-        public static Guid GraphicsCaptureItemGuid => new Guid("79C3F95B-31F7-4EC2-A464-632EF5D30760");
-
-        [ComImport]
-        [Guid("3628E81B-3CAC-4C60-B7F4-23CE0E0C3356")]
-        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-        [ComVisible(true)]
-        interface IGraphicsCaptureItemInterop
-        {
-            IntPtr CreateForWindow(
-                [In] IntPtr window,
-                [In] ref Guid iid);
-
-            IntPtr CreateForMonitor(
-                [In] IntPtr monitor,
-                [In] ref Guid iid);
-        }
-
         public static GraphicsCaptureItem CreateItemForMonitor(IntPtr hmon)
         {
-            var interop = GraphicsCaptureItem.As<IGraphicsCaptureItemInterop>();
-            var itemPointer = interop.CreateForMonitor(hmon, GraphicsCaptureItemGuid);
-            var item = Marshal.GetObjectForIUnknown(itemPointer) as GraphicsCaptureItem;
-            Marshal.Release(itemPointer);
-
-            return item;
+            return GraphicsCaptureItem.TryCreateFromDisplayId(new DisplayId((ulong)hmon.ToInt64()));
         }
     }
 }

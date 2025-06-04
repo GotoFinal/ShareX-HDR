@@ -1,6 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net9.0-windows10.0.20348.0</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.20348.0</TargetFramework>
     <OutputType>Library</OutputType>
     <UseWindowsForms>true</UseWindowsForms>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -8,14 +8,14 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="BetterWin32Errors" Version="0.2.0" />
+    <PackageReference Include="DirectXTexNet" Version="1.0.7" />
     <PackageReference Include="ImageListView" Version="13.8.2" />
     <PackageReference Include="Microsoft.HLSL.CSharpVB" Version="1.0.2" />
-    <PackageReference Include="SharpDX" Version="4.2.0" />
-    <PackageReference Include="SharpDX.D3DCompiler" Version="4.2.0" />
-    <PackageReference Include="SharpDX.Direct2D1" Version="4.2.0" />
-    <PackageReference Include="SharpDX.Direct3D11" Version="4.2.0" />
-    <PackageReference Include="SharpDX.DXGI" Version="4.2.0" />
-    <PackageReference Include="SharpDX.Mathematics" Version="4.2.0" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.7.4-beta" />
+    <PackageReference Include="Vortice.Direct2D1" Version="3.7.4-beta" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.7.4-beta" />
+    <PackageReference Include="Vortice.DXGI" Version="3.7.4-beta" />
+    <PackageReference Include="Vortice.Mathematics" Version="1.9.3" />
     <PackageReference Include="ZXing.Net" Version="0.16.10" />
     <PackageReference Include="ZXing.Net.Bindings.Windows.Compatibility" Version="0.16.13" />
   </ItemGroup>

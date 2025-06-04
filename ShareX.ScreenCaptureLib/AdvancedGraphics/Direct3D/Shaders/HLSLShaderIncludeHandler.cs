@@ -1,7 +1,7 @@
-using SharpDX.D3DCompiler;
 using System;
 using System.IO;
 using System.Reflection;
+using Vortice.Direct3D;
 
 namespace ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D.Shaders
 {

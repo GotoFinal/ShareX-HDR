@@ -127,7 +127,7 @@ namespace ShareX.ScreenCaptureLib
                 return null;
             }
 
-            if (UseWinRTCaptureAPI && ModernCaptureSignletonManager.Instance.IsAvailable)
+            if (ModernCaptureSignletonManager.Instance.IsAvailable)
             {
                 return CaptureRectangleDirect3D11(handle, rect, captureCursor);
             }
