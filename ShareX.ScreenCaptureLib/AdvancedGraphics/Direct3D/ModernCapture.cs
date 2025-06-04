@@ -84,8 +84,8 @@ public class ModernCapture : IDisposable
                 ArraySize = 1,
                 Format = desc.ModeDescription.Format,
                 SampleDescription = new SampleDescription(1, 0),
-                Usage = ResourceUsage.Staging,
-                BindFlags = BindFlags.None,
+                Usage = ResourceUsage.Default,
+                BindFlags = BindFlags.ShaderResource,
                 CPUAccessFlags = CpuAccessFlags.Read
             };
             var staging = screen.Device.CreateTexture2D(texDesc);
@@ -218,12 +218,12 @@ public class ModernCapture : IDisposable
                 if (gpuComposeAllowed && !forceCpuTonemap)
                 {
                     // GPU path: convert HDR staging → B8G8R8A8_UNORM GPU texture
-                    ldrSource = Tonemapping.TonemapOnGpu(state.DeviceAccess, dupState.Staging, device, ctx, state.HdrMetadata);
+                    ldrSource = Tonemapping.TonemapOnGpu(state.Region, state.DeviceAccess, dupState.Staging, device, ctx, state.HdrMetadata);
                 }
                 else
                 {
                     // CPU path: convert HDR staging → B8G8R8A8_UNORM STAGING
-                    ldrSource = Tonemapping.TonemapOnCpu(state.DeviceAccess, dupState.Staging, device, ctx);
+                    ldrSource = Tonemapping.TonemapOnCpu(state.Region, state.DeviceAccess, dupState.Staging, device, ctx, state.HdrMetadata);
                 }
             }
             // If not HDR, then dupState.Staging is already B8G8R8A8_UNorm or B8G8R8A8_UNorm fallback.

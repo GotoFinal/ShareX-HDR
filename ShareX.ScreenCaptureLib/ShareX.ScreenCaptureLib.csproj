@@ -11,6 +11,7 @@
     <PackageReference Include="DirectXTexNet" Version="1.0.7" />
     <PackageReference Include="ImageListView" Version="13.8.2" />
     <PackageReference Include="Microsoft.HLSL.CSharpVB" Version="1.0.2" />
+    <PackageReference Include="Veldrid.RenderDoc" Version="1.0.1" />
     <PackageReference Include="Vortice.D3DCompiler" Version="3.7.4-beta" />
     <PackageReference Include="Vortice.Direct2D1" Version="3.7.4-beta" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.7.4-beta" />

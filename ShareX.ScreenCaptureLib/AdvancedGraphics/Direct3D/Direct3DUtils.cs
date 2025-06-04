@@ -1,4 +1,6 @@
-﻿using Vortice.Direct3D11;
+﻿using System.Numerics;
+using ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D.Shaders;
+using Vortice.Direct3D11;
 using Vortice.DXGI;
 
 namespace ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D;
@@ -48,5 +50,47 @@ public class Direct3DUtils
             MiscFlags = ResourceOptionFlags.None
         };
         return gpuTex.Device.CreateTexture2D(stagingDesc);
+    }
+
+    public static ShaderInputStructure[] ConstructForScreen(ModernCaptureMonitorDescription region)
+    {
+        return
+        [ // Left-Top
+            new ShaderInputStructure
+            {
+                Position = new Vector2(region.DestD3DVsTopLeft.X, region.DestD3DVsTopLeft.Y),
+                TextureCoord = new Vector2(region.DestD3DPsSamplerTopLeft.X, region.DestD3DPsSamplerTopLeft.Y),
+            },
+            // Right-Top
+            new ShaderInputStructure
+            {
+                Position = new Vector2(region.DestD3DVsBottomRight.X, region.DestD3DVsTopLeft.Y),
+                TextureCoord = new Vector2(region.DestD3DPsSamplerBottomRight.X, region.DestD3DPsSamplerTopLeft.Y)
+            },
+            // Left-Bottom
+            new ShaderInputStructure
+            {
+                Position = new Vector2(region.DestD3DVsTopLeft.X, region.DestD3DVsBottomRight.Y),
+                TextureCoord = new Vector2(region.DestD3DPsSamplerTopLeft.X, region.DestD3DPsSamplerBottomRight.Y)
+            },
+            // Right-Top
+            new ShaderInputStructure
+            {
+                Position = new Vector2(region.DestD3DVsBottomRight.X, region.DestD3DVsTopLeft.Y),
+                TextureCoord = new Vector2(region.DestD3DPsSamplerBottomRight.X, region.DestD3DPsSamplerTopLeft.Y)
+            },
+            // Right-Bottom
+            new ShaderInputStructure
+            {
+                Position = new Vector2(region.DestD3DVsBottomRight.X, region.DestD3DVsBottomRight.Y),
+                TextureCoord = new Vector2(region.DestD3DPsSamplerBottomRight.X, region.DestD3DPsSamplerBottomRight.Y)
+            },
+            // Left-Bottom
+            new ShaderInputStructure
+            {
+                Position = new Vector2(region.DestD3DVsTopLeft.X, region.DestD3DVsBottomRight.Y),
+                TextureCoord = new Vector2(region.DestD3DPsSamplerTopLeft.X, region.DestD3DPsSamplerBottomRight.Y)
+            }
+        ];
     }
 }

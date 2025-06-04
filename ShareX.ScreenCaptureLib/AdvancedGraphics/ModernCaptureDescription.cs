@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
-using ShareX.HelpersLib;
+using System.Numerics;
 using ShareX.ScreenCaptureLib.AdvancedGraphics.GDI;
 
 namespace ShareX.ScreenCaptureLib.AdvancedGraphics
