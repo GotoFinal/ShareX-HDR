@@ -449,7 +449,7 @@ namespace ShareX.ScreenCaptureLib.HDR
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        static float LinearToPQY(float N)
+        static float LinearToPQY(float N) // 1.5
         {
             float fScaledN = Math.Abs(N * 0.008f); // 0.008 = 1/125.0
 
@@ -457,6 +457,13 @@ namespace ShareX.ScreenCaptureLib.HDR
 
             float nd = Math.Abs((0.8359375f + (18.8515625f * ret)) /
                                 (1.0f + (18.6875f * ret)));
+
+            return MathF.Pow(nd, 78.84375f);
+        }
+        static float LinearToPQY() // 1.5
+        {
+
+            float nd = Math.Abs(0.9918963f);
 
             return MathF.Pow(nd, 78.84375f);
         }
