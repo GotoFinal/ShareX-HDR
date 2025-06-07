@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Numerics;
+using ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D.Shaders;
 using ShareX.ScreenCaptureLib.AdvancedGraphics.GDI;
 
 namespace ShareX.ScreenCaptureLib.AdvancedGraphics
@@ -11,8 +12,6 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics
         // For GDI use
         public Rectangle DestGdiRect { get; set; }
         public MonitorInfo MonitorInfo { get; set; }
-
-        public ShaderHdrMetadata HdrMetadata { get; set; }
         public Vector2 DestD3DVsTopLeft { get; set; }
         public Vector2 DestD3DVsBottomRight { get; set; }
         public Vector2 DestD3DPsSamplerTopLeft { get; set; }
@@ -29,7 +28,6 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics
         {
             this.DestGdiRect = d.DestGdiRect;
             this.MonitorInfo = d.MonitorInfo;
-            this.HdrMetadata = d.HdrMetadata;
             this.DestD3DVsTopLeft = d.DestD3DVsTopLeft;
             this.DestD3DVsBottomRight = d.DestD3DVsBottomRight;
             this.DestD3DPsSamplerTopLeft = d.DestD3DPsSamplerTopLeft;

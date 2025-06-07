@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D.Shaders;
 using SharpGen.Runtime;
+using Veldrid;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
@@ -104,12 +105,11 @@ public class ModernCapture : IDisposable
         public ID3D11Device Device;
         public ID3D11DeviceContext Context;
         public Rectangle SrcRect;
-        public ShaderHdrMetadata HdrMetadata;
     }
 
-    public Bitmap CaptureAndProcess(ModernCaptureItemDescription item)
+    public Bitmap CaptureAndProcess(ModernCaptureItemDescription item, HdrSettings settings)
     {
-        bool forceCpuTonemap = true;
+        bool forceCpuTonemap = false;
 
         // (A) First pass: discover if all Regions live on the *same* ID3D11Device, and gather per-region state:
         ID3D11Device commonDevice = null;
@@ -151,9 +151,10 @@ public class ModernCapture : IDisposable
                 DeviceAccess = screenAccess.Context,
                 Context = ctx,
                 SrcRect = srcRect,
-                HdrMetadata = r.HdrMetadata
             });
         }
+        var loaded = RenderDoc.Load(out var lib);
+        if (loaded && lib != null) lib.StartFrameCapture();
 
         // If we discovered multi‐GPU, we can no longer do GPU‐side composition in one canvas.
         bool gpuComposeAllowed = true; //hasCommonDevice; TODO
@@ -193,6 +194,7 @@ public class ModernCapture : IDisposable
             OutduplFrameInfo outduplFrameInfo;
             do
             {
+                dupState.Dup.ReleaseFrame();
                 // sometimes this closes the device??? ?? ?? ? ? ???? TODO
                 acquireNextFrame = dupState.Dup.AcquireNextFrame(10, out outduplFrameInfo, out resourcee);
                 if (acquireNextFrame.Failure) // TODO: only recreate on some errors?
@@ -201,7 +203,7 @@ public class ModernCapture : IDisposable
                     Console.WriteLine("acquireNextFrame.Failure: " + acquireNextFrame.Description + ", " + acquireNextFrame.ApiCode); // TODO: remove
                     dupState = GetOrCreateDup(state.Region.MonitorInfo.Hmon, true);
                 }
-            } while (!acquireNextFrame.Success);
+            } while (!acquireNextFrame.Success || outduplFrameInfo.LastPresentTime == 0);
 
             using var resource = resourcee;
             using var frameTex = resource.QueryInterface<ID3D11Texture2D>();
@@ -217,14 +219,20 @@ public class ModernCapture : IDisposable
             {
                 if (gpuComposeAllowed && !forceCpuTonemap)
                 {
-                    // GPU path: convert HDR staging → B8G8R8A8_UNORM GPU texture
-                    ldrSource = Tonemapping.TonemapOnGpu(state.Region, state.DeviceAccess, dupState.Staging, device, ctx, state.HdrMetadata);
+                    // GPU path: convert HDR staging → B8G8R8A8_UNorm GPU texture
+                    ldrSource = Tonemapping.TonemapOnGpu(settings, state.Region, state.DeviceAccess, dupState.Staging);
                 }
                 else
                 {
-                    // CPU path: convert HDR staging → B8G8R8A8_UNORM STAGING
-                    ldrSource = Tonemapping.TonemapOnCpu(state.Region, state.DeviceAccess, dupState.Staging, device, ctx, state.HdrMetadata);
+                    // CPU path: convert HDR staging → B8G8R8A8_UNorm STAGING
+                    ldrSource = Tonemapping.TonemapOnCpu(settings, state.Region, state.DeviceAccess, dupState.Staging);
                 }
+            }
+            else
+            {
+                // lets test our function
+                // var pixelSpan = ldrSource.GetPixelSpan();
+                // Console.WriteLine("pixels: " + pixelSpan);
             }
             // If not HDR, then dupState.Staging is already B8G8R8A8_UNorm or B8G8R8A8_UNorm fallback.
 
@@ -326,6 +334,7 @@ public class ModernCapture : IDisposable
             canvasContext.Unmap(stagingCanvas, 0);
 
             canvasGpu.Dispose();
+            if (loaded && lib != null) lib.EndFrameCapture();
             return finalBitmap;
         }
         else
@@ -359,14 +368,14 @@ public class ModernCapture : IDisposable
     private void InitializeShaders()
     {
         var assembly = Assembly.GetExecutingAssembly();
-        using (var vxShaderStream = assembly.GetManifestResourceStream($"{ShaderConstant.ResourcePrefix}.PostProcessingQuad.cso"))
+        using (var vxShaderStream = assembly.GetManifestResourceStream($"{ShaderConstants.ResourcePrefix}.PostProcessingQuad.cso"))
         {
             vxShader = new byte[vxShaderStream.Length];
             vxShaderStream.ReadExactly(vxShader);
             inputSignatureBlob = Vortice.D3DCompiler.Compiler.GetInputSignatureBlob(vxShader);
         }
 
-        using (var psShaderStream = assembly.GetManifestResourceStream($"{ShaderConstant.ResourcePrefix}.PostProcessingColor.cso"))
+        using (var psShaderStream = assembly.GetManifestResourceStream($"{ShaderConstants.ResourcePrefix}.PostProcessingColor.cso"))
         {
             psShader = new byte[psShaderStream.Length];
             psShaderStream.ReadExactly(psShader);

@@ -186,7 +186,6 @@ namespace ShareX.ScreenCaptureLib
                     captureMonRegions.Add(new ModernCaptureMonitorDescription
                     {
                         DestGdiRect = screenBoundCopy,
-                        HdrMetadata = HdrMetadataUtility.GetHdrMetadataForMonitor(monitor.DeviceName),
                         MonitorInfo = monitor,
                         CaptureCursor = captureCursor,
                     });
@@ -201,14 +200,11 @@ namespace ShareX.ScreenCaptureLib
             // 3.2 Capture and wait for content
             // 3.3 Shader and draw passes
             // 3.4 Datastream pass, copy
-            // var loaded = RenderDoc.Load(out var lib);
-            // if (loaded && lib != null) lib.StartFrameCapture();
             lock (_captureInstanceLock)
             {
                 if (_captureInstance == null) _captureInstance = new ModernCapture();
-                bmp = _captureInstance.CaptureAndProcess(catpureItem);
+                bmp = _captureInstance.CaptureAndProcess(catpureItem, HdrSettings.Instance); // TODO: HdrSettings should be stored somehwere?
             }
-            // if (loaded && lib != null) lib.EndFrameCapture();
 
             return bmp;
         }

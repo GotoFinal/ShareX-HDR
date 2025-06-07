@@ -12,7 +12,6 @@ public class BitmapUtils
         int width,
         int height)
     {
-        // Create a 32bpp Bitmap with ARGB ordering (GDI+ expects BGRA in memory for PixelFormat.Format32bppArgb)
         var bmp = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
 
         // Lock the entire bitmap's bits
@@ -45,7 +44,7 @@ public class BitmapUtils
         int width,
         int height)
     {
-        var bmp = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        var bmp = new Bitmap(width, height, System.Drawing.Imaging.PixelFormat.Format32bppRgb);
         var rect = new Rectangle(0, 0, width, height);
         var bmpData = bmp.LockBits(rect, ImageLockMode.WriteOnly, bmp.PixelFormat);
 

@@ -23,7 +23,7 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D.Shaders
         public Stream Open(IncludeType type, string fileName, Stream parentStream)
         {
             var assembly = Assembly.GetExecutingAssembly();
-            return assembly.GetManifestResourceStream($"{ShaderConstant.ResourcePrefix}.{fileName}");
+            return assembly.GetManifestResourceStream($"{ShaderConstants.ResourcePrefix}.{fileName}");
         }
     }
 }

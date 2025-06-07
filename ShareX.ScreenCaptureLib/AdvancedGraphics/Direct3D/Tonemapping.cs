@@ -2,43 +2,309 @@
 using System.Diagnostics;
 using System.IO;
 using System.Numerics;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using DirectXTexNet;
 using ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D.Shaders;
-using SharpGen.Runtime;
 using Vortice;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
 using Vortice.Mathematics;
 using Vortice.Mathematics.PackedVector;
-using MapFlags = Vortice.Direct3D11.MapFlags;
 
 namespace ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D;
 
 public class Tonemapping
 {
-    public static ID3D11Texture2D TonemapOnCpu(ModernCaptureMonitorDescription stateRegion, DeviceAccess deviceAccess, ID3D11Texture2D dupStateStaging,
-        ID3D11Device device, ID3D11DeviceContext ctx, ShaderHdrMetadata stateHdrMetadata)
+
+    // private static void PerformTonemapping2(Vector4[] scrgb, ImageInfo imageInfo, Vector4[] outPixels)
+    // {
+    //     var maxYInPQ = imageInfo.MaxYInPQ;
+    //     for (int j = 0; j < scrgb.Length; ++j)
+    //     {
+    //
+    //         Vector4 input_col = Vector4.One;
+    //         Vector4 out_col = scrgb[0];
+
+//     if (input.hdr_img)
+//     {
+//         if (display_max_luminance < 0)
+//         {
+//             return
+//                 DrawMaxClipPattern(-display_max_luminance, input.uv);
+//         }
+//     }
+//
+//
+//     // When sampling FP textures, special FP bit patterns like NaN or Infinity
+//     //   may be returned. The same image represented using UNORM would replace
+//     //     these special values with 0.0, and that is the behavior we want...
+//     out_col =
+//         SanitizeFP(out_col);
+//
+//
+//     out_col.a = 1.0f;
+//
+//     Vector4 orig_col = out_col;
+//
+//     // input.lum.x        // Luminance (white point)
+//     bool isHDR = input.lum.y > 0.0; // HDR (10 bpc or 16 bpc)
+//     bool is10bpc = input.lum.z > 0.0; // 10 bpc
+//     bool is16bpc = input.lum.w > 0.0; // 16 bpc (scRGB)
+//
+//     // 16 bpc scRGB (SDR/HDR)
+//     // ColSpace:  DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709
+//     // Gamma:     1.0
+//     // Primaries: BT.709
+//     if (is16bpc)
+//     {
+//         out_col =
+//             Vector4(input.hdr_img
+//                        ? RemoveGammaExp(input_col.rgb, 2.2f) *
+//                        out_col.rgb
+//                        : RemoveGammaExp(input_col.rgb *
+//                                         ApplyGammaExp(out_col.rgb, 2.2f), 2.2f),
+//                    saturate(out_col.a) *
+//                    saturate(input_col.a)
+//             );
+//
+//         // sRGB (SDR) Content
+//         if (input.srgb_img)
+//         {
+//             out_col =
+//                 Vector4((input_col.rgb) *
+//                        (out_col.rgb),
+//                        saturate(out_col.a) *
+//                        saturate(input_col.a));
+//
+//             out_col.rgb = RemoveSRGBCurve(out_col.rgb);
+//         }
+//
+//         float hdr_scale = input.lum.x;
+//
+//         if (!input.hdr_img)
+//             out_col.rgb = saturate(out_col.rgb) * hdr_scale;
+//         else
+//             out_col.a = 1.0f;
+//     }
+//
+//     // 10 bpc SDR
+//     // ColSpace:  DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709
+//     // Gamma:     2.2
+//     // Primaries: BT.709
+//     else if (is10bpc)
+//     {
+//         // sRGB (SDR) Content
+//         if (input.srgb_img)
+//         {
+//             out_col =
+//                 Vector4((input_col.rgb) *
+//                        (out_col.rgb),
+//                        saturate(out_col.a) *
+//                        saturate(input_col.a));
+//
+//             out_col.rgb = RemoveSRGBCurve(out_col.rgb);
+//         }
+//
+//         else if (!input.hdr_img)
+//         {
+//             out_col =
+//                 Vector4(RemoveGammaExp(input_col.rgb *
+//                                       ApplyGammaExp(out_col.rgb, 2.2f), 2.2f),
+//                        saturate(out_col.a) *
+//                        saturate(input_col.a)
+//                 );
+//         }
+//
+//         else
+//         {
+//             out_col =
+//                 Vector4(RemoveGammaExp(input_col.rgb, 2.2f) *
+//                        out_col.rgb,
+//                        saturate(out_col.a) *
+//                        saturate(input_col.a)
+//                 );
+//
+//             out_col.a = 1.0f; // Opaque
+//         }
+//     }
+//
+//     // 8 bpc SDR (sRGB)
+//     else
+//     {
+// #ifdef _SRGB
+//     out_col =
+//       Vector4 (   (           input_col.rgb) *
+//                  (             out_col.rgb),
+//                                   saturate (  out_col.a)  *
+//                                   saturate (input_col.a)
+//               );
+//
+//     out_col.rgb = RemoveSRGBCurve (out_col.rgb);
+//
+//     // Manipulate the alpha channel a bit...
+//     out_col.a = 1.0f - RemoveSRGBCurve (1.0f - out_col.a);
+// #else
+//
+//         // sRGB (SDR) Content
+//         if (input.srgb_img)
+//         {
+//             out_col =
+//                 Vector4((input_col.rgb) *
+//                        (out_col.rgb),
+//                        saturate(out_col.a) *
+//                        saturate(input_col.a));
+//
+//             out_col.rgb = RemoveSRGBCurve(out_col.rgb);
+//         }
+//
+//         else if (!input.hdr_img)
+//         {
+//             out_col =
+//                 Vector4(RemoveGammaExp(input_col.rgb *
+//                                       ApplyGammaExp(out_col.rgb, 2.2f), 2.2f),
+//                        saturate(out_col.a) *
+//                        saturate(input_col.a)
+//                 );
+//         }
+//
+//         else
+//         {
+//             out_col =
+//                 Vector4(RemoveGammaExp(input_col.rgb, 2.2f) *
+//                        out_col.rgb,
+//                        saturate(out_col.a) *
+//                        saturate(input_col.a)
+//                 );
+//
+//             out_col.a = 1.0f; // Opaque
+//         }
+// #endif
+//     }
+//
+//     if (input.hdr_img)
+//     {
+//         uint implied_tonemap_type = tonemap_type;
+//
+//         out_col.rgb *=
+//             isHDR
+//                 ? user_brightness_scale
+//                 : max(user_brightness_scale, 0.001f);
+//
+//
+//         // If it's too bright, don't bother trying to tonemap the full range...
+//         static const float _maxNitsToTonemap = 10000.0f;
+//
+//         float dML = LinearToPQY(display_max_luminance);
+//         float cML = LinearToPQY(min(hdr_max_luminance, _maxNitsToTonemap));
+//
+//         if (implied_tonemap_type != SKIV_TONEMAP_TYPE_NONE && (!isHDR))
+//         {
+//             implied_tonemap_type = SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY;
+//             dML = LinearToPQY(1.5f);
+//         }
+//
+//         else if (implied_tonemap_type == SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY)
+//         {
+//             ///out_col.rgb *=
+//             ///  1.0f / max (1.0f, 80.0f / (2.0f * sdr_reference_white));
+//         }
+//
+//         float3 ICtCp = Rec709toICtCp(out_col.rgb);
+//         float Y_in = max(ICtCp.x, 0.0f);
+//         float Y_out = 1.0f;
+//
+//         switch (implied_tonemap_type)
+//         {
+//         // This tonemap type is not necessary, we always know content range
+//         //SKIV_TONEMAP_TYPE_INFINITE_ROLLOFF
+//
+//         default:
+//         case SKIV_TONEMAP_TYPE_NONE: Y_out = TonemapNone(Y_in);
+//             break;
+//         case SKIV_TONEMAP_TYPE_CLIP: Y_out = TonemapClip(Y_in, dML);
+//             break;
+//         case SKIV_TONEMAP_TYPE_NORMALIZE_TO_CLL: Y_out = TonemapSDR(Y_in, cML, 1.0f);
+//             break;
+//         case SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY: Y_out = TonemapHDR(Y_in, cML, dML);
+//             break;
+//         }
+//
+//         if (Y_out + Y_in > 0.0)
+//         {
+//             if (implied_tonemap_type == SKIV_TONEMAP_TYPE_MAP_CLL_TO_DISPLAY)
+//             {
+//                 if ((!isHDR))
+//                     ICtCp.x = pow(ICtCp.x, 1.18f);
+//             }
+//
+//             float I0 = ICtCp.x;
+//             float I_scale = 0.0f;
+//
+//             ICtCp.x *=
+//                 max((Y_out / Y_in), 0.0f);
+//
+//             if (ICtCp.x != 0.0f && I0 != 0.0f)
+//             {
+//                 I_scale =
+//                     min(I0 / ICtCp.x, ICtCp.x / I0);
+//             }
+//
+//             ICtCp.yz *= I_scale;
+//         }
+//
+//         else
+//             ICtCp.x = 0.0;
+//
+//         out_col.rgb =
+//             ICtCptoRec709(ICtCp);
+//     }
+//
+//     if (!is16bpc)
+//     {
+//         out_col.rgb =
+//             ApplySRGBCurve(saturate(out_col.rgb));
+//     }
+//
+//     if (dot(orig_col * user_brightness_scale, (1.0f).xxxx) <= FP16_MIN)
+//         out_col.rgb = 0.0f;
+//
+//     out_col.rgb *=
+//         out_col.a;
+//
+//     return
+//         SanitizeFP(out_col);
+//         }
+//     }
+
+
+    /*
+     * Vector4 DrawMaxClipPattern(float x, float2 uv);
+
+// TODO: as this code is from SKIV project it probably can be simplifed a lot more, as we dont need many of the features
+Vector4 main(PS_INPUT input) : SV_Target
+{
+}
+     */
+    public static ID3D11Texture2D TonemapOnCpu(HdrSettings hdrSettings, ModernCaptureMonitorDescription region, DeviceAccess deviceAccess,
+        ID3D11Texture2D inputHdrTex)
     {
-        ConvertToSDRPixelsInPlace(device, ctx, dupStateStaging, out var sdrPixels, out var sdrMaxYInPQ);
-        return dupStateStaging; // TODO
+        ConvertToSDRPixelsInPlace(deviceAccess.Device.ImmediateContext, inputHdrTex, out var sdrPixels, out var imageInfo);
+        return inputHdrTex; // TODO
     }
 
     public static void ConvertToSDRPixelsInPlace(
-        ID3D11Device device,
         ID3D11DeviceContext context,
         ID3D11Texture2D image,
         out Vector4[] scrgb,
-        out float maxYInPQ)
+        out ImageInfo imageInfo)
     {
         int width = (int)image.Description.Width;
         int height = (int)image.Description.Height;
         var fmt = image.Description.Format;
         scrgb = image.GetPixelSpan();
-        maxYInPQ = CalculateMaxYInPQ(scrgb);
-        PerformTonemapping(scrgb, maxYInPQ, scrgb);
+        imageInfo = CalculateImageInfo(scrgb);
+        PerformTonemapping(scrgb, imageInfo, scrgb);
 
         unsafe
         {
@@ -86,30 +352,32 @@ public class Tonemapping
         }
     }
 
+    static readonly Vertex[] defaultVerts =
+    [
+        new(position: new Vector2(-1f, +1f), textureCoord: new Vector2(0f, 0f)),
+        new(position: new Vector2(+1f, +1f), textureCoord: new Vector2(1f, 0f)),
+        new(position: new Vector2(-1f, -1f), textureCoord: new Vector2(0f, 1f)),
+        new(position: new Vector2(+1f, +1f), textureCoord: new Vector2(1f, 0f)),
+        new(position: new Vector2(+1f, -1f), textureCoord: new Vector2(1f, 1f)),
+        new(position: new Vector2(-1f, -1f), textureCoord: new Vector2(0f, 1f))
+    ];
 
-    public static ID3D11Texture2D TonemapOnGpu(ModernCaptureMonitorDescription region, DeviceAccess deviceAccess,
-        ID3D11Texture2D inputHdrTex,
-        ID3D11Device device,
-        ID3D11DeviceContext ctx, ShaderHdrMetadata metadata)
+    public static ID3D11Texture2D TonemapOnGpu(HdrSettings hdrSettings, ModernCaptureMonitorDescription region, DeviceAccess deviceAccess,
+        ID3D11Texture2D inputHdrTex)
     {
-        metadata.MaxYInPQ = Tonemapping.CalculateMaxYInPQ(inputHdrTex, out var pixelData);
-        var structure = new ShaderInputStructure();
-        var quadVerts = Direct3DUtils.ConstructForScreen(region);
-        // var quadVerts = new[]
-        // {
-        //     new ShaderInputStructure(position: new Vector2(-1f, +1f), textureCoord: new Vector2(0f, 0f)),
-        //     new ShaderInputStructure(position: new Vector2(+1f, +1f), textureCoord: new Vector2(1f, 0f)),
-        //     new ShaderInputStructure(position: new Vector2(-1f, -1f), textureCoord: new Vector2(0f, 1f)),
-        //     new ShaderInputStructure(position: new Vector2(+1f, +1f), textureCoord: new Vector2(1f, 0f)),
-        //     new ShaderInputStructure(position: new Vector2(+1f, -1f), textureCoord: new Vector2(1f, 1f)),
-        //     new ShaderInputStructure(position: new Vector2(-1f, -1f), textureCoord: new Vector2(0f, 1f)),
-        // };
-
+        ID3D11Device device = deviceAccess.Device;
+        ID3D11DeviceContext ctx = device.ImmediateContext;
+        ImageInfo imageInfo = CalculateImageInfo(inputHdrTex, out _);
+        ShaderConstantHelper.GetShaderConstants(region.MonitorInfo, hdrSettings, imageInfo, out var vertexShaderConstants, out var pixelShaderConstants);
+        var quadVerts = defaultVerts; // Direct3DUtils.ConstructForScreen(region);
 
         var vertexBuffer = device.CreateBuffer(quadVerts, BindFlags.VertexBuffer);
 
-        ShaderHdrMetadata[] metadataArray = [metadata];
-        var hdrCBuffer = device.CreateBuffer(metadataArray, BindFlags.ConstantBuffer);
+        PixelShaderConstants[] pixelShaderConstantsArray = [pixelShaderConstants];
+        var psConstantBuffer = device.CreateBuffer(pixelShaderConstantsArray, BindFlags.ConstantBuffer);
+
+        VertexShaderConstants[] vertexShaderConstantsArray = [vertexShaderConstants];
+        var vsConstantBuffer = device.CreateBuffer(vertexShaderConstantsArray, BindFlags.ConstantBuffer);
 
         var inDesc = inputHdrTex.Description;
         var ldrDesc = new Texture2DDescription
@@ -144,11 +412,25 @@ public class Tonemapping
 
         ctx.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
         ctx.IASetInputLayout(deviceAccess.inputLayout);
-        ctx.IASetVertexBuffer(0, vertexBuffer, ShaderInputStructure.SizeInBytes);
+        ctx.IASetVertexBuffer(0, vertexBuffer, Vertex.SizeInBytes);
+
+        var sampler = device.CreateSamplerState(new SamplerDescription()
+        {
+            Filter = Filter.MinMagMipLinear,
+            AddressU = TextureAddressMode.Clamp,
+            AddressV = TextureAddressMode.Clamp,
+            AddressW = TextureAddressMode.Clamp,
+            MipLODBias = 0,
+            ComparisonFunc = ComparisonFunction.Never,
+            MinLOD = 0,
+            MaxLOD = 0
+        });
+        ctx.PSSetSampler(0, sampler);
 
         ctx.VSSetShader(deviceAccess.vxShader);
+        ctx.VSSetConstantBuffer(0, vsConstantBuffer);
         ctx.PSSetShader(deviceAccess.pxShader);
-        ctx.PSSetConstantBuffer(0, hdrCBuffer);
+        ctx.PSSetConstantBuffer(0, psConstantBuffer);
         ctx.PSSetSampler(0, deviceAccess.samplerState);
         ctx.PSSetShaderResource(0, hdrSrv);
 
@@ -157,9 +439,12 @@ public class Tonemapping
         ctx.Draw(vertexCount: 6, startVertexLocation: 0);
 
         hdrSrv.Dispose();
-        hdrCBuffer.Dispose();
+        psConstantBuffer.Dispose();
         vertexBuffer.Dispose();
         ldrRtv.Dispose();
+        sampler.Dispose();
+
+
 
         return ldrTex;
     }
@@ -169,85 +454,107 @@ public class Tonemapping
 
     private static readonly string defaultSDRFileExt = ".png";
 
-    public static float CalculateMaxYInPQ(Vector4[] scrgb)
+    // TODO: consider threads?
+    public static ImageInfo CalculateImageInfo(Vector4[] scrgb)
     {
+        ImageInfo result = new ImageInfo();
         var log = Console.Out;
 
-        // 5. Initialize luminance‐tracking vectors (from DirectXMath)
-        Vector4 maxLum = Vector4.Zero;
-        Vector4 minLum = new Vector4(float.MaxValue, float.MaxValue, float.MaxValue, float.MaxValue);
+        Vector4 maxCLLVector = Vector4.Zero;
+        float maxLum = 0;
+        float minLum = float.MaxValue;
+        double totalLum = 0;
 
-        log.WriteLine("SKIV_Image_TonemapToSDR(): EvaluateImageBegin");
+        log.WriteLine("CalculateLightInfo(): EvaluateImageBegin");
 
         var stopwatchCore = Stopwatch.StartNew();
+        uint[] luminance_freq = new uint[65536];
+        float fLumRange = maxLum - minLum;
+
         for (var i = 0; i < scrgb.Length; i++)
         {
             Vector4 v = scrgb[i];
-            v = Vector4.Transform(v, ColorspaceUtils.from709ToXYZ);
-            maxLum = Vector4.Create(MathF.Max(v.Y, maxLum.Y));
-            minLum = Vector4.Create(MathF.Min(v.Y, minLum.Y));
+            maxCLLVector = Vector4.Max(v, maxCLLVector);
+            Vector4 vXyz = Vector4.Transform(v, ColorspaceUtils.from709ToXYZ);
+
+            maxLum = MathF.Max(vXyz.Y, maxLum);
+            minLum = MathF.Min(vXyz.Y, minLum);
+
+            totalLum += MathF.Max(0, maxLum);
         }
 
-        minLum = Vector4.Max(Vector4.Zero, minLum);
+        float maxCll = MathF.Max(maxCLLVector.X, maxCLLVector.Y);
+        maxCll = MathF.Max(maxCll, maxCLLVector.Z);
+        float avgLum = (float)(totalLum / scrgb.Length);
+        minLum = MathF.Max(0, minLum);
+        result.MaxNits = MathF.Max(0, maxLum * 80);
+        result.MinNits = MathF.Max(0, minLum * 80);
+        result.AvgNits = avgLum * 80;
+        result.MaxCLL = maxCll;
 
+        if (maxCll == maxCLLVector.X) result.MaxCLLChannel = 'R';
+        else if (maxCll == maxCLLVector.Y) result.MaxCLLChannel = 'G';
+        else if (maxCll == maxCLLVector.Z) result.MaxCLLChannel = 'B';
+        else result.MaxCLLChannel = 'X';
 
-        log.WriteLine("SKIV_Image_TonemapToSDR(): EvaluateImage, min/max calculated (max: " + maxLum.Y + "): " + stopwatchCore.ElapsedMilliseconds + "ms");
+        log.WriteLine("CalculateLightInfo(): EvaluateImage, min/max calculated (max: " + maxLum + "): " + stopwatchCore.ElapsedMilliseconds + "ms");
 
-        uint[] luminance_freq = new uint[65536];
-        float fLumRange = maxLum.Y - minLum.Y;
         for (var i = 0; i < scrgb.Length; i++)
         {
             Vector4 v = scrgb[i];
-
-            v = Vector4.Max(Vector4.Zero, Vector4.Transform(v.AsVector3(), ColorspaceUtils.from709ToXYZ));
-            // v = Vector4.Max(Vector4.Zero, Vector3.Transform(v.AsVector3(), from709ToXYZ).AsVector4());
-            luminance_freq[Math.Clamp((int)Math.Round((v.Y - minLum.Y) / (fLumRange / 65536.0f)), 0, 65535)]++;
-
             v = Vector4.Max(Vector4.Zero, Vector4.Transform(v, ColorspaceUtils.from709ToXYZ));
+            luminance_freq[Math.Clamp((int)Math.Round((v.Y - minLum) / (fLumRange / 65536.0f)), 0, 65535)]++;
 
             int idx = Math.Clamp(
-                (int)Math.Round((v.Y - minLum.Y) / (fLumRange / 65536.0f)),
+                (int)Math.Round((v.Y - minLum) / (fLumRange / 65536.0f)),
                 0,
                 65535
             );
             luminance_freq[idx]++;
         }
 
-        log.WriteLine("SKIV_Image_TonemapToSDR(): EvaluateImage, luminance_freq calculated: " + stopwatchCore.ElapsedMilliseconds + "ms");
+        log.WriteLine("CalculateImageInfo(): EvaluateImage, luminance_freq calculated: " + stopwatchCore.ElapsedMilliseconds + "ms");
 
         double percent = 100.0;
         double img_size = scrgb.LongLength;
 
+        float p99Lum = maxLum;
         for (int i = 65535; i >= 0; --i)
         {
             percent -= 100.0 * ((double)luminance_freq[i] / img_size);
             if (percent <= 99.94)
             {
-                float percentileLum = minLum.Y + (fLumRange * ((float)i / 65536.0f));
-                maxLum = Vector4.Create(percentileLum);
+                float percentileLum = minLum + (fLumRange * ((float)i / 65536.0f));
+                p99Lum = percentileLum;
                 break;
             }
         }
 
-        log.WriteLine("SKIV_Image_TonemapToSDR(): EvaluateImage, percentileLum calculated: " + stopwatchCore.ElapsedMilliseconds + "ms");
+        if (p99Lum <= 0.01f)
+            p99Lum = maxLum;
+
+        result.P99Nits = MathF.Max(0, p99Lum * 80);
+
+        log.WriteLine("CalculateImageInfo(): EvaluateImage, percentileLum calculated: " + stopwatchCore.ElapsedMilliseconds + "ms");
 
         const float scale = 1;
         const float _maxNitsToTonemap = 125.0f * scale;
         float SDR_YInPQ = ColorspaceUtils.LinearToPQY(1.5f);
         float maxYInPQ = MathF.Max(
             SDR_YInPQ,
-            ColorspaceUtils.LinearToPQY(MathF.Min(_maxNitsToTonemap, maxLum.Y * scale))
+            ColorspaceUtils.LinearToPQY(MathF.Min(_maxNitsToTonemap, maxLum * scale))
         );
-        return maxYInPQ;
+        result.MaxYInPQ = maxYInPQ; // TODO: is this correct?
+        return result;
     }
 
-    public static float CalculateMaxYInPQ(ID3D11Texture2D image, out Vector4[] pixelData)
+    public static ImageInfo CalculateImageInfo(ID3D11Texture2D image, out Vector4[] pixelData)
     {
         pixelData = image.GetPixelSpan();
-        return CalculateMaxYInPQ(pixelData);
+        return CalculateImageInfo(pixelData);
     }
 
-    public static ScratchImage ConvertToSDRPixels(ID3D11Texture2D image, out Vector4[] scrgb, out float maxYInPQ)
+    public static ScratchImage ConvertToSDRPixels(ID3D11Texture2D image, out Vector4[] scrgb, out ImageInfo imageInfo)
     {
         var log = Console.Out;
 
@@ -259,10 +566,10 @@ public class Tonemapping
         log.WriteLine("SKIV_Image_TonemapToSDR(): EvaluateImageBegin");
 
         var stopwatchCore = Stopwatch.StartNew();
-        maxYInPQ = CalculateMaxYInPQ(scrgb);
+        imageInfo = CalculateImageInfo(scrgb);
         log.WriteLine("SKIV_Image_TonemapToSDR(): EvaluateImage, percentileLum calculated: " + stopwatchCore.ElapsedMilliseconds + "ms");
 
-        PerformTonemapping(scrgb, maxYInPQ, scrgb);
+        PerformTonemapping(scrgb, imageInfo, scrgb);
 
         log.WriteLine("SKIV_Image_TonemapToSDR(): EvaluateImage, tonemapped: " + stopwatchCore.ElapsedMilliseconds + "ms");
 
@@ -383,14 +690,14 @@ public class Tonemapping
         log.WriteLine("SKIV_Image_TonemapToSDR(): EncodeToDisk: " + stopwatchTotal.ElapsedMilliseconds);
     }
 
-    private static void PerformTonemapping(Vector4[] scrgb, float maxYInPQ, Vector4[] outPixels)
+    private static void PerformTonemapping(Vector4[] scrgb, ImageInfo imageInfo, Vector4[] outPixels)
     {
+        var maxYInPQ = imageInfo.MaxYInPQ;
         for (int j = 0; j < scrgb.Length; ++j)
         {
             MaxTonemappedRgb(scrgb, maxYInPQ, outPixels, j);
         }
     }
-
     private static void MaxTonemappedRgb(Vector4[] scrgb, float maxYInPQ, Vector4[] outPixels, int j)
     {
         Vector4 value = scrgb[j];
