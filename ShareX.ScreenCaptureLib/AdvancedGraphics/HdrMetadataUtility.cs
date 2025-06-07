@@ -8,13 +8,13 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics
     {
         public static ShaderHdrMetadata GetTestSettings()
         {
-            return new ShaderHdrMetadata { EnableHdrProcessing = true, MonHdrDispNits = 800.0f, MonSdrDispNits = 270.0f, ExposureLevel = 1.0f };
+            return new ShaderHdrMetadata { EnableHdrProcessing = true, MonHdrDispNits = 800.0f, MonSdrDispNits = 270.0f, MaxYInPQ = 0.52648680933f };
         }
 
         public static ShaderHdrMetadata GetHdrMetadataForMonitor(string deviceName)
         {
             var err = BetterWin32Errors.Win32Error.ERROR_SUCCESS;
-            var hdrMetadata = new ShaderHdrMetadata { EnableHdrProcessing = false, MonSdrDispNits = 80.0f, ExposureLevel = 1.0f, MonHdrDispNits = 800.0f };
+            var hdrMetadata = new ShaderHdrMetadata { EnableHdrProcessing = false, MonSdrDispNits = 80.0f, MaxYInPQ = 0.52648680933f, MonHdrDispNits = 800.0f };
             var monAdvColorInfo = DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO.CreateGet();
             var monSdrWhiteLevel = DISPLAYCONFIG_SDR_WHITE_LEVEL.CreateGet();
             uint numPathArrayElements = 0;

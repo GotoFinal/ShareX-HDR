@@ -8,6 +8,6 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics
         public bool EnableHdrProcessing;
         public float MonHdrDispNits;
         public float MonSdrDispNits;
-        public float ExposureLevel;
+        public float MaxYInPQ;
     }
 }

@@ -31,6 +31,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Threading;
 using Veldrid;
 
 namespace ShareX.ScreenCaptureLib
@@ -128,7 +129,7 @@ namespace ShareX.ScreenCaptureLib
                 return null;
             }
 
-            if (ModernCaptureSignletonManager.Instance.IsAvailable)
+            if (true) // TODO: some setting, auto detection any screen with hdr enabled?
             {
                 return CaptureRectangleDirect3D11(handle, rect, captureCursor);
             }
@@ -163,6 +164,8 @@ namespace ShareX.ScreenCaptureLib
             }
         }
 
+        private static ModernCapture _captureInstance;
+        private static Lock _captureInstanceLock = new Lock();
         private Bitmap CaptureRectangleDirect3D11(IntPtr handle, Rectangle rect, bool captureCursor = false)
         {
             var captureMonRegions = new List<ModernCaptureMonitorDescription>();
@@ -198,12 +201,14 @@ namespace ShareX.ScreenCaptureLib
             // 3.2 Capture and wait for content
             // 3.3 Shader and draw passes
             // 3.4 Datastream pass, copy
-            var loaded = RenderDoc.Load(out var lib);
-            if (loaded && lib != null) lib.StartFrameCapture();
-            var d3dCapture = ModernCaptureSignletonManager.Instance.Take();
-            bmp = d3dCapture.CaptureAndProcess(catpureItem);
-            ModernCaptureSignletonManager.Instance.Release();
-            if (loaded && lib != null) lib.EndFrameCapture();
+            // var loaded = RenderDoc.Load(out var lib);
+            // if (loaded && lib != null) lib.StartFrameCapture();
+            lock (_captureInstanceLock)
+            {
+                if (_captureInstance == null) _captureInstance = new ModernCapture();
+                bmp = _captureInstance.CaptureAndProcess(catpureItem);
+            }
+            // if (loaded && lib != null) lib.EndFrameCapture();
 
             return bmp;
         }

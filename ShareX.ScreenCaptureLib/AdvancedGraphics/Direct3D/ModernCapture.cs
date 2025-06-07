@@ -22,7 +22,7 @@ public class ModernCapture : IDisposable
 
     private InputElementDescription[] shaderInputElements =
     [
-        new("POSITION", 0, Format.R32G32B32_Float, 0),
+        new("POSITION", 0, Format.R32G32_Float, 0),
         new("TEXCOORD", 0, Format.R32G32_Float, 0)
     ];
 
@@ -74,7 +74,6 @@ public class ModernCapture : IDisposable
             // inspect the duplication-descriptor to know what we actually got
             var desc = dup.Description;
             bool isHdr = desc.ModeDescription.Format == Format.R16G16B16A16_Float;
-
             // create a per-output staging texture we’ll copy into every frame
             var texDesc = new Texture2DDescription
             {
@@ -86,7 +85,7 @@ public class ModernCapture : IDisposable
                 SampleDescription = new SampleDescription(1, 0),
                 Usage = ResourceUsage.Default,
                 BindFlags = BindFlags.ShaderResource,
-                CPUAccessFlags = CpuAccessFlags.Read
+                CPUAccessFlags = CpuAccessFlags.Read | CpuAccessFlags.Write
             };
             var staging = screen.Device.CreateTexture2D(texDesc);
 
@@ -110,7 +109,7 @@ public class ModernCapture : IDisposable
 
     public Bitmap CaptureAndProcess(ModernCaptureItemDescription item)
     {
-        bool forceCpuTonemap = false;
+        bool forceCpuTonemap = true;
 
         // (A) First pass: discover if all Regions live on the *same* ID3D11Device, and gather per-region state:
         ID3D11Device commonDevice = null;
@@ -198,6 +197,7 @@ public class ModernCapture : IDisposable
                 acquireNextFrame = dupState.Dup.AcquireNextFrame(10, out outduplFrameInfo, out resourcee);
                 if (acquireNextFrame.Failure) // TODO: only recreate on some errors?
                 {
+                    dupState.Dup.ReleaseFrame();
                     Console.WriteLine("acquireNextFrame.Failure: " + acquireNextFrame.Description + ", " + acquireNextFrame.ApiCode); // TODO: remove
                     dupState = GetOrCreateDup(state.Region.MonitorInfo.Hmon, true);
                 }
