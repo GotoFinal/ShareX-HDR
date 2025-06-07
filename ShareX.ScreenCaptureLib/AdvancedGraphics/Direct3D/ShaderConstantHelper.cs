@@ -1,6 +1,7 @@
 ﻿using System.Numerics;
 using ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D.Shaders;
 using ShareX.ScreenCaptureLib.AdvancedGraphics.GDI;
+using Vortice.Mathematics;
 
 namespace ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D;
 
@@ -28,7 +29,7 @@ public static class ShaderConstantHelper // naming is hard
             HdrMaxLuminance = maxContentLuminance / 80,
             UserBrightnessScale = settings.BrightnessScale / 100,
             TonemapType = (uint)HdrToneMapType.MapCllToDisplay,
-            MaxYInPQ = imageInfo.MaxYInPQ,
+            // MaxYInPQ = imageInfo.MaxYInPQ,
         };
 
         monitorInfo.QueryMonitorData((colorInfoNullable, sdrInfoNullable, output6) =>
@@ -103,6 +104,28 @@ public static class ShaderConstantHelper // naming is hard
         else
             pixelShader.TonemapType = (uint)HdrToneMapType.None;
 
-        pixelShader.TonemapType = (uint)HdrToneMapType.MapCllToDisplay;
+        pixelShader.TonemapType = 8;
+        pixelShader.DisplayMaxLuminance = 3.375f;
+        pixelShader.HdrMaxLuminance = 3.05f;
+
+
+
+        pixelShader.font_dims = Vector4.Zero;
+        pixelShader.hdr_visualization_flags = new UInt4(0, 0, 0, 4294967295);
+        pixelShader.hdr_visualization = 0;
+        pixelShader.HdrMaxLuminance = 3.05269f;
+        pixelShader.sdr_reference_white = 80;
+        pixelShader.DisplayMaxLuminance = 3.375f;
+        pixelShader.UserBrightnessScale = 1;
+        pixelShader.TonemapType = 8;
+        pixelShader.content_max_cll = new Vector2(0,0);
+        pixelShader.rec709_gamut_hue = Vector4.One;
+        pixelShader.dcip3_gamut_hue = new Vector4(0,1,1,1);
+        pixelShader.rec2020_gamut_hue = new Vector4(0,1,0,1);
+        pixelShader.ap1_gamut_hue = new Vector4(1,1,0,1);
+        pixelShader.ap0_gamut_hue = new Vector4(1,0,1,1);
+        pixelShader.invalid_gamut_hue = new Vector4(1,0,0,1);
+
+        vertexShader.LuminanceScale = new Vector4(1, 0, 0, 0);
     }
 }

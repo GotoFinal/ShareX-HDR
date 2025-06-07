@@ -389,7 +389,7 @@ Vector4 main(PS_INPUT input) : SV_Target
             Format = Format.B8G8R8A8_UNorm,
             SampleDescription = new SampleDescription(1, 0),
             Usage = ResourceUsage.Default,
-            BindFlags = BindFlags.RenderTarget | BindFlags.ShaderResource,
+            BindFlags = BindFlags.RenderTarget,
             CPUAccessFlags = CpuAccessFlags.None,
             MiscFlags = ResourceOptionFlags.None
         };
@@ -431,7 +431,6 @@ Vector4 main(PS_INPUT input) : SV_Target
         ctx.VSSetConstantBuffer(0, vsConstantBuffer);
         ctx.PSSetShader(deviceAccess.pxShader);
         ctx.PSSetConstantBuffer(0, psConstantBuffer);
-        ctx.PSSetSampler(0, deviceAccess.samplerState);
         ctx.PSSetShaderResource(0, hdrSrv);
 
         ctx.RSSetViewport(new Viewport(0, 0, inDesc.Width, inDesc.Height, 0, 1));
