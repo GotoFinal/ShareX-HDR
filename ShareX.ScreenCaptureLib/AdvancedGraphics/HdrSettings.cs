@@ -5,9 +5,6 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics;
 // TODO: all of this should be exposed in GUI
 public class HdrSettings
 {
-    // TODO: store in better place?
-    public static HdrSettings Instance { get; } = new HdrSettings();
-
     private float hdrBrightnessNits = 203;
 
     public float HdrBrightnessNits

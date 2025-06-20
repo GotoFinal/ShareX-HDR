@@ -52,48 +52,6 @@ public static class Direct3DUtils
         return gpuTex.Device.CreateTexture2D(stagingDesc);
     }
 
-    public static Vertex[] ConstructForScreen(ModernCaptureMonitorDescription region)
-    {
-        return
-        [ // Left-Top
-            new Vertex
-            {
-                Position = new Vector2(region.DestD3DVsTopLeft.X, region.DestD3DVsTopLeft.Y),
-                TextureCoord = new Vector2(region.DestD3DPsSamplerTopLeft.X, region.DestD3DPsSamplerTopLeft.Y),
-            },
-            // Right-Top
-            new Vertex
-            {
-                Position = new Vector2(region.DestD3DVsBottomRight.X, region.DestD3DVsTopLeft.Y),
-                TextureCoord = new Vector2(region.DestD3DPsSamplerBottomRight.X, region.DestD3DPsSamplerTopLeft.Y)
-            },
-            // Left-Bottom
-            new Vertex
-            {
-                Position = new Vector2(region.DestD3DVsTopLeft.X, region.DestD3DVsBottomRight.Y),
-                TextureCoord = new Vector2(region.DestD3DPsSamplerTopLeft.X, region.DestD3DPsSamplerBottomRight.Y)
-            },
-            // Right-Top
-            new Vertex
-            {
-                Position = new Vector2(region.DestD3DVsBottomRight.X, region.DestD3DVsTopLeft.Y),
-                TextureCoord = new Vector2(region.DestD3DPsSamplerBottomRight.X, region.DestD3DPsSamplerTopLeft.Y)
-            },
-            // Right-Bottom
-            new Vertex
-            {
-                Position = new Vector2(region.DestD3DVsBottomRight.X, region.DestD3DVsBottomRight.Y),
-                TextureCoord = new Vector2(region.DestD3DPsSamplerBottomRight.X, region.DestD3DPsSamplerBottomRight.Y)
-            },
-            // Left-Bottom
-            new Vertex
-            {
-                Position = new Vector2(region.DestD3DVsTopLeft.X, region.DestD3DVsBottomRight.Y),
-                TextureCoord = new Vector2(region.DestD3DPsSamplerTopLeft.X, region.DestD3DPsSamplerBottomRight.Y)
-            }
-        ];
-    }
-
     public static Vector4[] GetPixelSpan(this ID3D11Texture2D frame)
     {
         var device = frame.Device;

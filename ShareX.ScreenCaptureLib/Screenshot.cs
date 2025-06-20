@@ -45,6 +45,7 @@ namespace ShareX.ScreenCaptureLib
         public int ShadowOffset { get; set; } = 20;
         public bool AutoHideTaskbar { get; set; } = false;
         public bool UseWinRTCaptureAPI { get; set; } = false;
+        public HdrSettings HdrSettings { get; set; } = new HdrSettings();
 
         public Bitmap CaptureRectangle(Rectangle rect)
         {
@@ -206,9 +207,8 @@ namespace ShareX.ScreenCaptureLib
             // 3.4 Datastream pass, copy
             lock (_captureInstanceLock)
             {
-                // TODO: HdrSettings should be stored somehwere?
-                if (_captureInstance == null) _captureInstance = new ModernCapture(HdrSettings.Instance);
-                bmp = _captureInstance.CaptureAndProcess(catpureItem);
+                if (_captureInstance == null) _captureInstance = new ModernCapture(HdrSettings);
+                bmp = _captureInstance.CaptureAndProcess(HdrSettings, catpureItem);
             }
 
             return bmp;

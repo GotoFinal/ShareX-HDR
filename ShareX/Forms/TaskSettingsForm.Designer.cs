@@ -139,7 +139,20 @@
             this.tcCapture = new System.Windows.Forms.TabControl();
             this.tpCaptureGeneral = new System.Windows.Forms.TabPage();
             this.pCapture = new System.Windows.Forms.Panel();
-            this.cbUseWinRTCapture = new System.Windows.Forms.CheckBox();
+
+
+            lblCaptureToneMapType = new System.Windows.Forms.Label();
+            cbToneMapType = new System.Windows.Forms.ComboBox();
+            cbUse99ThPercentileMaxCll = new System.Windows.Forms.CheckBox();
+            lblCaptureSDRScale = new System.Windows.Forms.Label();
+            nudCaptureSDRScale = new System.Windows.Forms.NumericUpDown();
+            lblCaptureBrightnessScale = new System.Windows.Forms.Label();
+            nudCaptureBrightnessScale = new System.Windows.Forms.NumericUpDown();
+            lblCaptureHdrNits = new System.Windows.Forms.Label();
+            nudCaptureHDRNits = new System.Windows.Forms.NumericUpDown();
+            cbUseHDR = new System.Windows.Forms.CheckBox();
+
+
             this.txtCaptureCustomWindow = new System.Windows.Forms.TextBox();
             this.lblCaptureCustomWindow = new System.Windows.Forms.Label();
             this.lblScreenshotDelay = new System.Windows.Forms.Label();
@@ -334,6 +347,10 @@
             this.tcCapture.SuspendLayout();
             this.tpCaptureGeneral.SuspendLayout();
             this.pCapture.SuspendLayout();
+            ((System.ComponentModel.ISupportInitialize)nudCaptureSDRScale).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)nudCaptureBrightnessScale).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)nudCaptureHDRNits).BeginInit();
+
             ((System.ComponentModel.ISupportInitialize)(this.nudCaptureCustomRegionHeight)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudCaptureCustomRegionWidth)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudCaptureCustomRegionY)).BeginInit();
@@ -1180,8 +1197,17 @@
             this.tpCaptureGeneral.Name = "tpCaptureGeneral";
             // 
             // pCapture
-            // 
-            this.pCapture.Controls.Add(this.cbUseWinRTCapture);
+            //
+            pCapture.Controls.Add(lblCaptureToneMapType);
+            pCapture.Controls.Add(cbToneMapType);
+            pCapture.Controls.Add(cbUse99ThPercentileMaxCll);
+            pCapture.Controls.Add(lblCaptureSDRScale);
+            pCapture.Controls.Add(nudCaptureSDRScale);
+            pCapture.Controls.Add(lblCaptureBrightnessScale);
+            pCapture.Controls.Add(nudCaptureBrightnessScale);
+            pCapture.Controls.Add(lblCaptureHdrNits);
+            pCapture.Controls.Add(nudCaptureHDRNits);
+            pCapture.Controls.Add(cbUseHDR);
             this.pCapture.Controls.Add(this.txtCaptureCustomWindow);
             this.pCapture.Controls.Add(this.lblCaptureCustomWindow);
             this.pCapture.Controls.Add(this.lblScreenshotDelay);
@@ -1206,14 +1232,81 @@
             this.pCapture.Controls.Add(this.nudCaptureShadowOffset);
             resources.ApplyResources(this.pCapture, "pCapture");
             this.pCapture.Name = "pCapture";
-            // 
-            // cbUseWinRTCapture
-            // 
-            resources.ApplyResources(this.cbUseWinRTCapture, "cbUseWinRTCapture");
-            this.cbUseWinRTCapture.Name = "cbUseWinRTCapture";
-            this.cbUseWinRTCapture.UseVisualStyleBackColor = true;
-            this.cbUseWinRTCapture.CheckedChanged += new System.EventHandler(this.cbUseWinRTCapture_CheckedChanged);
-            // 
+            //
+            // lblCaptureToneMapType
+            //
+            resources.ApplyResources(lblCaptureToneMapType, "lblCaptureToneMapType");
+            lblCaptureToneMapType.Name = "lblCaptureToneMapType";
+            //
+            // cbToneMapType
+            //
+            cbToneMapType.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            cbToneMapType.FormattingEnabled = true;
+            resources.ApplyResources(cbToneMapType, "cbToneMapType");
+            cbToneMapType.Name = "cbToneMapType";
+            cbToneMapType.SelectedIndexChanged += cbToneMapType_SelectedIndexChanged;
+            //
+            // cbUse99ThPercentileMaxCll
+            //
+            resources.ApplyResources(cbUse99ThPercentileMaxCll, "cbUse99ThPercentileMaxCll");
+            cbUse99ThPercentileMaxCll.Checked = true;
+            cbUse99ThPercentileMaxCll.CheckState = System.Windows.Forms.CheckState.Checked;
+            cbUse99ThPercentileMaxCll.Name = "cbUse99ThPercentileMaxCll";
+            cbUse99ThPercentileMaxCll.UseVisualStyleBackColor = true;
+            cbUse99ThPercentileMaxCll.CheckedChanged += cbUse99ThPercentileMaxCll_CheckedChanged;
+            //
+            // lblCaptureSDRScale
+            //
+            resources.ApplyResources(lblCaptureSDRScale, "lblCaptureSDRScale");
+            lblCaptureSDRScale.Name = "lblCaptureSDRScale";
+            //
+            // nudCaptureSDRScale
+            //
+            nudCaptureSDRScale.DecimalPlaces = 2;
+            resources.ApplyResources(nudCaptureSDRScale, "nudCaptureSDRScale");
+            nudCaptureSDRScale.Maximum = new decimal(new int[] { 2000, 0, 0, 0 });
+            nudCaptureSDRScale.Name = "nudCaptureSDRScale";
+            nudCaptureSDRScale.Value = new decimal(new int[] { 100, 0, 0, 0 });
+            nudCaptureSDRScale.ValueChanged += nudCaptureSDRScale_ValueChanged;
+            //
+            // lblCaptureBrightnessScale
+            //
+            resources.ApplyResources(lblCaptureBrightnessScale, "lblCaptureBrightnessScale");
+            lblCaptureBrightnessScale.Name = "lblCaptureBrightnessScale";
+            //
+            // nudCaptureBrightnessScale
+            //
+            nudCaptureBrightnessScale.DecimalPlaces = 2;
+            resources.ApplyResources(nudCaptureBrightnessScale, "nudCaptureBrightnessScale");
+            nudCaptureBrightnessScale.Maximum = new decimal(new int[] { 2000, 0, 0, 0 });
+            nudCaptureBrightnessScale.Minimum = new decimal(new int[] { 1, 0, 0, 0 });
+            nudCaptureBrightnessScale.Name = "nudCaptureBrightnessScale";
+            nudCaptureBrightnessScale.Value = new decimal(new int[] { 100, 0, 0, 0 });
+            nudCaptureBrightnessScale.ValueChanged += nudCaptureBrightnessScale_ValueChanged;
+            //
+            // lblCaptureHdrNits
+            //
+            resources.ApplyResources(lblCaptureHdrNits, "lblCaptureHdrNits");
+            lblCaptureHdrNits.Name = "lblCaptureHdrNits";
+            //
+            // nudCaptureHDRNits
+            //
+            resources.ApplyResources(nudCaptureHDRNits, "nudCaptureHDRNits");
+            nudCaptureHDRNits.Maximum = new decimal(new int[] { 400, 0, 0, 0 });
+            nudCaptureHDRNits.Minimum = new decimal(new int[] { 80, 0, 0, 0 });
+            nudCaptureHDRNits.Name = "nudCaptureHDRNits";
+            nudCaptureHDRNits.Value = new decimal(new int[] { 203, 0, 0, 0 });
+            nudCaptureHDRNits.ValueChanged += nudCaptureHDRNits_ValueChanged;
+            //
+            // cbUseHDR
+            //
+            resources.ApplyResources(cbUseHDR, "cbUseHDR");
+            cbUseHDR.Checked = true;
+            cbUseHDR.CheckState = System.Windows.Forms.CheckState.Checked;
+            cbUseHDR.Name = "cbUseHDR";
+            cbUseHDR.UseVisualStyleBackColor = true;
+            cbUseHDR.CheckedChanged += cbUseWinRTCapture_CheckedChanged;
+            //
             // txtCaptureCustomWindow
             // 
             resources.ApplyResources(this.txtCaptureCustomWindow, "txtCaptureCustomWindow");
@@ -2488,6 +2581,9 @@
             this.tpCaptureGeneral.PerformLayout();
             this.pCapture.ResumeLayout(false);
             this.pCapture.PerformLayout();
+            ((System.ComponentModel.ISupportInitialize)nudCaptureSDRScale).EndInit();
+            ((System.ComponentModel.ISupportInitialize)nudCaptureBrightnessScale).EndInit();
+            ((System.ComponentModel.ISupportInitialize)nudCaptureHDRNits).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudCaptureCustomRegionHeight)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudCaptureCustomRegionWidth)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.nudCaptureCustomRegionY)).EndInit();
@@ -2821,6 +2917,15 @@
         private System.Windows.Forms.Button btnCustomActionCompletedSoundPath;
         private System.Windows.Forms.TextBox txtCustomActionCompletedSoundPath;
         private System.Windows.Forms.CheckBox cbUseCustomActionCompletedSound;
-        private System.Windows.Forms.CheckBox cbUseWinRTCapture;
+        private System.Windows.Forms.CheckBox cbUseHDR;
+        private System.Windows.Forms.Label lblCaptureHdrNits;
+        private System.Windows.Forms.NumericUpDown nudCaptureHDRNits;
+        private System.Windows.Forms.Label lblCaptureBrightnessScale;
+        private System.Windows.Forms.NumericUpDown nudCaptureBrightnessScale;
+        private System.Windows.Forms.CheckBox cbUse99ThPercentileMaxCll;
+        private System.Windows.Forms.Label lblCaptureSDRScale;
+        private System.Windows.Forms.NumericUpDown nudCaptureSDRScale;
+        private System.Windows.Forms.Label lblCaptureToneMapType;
+        private System.Windows.Forms.ComboBox cbToneMapType;
     }
 }

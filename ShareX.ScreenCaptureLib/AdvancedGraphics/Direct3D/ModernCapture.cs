@@ -186,8 +186,9 @@ public class ModernCapture : IDisposable, DisposableCache
         public Rectangle SrcRect;
     }
 
-    public Bitmap CaptureAndProcess(ModernCaptureItemDescription item)
+    public Bitmap CaptureAndProcess(HdrSettings hdrSettings, ModernCaptureItemDescription item)
     {
+        Settings = hdrSettings;
         List<DisposableCache> disposableCaches = [];
         try
         {

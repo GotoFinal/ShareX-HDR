@@ -75,7 +75,7 @@ namespace ShareX
             Bitmap canvas;
             Screenshot screenshot = TaskHelpers.GetScreenshot(taskSettings);
             screenshot.CaptureCursor = false;
-            screenshot.UseWinRTCaptureAPI = taskSettings.CaptureSettings.UseWinRTGraphicsCaptureAPI;
+            screenshot.UseWinRTCaptureAPI = taskSettings.CaptureSettings.UseHDRSupport;
 
             if (taskSettings.CaptureSettings.SurfaceOptions.ActiveMonitorMode)
             {

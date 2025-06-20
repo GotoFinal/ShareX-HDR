@@ -37,6 +37,7 @@ using System.ComponentModel.Design;
 using System.Drawing;
 using System.Drawing.Design;
 using System.Linq;
+using ShareX.ScreenCaptureLib.AdvancedGraphics;
 
 namespace ShareX
 {
@@ -380,7 +381,8 @@ namespace ShareX
         public bool CaptureAutoHideTaskbar = false;
         public Rectangle CaptureCustomRegion = new Rectangle(0, 0, 0, 0);
         public string CaptureCustomWindow = "";
-        public bool UseWinRTGraphicsCaptureAPI = true;
+        public bool UseHDRSupport = true;
+        public HdrSettings HdrSettings = new HdrSettings();
 
         #endregion Capture / General
 

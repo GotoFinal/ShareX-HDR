@@ -45,10 +45,10 @@ public class Tonemapping
         float u1 = u0 + (srcBox.Width / (float)rawDesc.Width);
         float v1 = v0 + (srcBox.Height / (float)rawDesc.Height);
 
-        float left = -1f;
-        float right = 1;
-        float bottom = -1f;
-        float top = 1;
+        float left = -1.0f;
+        float right = 1.0f;
+        float bottom = -1.0f;
+        float top = 1.0f;
         var quadVerts = new[]
         {
             new Vertex(new Vector2(left, top),  new Vector2(u0, v0)),
@@ -86,10 +86,10 @@ public class Tonemapping
         ctx.OMSetRenderTargets(ldrRtv);
 
         var vp = new Viewport {
-            X = 0,
-            Y = 0,
-            Width    = destBox.Right  - destBox.Left,
-            Height   = destBox.Bottom - destBox.Top,
+            X = destBox.Left,
+            Y = destBox.Top,
+            Width    = destBox.Width,
+            Height   = destBox.Height,
             MinDepth = 0,
             MaxDepth = 1
         };

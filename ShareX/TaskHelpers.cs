@@ -1994,7 +1994,8 @@ namespace ShareX
                 CaptureShadow = taskSettings.CaptureSettings.CaptureShadow,
                 ShadowOffset = taskSettings.CaptureSettings.CaptureShadowOffset,
                 AutoHideTaskbar = taskSettings.CaptureSettings.CaptureAutoHideTaskbar,
-                UseWinRTCaptureAPI = taskSettings.CaptureSettings.UseWinRTGraphicsCaptureAPI,
+                UseWinRTCaptureAPI = taskSettings.CaptureSettings.UseHDRSupport,
+                HdrSettings = taskSettings.CaptureSettings.HdrSettings,
             };
 
             return screenshot;

@@ -3063,35 +3063,276 @@
   <data name="&gt;&gt;tpImage.ZOrder" xml:space="preserve">
     <value>2</value>
   </data>
-  <data name="cbUseWinRTCapture.AutoSize" type="System.Boolean, mscorlib">
+
+  <data name="lblCaptureToneMapType.AutoSize" type="System.Boolean, mscorlib">
     <value>True</value>
   </data>
-  <data name="cbUseWinRTCapture.Location" type="System.Drawing.Point, System.Drawing">
-    <value>10, 410</value>
+  <data name="lblCaptureToneMapType.ImeMode" type="System.Windows.Forms.ImeMode, System.Windows.Forms">
+    <value>NoControl</value>
   </data>
-  <data name="cbUseWinRTCapture.Margin" type="System.Windows.Forms.Padding, System.Windows.Forms">
-    <value>4, 4, 4, 4</value>
+  <data name="lblCaptureToneMapType.Location" type="System.Drawing.Point, System.Drawing">
+    <value>420, 430</value>
   </data>
-  <data name="cbUseWinRTCapture.Size" type="System.Drawing.Size, System.Drawing">
-    <value>273, 21</value>
+  <data name="lblCaptureToneMapType.Size" type="System.Drawing.Size, System.Drawing">
+    <value>121, 15</value>
   </data>
-  <data name="cbUseWinRTCapture.TabIndex" type="System.Int32, mscorlib">
-    <value>0</value>
+  <data name="lblCaptureToneMapType.TabIndex" type="System.Int32, mscorlib">
+    <value>29</value>
   </data>
-  <data name="cbUseWinRTCapture.Text" xml:space="preserve">
-    <value>HDR support</value>
+  <data name="lblCaptureToneMapType.Text" xml:space="preserve">
+    <value>HDR Tone Map Mode</value>
   </data>
-  <data name="&gt;&gt;cbUseWinRTCapture.Name" xml:space="preserve">
-    <value>cbUseWinRTCapture</value>
+  <data name="&gt;&gt;lblCaptureToneMapType.Name" xml:space="preserve">
+    <value>lblCaptureToneMapType</value>
   </data>
-  <data name="&gt;&gt;cbUseWinRTCapture.Type" xml:space="preserve">
-    <value>System.Windows.Forms.CheckBox, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  <data name="&gt;&gt;lblCaptureToneMapType.Type" xml:space="preserve">
+    <value>System.Windows.Forms.Label, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </data>
-  <data name="&gt;&gt;cbUseWinRTCapture.Parent" xml:space="preserve">
+  <data name="&gt;&gt;lblCaptureToneMapType.Parent" xml:space="preserve">
     <value>pCapture</value>
   </data>
-  <data name="&gt;&gt;cbUseWinRTCapture.ZOrder" xml:space="preserve">
+  <data name="&gt;&gt;lblCaptureToneMapType.ZOrder" xml:space="preserve">
     <value>0</value>
+  </data>
+  <data name="cbToneMapType.Location" type="System.Drawing.Point, System.Drawing">
+    <value>420, 450</value>
+  </data>
+  <data name="cbToneMapType.Size" type="System.Drawing.Size, System.Drawing">
+    <value>64, 23</value>
+  </data>
+  <data name="cbToneMapType.TabIndex" type="System.Int32, mscorlib">
+    <value>30</value>
+  </data>
+  <data name="&gt;&gt;cbToneMapType.Name" xml:space="preserve">
+    <value>cbToneMapType</value>
+  </data>
+  <data name="&gt;&gt;cbToneMapType.Type" xml:space="preserve">
+    <value>System.Windows.Forms.ComboBox, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;cbToneMapType.Parent" xml:space="preserve">
+    <value>pCapture</value>
+  </data>
+  <data name="&gt;&gt;cbToneMapType.ZOrder" xml:space="preserve">
+    <value>1</value>
+  </data>
+  <data name="cbUse99ThPercentileMaxCll.AutoSize" type="System.Boolean, mscorlib">
+    <value>True</value>
+  </data>
+  <data name="cbUse99ThPercentileMaxCll.ImeMode" type="System.Windows.Forms.ImeMode, System.Windows.Forms">
+    <value>NoControl</value>
+  </data>
+  <data name="cbUse99ThPercentileMaxCll.Location" type="System.Drawing.Point, System.Drawing">
+    <value>148, 410</value>
+  </data>
+  <data name="cbUse99ThPercentileMaxCll.Size" type="System.Drawing.Size, System.Drawing">
+    <value>132, 19</value>
+  </data>
+  <data name="cbUse99ThPercentileMaxCll.TabIndex" type="System.Int32, mscorlib">
+    <value>28</value>
+  </data>
+  <data name="cbUse99ThPercentileMaxCll.Text" xml:space="preserve">
+    <value>Limit max HDR light</value>
+  </data>
+  <data name="&gt;&gt;cbUse99ThPercentileMaxCll.Name" xml:space="preserve">
+    <value>cbUse99ThPercentileMaxCll</value>
+  </data>
+  <data name="&gt;&gt;cbUse99ThPercentileMaxCll.Type" xml:space="preserve">
+    <value>System.Windows.Forms.CheckBox, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;cbUse99ThPercentileMaxCll.Parent" xml:space="preserve">
+    <value>pCapture</value>
+  </data>
+  <data name="&gt;&gt;cbUse99ThPercentileMaxCll.ZOrder" xml:space="preserve">
+    <value>2</value>
+  </data>
+  <data name="lblCaptureSDRScale.AutoSize" type="System.Boolean, mscorlib">
+    <value>True</value>
+  </data>
+  <data name="lblCaptureSDRScale.ImeMode" type="System.Windows.Forms.ImeMode, System.Windows.Forms">
+    <value>NoControl</value>
+  </data>
+  <data name="lblCaptureSDRScale.Location" type="System.Drawing.Point, System.Drawing">
+    <value>280, 430</value>
+  </data>
+  <data name="lblCaptureSDRScale.Size" type="System.Drawing.Size, System.Drawing">
+    <value>92, 15</value>
+  </data>
+  <data name="lblCaptureSDRScale.TabIndex" type="System.Int32, mscorlib">
+    <value>26</value>
+  </data>
+  <data name="lblCaptureSDRScale.Text" xml:space="preserve">
+    <value>SDR White Level</value>
+  </data>
+  <data name="&gt;&gt;lblCaptureSDRScale.Name" xml:space="preserve">
+    <value>lblCaptureSDRScale</value>
+  </data>
+  <data name="&gt;&gt;lblCaptureSDRScale.Type" xml:space="preserve">
+    <value>System.Windows.Forms.Label, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;lblCaptureSDRScale.Parent" xml:space="preserve">
+    <value>pCapture</value>
+  </data>
+  <data name="&gt;&gt;lblCaptureSDRScale.ZOrder" xml:space="preserve">
+    <value>3</value>
+  </data>
+  <data name="nudCaptureSDRScale.Location" type="System.Drawing.Point, System.Drawing">
+    <value>280, 450</value>
+  </data>
+  <data name="nudCaptureSDRScale.Size" type="System.Drawing.Size, System.Drawing">
+    <value>56, 23</value>
+  </data>
+  <data name="nudCaptureSDRScale.TabIndex" type="System.Int32, mscorlib">
+    <value>27</value>
+  </data>
+  <data name="nudCaptureSDRScale.TextAlign" type="System.Windows.Forms.HorizontalAlignment, System.Windows.Forms">
+    <value>Center</value>
+  </data>
+  <data name="&gt;&gt;nudCaptureSDRScale.Name" xml:space="preserve">
+    <value>nudCaptureSDRScale</value>
+  </data>
+  <data name="&gt;&gt;nudCaptureSDRScale.Type" xml:space="preserve">
+    <value>System.Windows.Forms.NumericUpDown, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;nudCaptureSDRScale.Parent" xml:space="preserve">
+    <value>pCapture</value>
+  </data>
+  <data name="&gt;&gt;nudCaptureSDRScale.ZOrder" xml:space="preserve">
+    <value>4</value>
+  </data>
+  <data name="lblCaptureBrightnessScale.AutoSize" type="System.Boolean, mscorlib">
+    <value>True</value>
+  </data>
+  <data name="lblCaptureBrightnessScale.ImeMode" type="System.Windows.Forms.ImeMode, System.Windows.Forms">
+    <value>NoControl</value>
+  </data>
+  <data name="lblCaptureBrightnessScale.Location" type="System.Drawing.Point, System.Drawing">
+    <value>150, 430</value>
+  </data>
+  <data name="lblCaptureBrightnessScale.Size" type="System.Drawing.Size, System.Drawing">
+    <value>98, 15</value>
+  </data>
+  <data name="lblCaptureBrightnessScale.TabIndex" type="System.Int32, mscorlib">
+    <value>24</value>
+  </data>
+  <data name="lblCaptureBrightnessScale.Text" xml:space="preserve">
+    <value>Brightness Scale: </value>
+  </data>
+  <data name="&gt;&gt;lblCaptureBrightnessScale.Name" xml:space="preserve">
+    <value>lblCaptureBrightnessScale</value>
+  </data>
+  <data name="&gt;&gt;lblCaptureBrightnessScale.Type" xml:space="preserve">
+    <value>System.Windows.Forms.Label, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;lblCaptureBrightnessScale.Parent" xml:space="preserve">
+    <value>pCapture</value>
+  </data>
+  <data name="&gt;&gt;lblCaptureBrightnessScale.ZOrder" xml:space="preserve">
+    <value>5</value>
+  </data>
+  <data name="nudCaptureBrightnessScale.Location" type="System.Drawing.Point, System.Drawing">
+    <value>150, 450</value>
+  </data>
+  <data name="nudCaptureBrightnessScale.Size" type="System.Drawing.Size, System.Drawing">
+    <value>56, 23</value>
+  </data>
+  <data name="nudCaptureBrightnessScale.TabIndex" type="System.Int32, mscorlib">
+    <value>25</value>
+  </data>
+  <data name="nudCaptureBrightnessScale.TextAlign" type="System.Windows.Forms.HorizontalAlignment, System.Windows.Forms">
+    <value>Center</value>
+  </data>
+  <data name="&gt;&gt;nudCaptureBrightnessScale.Name" xml:space="preserve">
+    <value>nudCaptureBrightnessScale</value>
+  </data>
+  <data name="&gt;&gt;nudCaptureBrightnessScale.Type" xml:space="preserve">
+    <value>System.Windows.Forms.NumericUpDown, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;nudCaptureBrightnessScale.Parent" xml:space="preserve">
+    <value>pCapture</value>
+  </data>
+  <data name="&gt;&gt;nudCaptureBrightnessScale.ZOrder" xml:space="preserve">
+    <value>6</value>
+  </data>
+  <data name="lblCaptureHdrNits.AutoSize" type="System.Boolean, mscorlib">
+    <value>True</value>
+  </data>
+  <data name="lblCaptureHdrNits.ImeMode" type="System.Windows.Forms.ImeMode, System.Windows.Forms">
+    <value>NoControl</value>
+  </data>
+  <data name="lblCaptureHdrNits.Location" type="System.Drawing.Point, System.Drawing">
+    <value>8, 430</value>
+  </data>
+  <data name="lblCaptureHdrNits.Size" type="System.Drawing.Size, System.Drawing">
+    <value>119, 15</value>
+  </data>
+  <data name="lblCaptureHdrNits.TabIndex" type="System.Int32, mscorlib">
+    <value>22</value>
+  </data>
+  <data name="lblCaptureHdrNits.Text" xml:space="preserve">
+    <value>HDR Brightness Nits: </value>
+  </data>
+  <data name="&gt;&gt;lblCaptureHdrNits.Name" xml:space="preserve">
+    <value>lblCaptureHdrNits</value>
+  </data>
+  <data name="&gt;&gt;lblCaptureHdrNits.Type" xml:space="preserve">
+    <value>System.Windows.Forms.Label, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;lblCaptureHdrNits.Parent" xml:space="preserve">
+    <value>pCapture</value>
+  </data>
+  <data name="&gt;&gt;lblCaptureHdrNits.ZOrder" xml:space="preserve">
+    <value>7</value>
+  </data>
+  <data name="nudCaptureHDRNits.Location" type="System.Drawing.Point, System.Drawing">
+    <value>11, 450</value>
+  </data>
+  <data name="nudCaptureHDRNits.Size" type="System.Drawing.Size, System.Drawing">
+    <value>56, 23</value>
+  </data>
+  <data name="nudCaptureHDRNits.TabIndex" type="System.Int32, mscorlib">
+    <value>23</value>
+  </data>
+  <data name="nudCaptureHDRNits.TextAlign" type="System.Windows.Forms.HorizontalAlignment, System.Windows.Forms">
+    <value>Center</value>
+  </data>
+  <data name="&gt;&gt;nudCaptureHDRNits.Name" xml:space="preserve">
+    <value>nudCaptureHDRNits</value>
+  </data>
+  <data name="&gt;&gt;nudCaptureHDRNits.Type" xml:space="preserve">
+    <value>System.Windows.Forms.NumericUpDown, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;nudCaptureHDRNits.Parent" xml:space="preserve">
+    <value>pCapture</value>
+  </data>
+  <data name="&gt;&gt;nudCaptureHDRNits.ZOrder" xml:space="preserve">
+    <value>8</value>
+  </data>
+  <data name="cbUseHDR.AutoSize" type="System.Boolean, mscorlib">
+    <value>True</value>
+  </data>
+  <data name="cbUseHDR.Location" type="System.Drawing.Point, System.Drawing">
+    <value>8, 410</value>
+  </data>
+  <data name="cbUseHDR.Size" type="System.Drawing.Size, System.Drawing">
+    <value>94, 19</value>
+  </data>
+  <data name="cbUseHDR.TabIndex" type="System.Int32, mscorlib">
+    <value>0</value>
+  </data>
+  <data name="cbUseHDR.Text" xml:space="preserve">
+    <value>HDR support</value>
+  </data>
+  <data name="&gt;&gt;cbUseHDR.Name" xml:space="preserve">
+    <value>cbUseHDR</value>
+  </data>
+  <data name="&gt;&gt;cbUseHDR.Type" xml:space="preserve">
+    <value>System.Windows.Forms.CheckBox, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;cbUseHDR.Parent" xml:space="preserve">
+    <value>pCapture</value>
+  </data>
+  <data name="&gt;&gt;cbUseHDR.ZOrder" xml:space="preserve">
+    <value>9</value>
   </data>
   <data name="txtCaptureCustomWindow.Location" type="System.Drawing.Point, System.Drawing">
     <value>10, 380</value>
