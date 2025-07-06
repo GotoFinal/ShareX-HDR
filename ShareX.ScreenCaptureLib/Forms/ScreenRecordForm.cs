@@ -121,12 +121,20 @@ namespace ShareX.ScreenCaptureLib
             }
             Region = region;
 
+            FormBorderStyle = FormBorderStyle.None;
+            BackColor         = Color.Magenta;
+            TransparencyKey   = Color.Magenta;
             Timer = new Stopwatch();
             UpdateTimer();
 
             RecordResetEvent = new ManualResetEvent(false);
 
             ChangeState(ScreenRecordState.Waiting);
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            e.Graphics.Clear(BackColor);
         }
 
         protected override void Dispose(bool disposing)
