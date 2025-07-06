@@ -44,8 +44,16 @@ namespace ShareX.ScreenCaptureLib
         public bool CaptureShadow { get; set; } = false;
         public int ShadowOffset { get; set; } = 20;
         public bool AutoHideTaskbar { get; set; } = false;
-        public bool UseWinRTCaptureAPI { get; set; } = false;
+        public bool UseWinRTCaptureAPI { get; set; } = true;
         public HdrSettings HdrSettings { get; set; } = new HdrSettings();
+
+        public static Screenshot FromRegionCapture(RegionCaptureOptions regionCaptureOptions)
+        {
+            Screenshot screenshot = new Screenshot();
+            screenshot.UseWinRTCaptureAPI = regionCaptureOptions.UseHdr;
+            screenshot.HdrSettings = regionCaptureOptions.HdrSettings;
+            return screenshot;
+        }
 
         public Bitmap CaptureRectangle(Rectangle rect)
         {

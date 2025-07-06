@@ -23,6 +23,8 @@
 
 #endregion License Information (GPL v3)
 
+using ShareX.ScreenCaptureLib.AdvancedGraphics;
+
 namespace ShareX.ScreenCaptureLib
 {
     public class ScrollingCaptureOptions
@@ -34,5 +36,7 @@ namespace ShareX.ScreenCaptureLib
         public bool AutoIgnoreBottomEdge { get; set; } = true;
         public bool AutoUpload { get; set; } = false;
         public bool ShowRegion { get; set; } = true;
+        public bool UseHdr { get; set; } = true;
+        public HdrSettings HdrSettings { get; set; } = new HdrSettings();
     }
 }

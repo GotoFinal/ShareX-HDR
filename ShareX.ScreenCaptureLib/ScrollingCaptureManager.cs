@@ -115,6 +115,8 @@ namespace ShareX.ScreenCaptureLib
 
                     Screenshot screenshot = new Screenshot()
                     {
+                        UseWinRTCaptureAPI = Options.UseHdr,
+                        HdrSettings = Options.HdrSettings,
                         CaptureCursor = false
                     };
 

@@ -208,7 +208,9 @@ namespace ShareX.ScreenCaptureLib
                     MagnifierPixelSize = options.MagnifierPixelSize,
                     ShowCrosshair = options.ShowCrosshair,
                     AnnotationOptions = options.AnnotationOptions,
-                    ScreenColorPickerInfoText = options.ScreenColorPickerInfoText
+                    ScreenColorPickerInfoText = options.ScreenColorPickerInfoText,
+                    UseHdr = options.UseHdr,
+                    HdrSettings = options.HdrSettings,
                 };
             }
         }
