@@ -23,7 +23,7 @@ namespace ShareX.ScreenCaptureLib.AdvancedGraphics
 
     public class ModernCaptureItemDescription
     {
-        public List<ModernCaptureMonitorDescription> Regions { get; private set; }
+        public List<ModernCaptureMonitorDescription> Regions { get; set; }
         public Rectangle CanvasRect { get; private set; }
 
         public ModernCaptureItemDescription(Rectangle canvas, List<ModernCaptureMonitorDescription> monRegions)

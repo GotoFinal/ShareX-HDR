@@ -6,18 +6,18 @@ using System.Threading;
 using ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D.Shaders;
 using ShareX.ScreenCaptureLib.AdvancedGraphics.GDI;
 using SharpGen.Runtime;
-using Veldrid;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
-using Vortice.DXGI.Debug;
 using Vortice.Mathematics;
 
 namespace ShareX.ScreenCaptureLib.AdvancedGraphics.Direct3D;
 
 public class ModernCapture : IDisposable, DisposableCache
 {
+#if DEBUG
     private IDXGIDebug1 debug;
+#endif
     private DeviceCache deviceCache;
     private IDXGIFactory1 idxgiFactory1;
     private HdrSettings Settings;
@@ -35,14 +35,12 @@ public class ModernCapture : IDisposable, DisposableCache
     public ModernCapture(HdrSettings settings)
     {
 #if DEBUG
-            // Check memory leaks in debug config
-            Configuration.EnableObjectTracking = true;
+        DXGI.DXGIGetDebugInterface1(out debug).CheckError();
 #endif
 
         Settings = settings;
         deviceCache = new DeviceCache(InitializeDevice);
         idxgiFactory1 = DXGI.CreateDXGIFactory1<IDXGIFactory1>();
-        DXGI.DXGIGetDebugInterface1(out debug).CheckError();
         InitializeShaders();
         if (settings.SaveDevices)
         {
@@ -53,7 +51,9 @@ public class ModernCapture : IDisposable, DisposableCache
     private void ReInit()
     {
         Dispose();
+#if DEBUG
         DXGI.DXGIGetDebugInterface1(out debug).CheckError();
+#endif
         deviceCache = new DeviceCache(InitializeDevice);
         idxgiFactory1 = DXGI.CreateDXGIFactory1<IDXGIFactory1>();
         if (Settings.SaveDevices)
@@ -64,11 +64,13 @@ public class ModernCapture : IDisposable, DisposableCache
 
     private void PrintDebug()
     {
+#if DEBUG
         debug.ReportLiveObjects(DXGI.DebugAll,ReportLiveObjectFlags.Summary);
         // TODO: how to do this correctly?
         var idxgiInfoQueue = debug.QueryInterface<IDXGIInfoQueue>();
         var infoQueueMessage = idxgiInfoQueue.GetMessage(DXGI.DebugAll, 0);
         Console.WriteLine(infoQueueMessage.Description);
+#endif
     }
 
     private readonly Dictionary<IntPtr /*hmon*/, DuplicationState> _duplications = new();
@@ -188,6 +190,8 @@ public class ModernCapture : IDisposable, DisposableCache
 
     public Bitmap CaptureAndProcess(HdrSettings hdrSettings, ModernCaptureItemDescription item)
     {
+        // TODO: support multi-gpu setups
+        item.Regions = CursorFilter.FilterByCursorGpu(deviceCache, idxgiFactory1, item.Regions);
         Settings = hdrSettings;
         List<DisposableCache> disposableCaches = [];
         try
@@ -242,9 +246,10 @@ public class ModernCapture : IDisposable, DisposableCache
             {
                 throw new Exception("💀 We currently don't support screenshots across multiple GPUs");
             }
-
+#if DEBUG
             var loaded = RenderDoc.Load(out var lib);
             if (loaded && lib != null) lib.StartFrameCapture();
+#endif
 
             // (B) If GPU composition is allowed, create one big GPU canvas now:
             ID3D11Texture2D canvasGpu = null;
@@ -361,7 +366,9 @@ public class ModernCapture : IDisposable, DisposableCache
 
             canvasGpu.Dispose();
             stagingCanvas.Dispose();
+#if DEBUG
             if (loaded && lib != null) lib.EndFrameCapture();
+#endif
             return finalBitmap;
         }
         catch (Exception e)
@@ -433,7 +440,9 @@ public class ModernCapture : IDisposable, DisposableCache
         _duplications.Clear();
         deviceCache?.Dispose();
         deviceCache = null;
+#if DEBUG
         debug?.Dispose();
+#endif
     }
 
     public void ReleaseCachedValues(HdrSettings settings)

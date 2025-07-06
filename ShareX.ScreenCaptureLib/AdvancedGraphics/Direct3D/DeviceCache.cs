@@ -34,11 +34,11 @@ class DeviceCache : IDisposable, DisposableCache
 
     // private ID3D11Device tempForcedDeviceCache;
 
-    public ScreenDeviceAccess GetOutputForScreen(IDXGIFactory1 factory, IntPtr hMon)
+    public ScreenDeviceAccess GetOutputForScreen(IDXGIFactory1 factory, IntPtr hMon, bool initDevice  = true) // TODO: separate function for dontInit/
     {
         var output = GetOrCreateOutput(factory, hMon);
         devices.TryGetValue(output.Adapter.Description.DeviceId, out DeviceAccess deviceAccess);
-        if (deviceAccess == null || deviceAccess.Device.DeviceRemovedReason.Failure)
+        if (initDevice && (deviceAccess == null || deviceAccess.Device.DeviceRemovedReason.Failure))
         {
             if (deviceAccess?.Device != null)
             {
@@ -67,12 +67,12 @@ class DeviceCache : IDisposable, DisposableCache
             devices[output.Adapter.Description.DeviceId] = deviceAccess;
         }
 
-        if (deviceAccess == null || deviceAccess.Device == null) throw new ApplicationException("Could not create device for screen capture.");
+        if (initDevice && (deviceAccess == null || deviceAccess.Device == null)) throw new ApplicationException("Could not create device for screen capture.");
 
         return new ScreenDeviceAccess
         {
             Adapter = output.Adapter,
-            Device = deviceAccess.Device,
+            Device = deviceAccess?.Device,
             Context = deviceAccess,
             Output = output.Output,
         };
