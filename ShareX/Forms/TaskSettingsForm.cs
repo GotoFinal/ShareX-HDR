@@ -282,7 +282,9 @@ namespace ShareX
             cbCaptureAutoHideTaskbar.Checked = TaskSettings.CaptureSettings.CaptureAutoHideTaskbar;
             TaskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
             cbUseHDRSupport.Checked = TaskSettings.CaptureSettings.UseHDRSupport;
-            nudHDRBrightnessNits.Enabled = lblHDRBrightnessNits.Enabled = TaskSettings.CaptureSettings.UseHDRSupport;
+            cbHDRToneMappingMode.Items.AddRange(Helpers.GetEnumDescriptions<HdrToneMappingMode>());
+            cbHDRToneMappingMode.SelectedIndex = (int)TaskSettings.CaptureSettings.HdrSettings.ToneMappingMode;
+            SetHdrControlsEnabled(TaskSettings.CaptureSettings.UseHDRSupport);
             nudHDRBrightnessNits.SetValue((decimal)TaskSettings.CaptureSettings.HdrSettings.HdrBrightnessNits);
             nudCaptureCustomRegionX.SetValue(TaskSettings.CaptureSettings.CaptureCustomRegion.X);
             nudCaptureCustomRegionY.SetValue(TaskSettings.CaptureSettings.CaptureCustomRegion.Y);
@@ -1116,7 +1118,23 @@ namespace ShareX
         private void cbUseHDRSupport_CheckedChanged(object sender, EventArgs e)
         {
             TaskSettings.CaptureSettings.UseHDRSupport = cbUseHDRSupport.Checked;
-            nudHDRBrightnessNits.Enabled = lblHDRBrightnessNits.Enabled = cbUseHDRSupport.Checked;
+            SetHdrControlsEnabled(cbUseHDRSupport.Checked);
+        }
+
+        private void SetHdrControlsEnabled(bool enabled)
+        {
+            cbHDRToneMappingMode.Enabled = lblHDRToneMappingMode.Enabled = enabled;
+            nudHDRBrightnessNits.Enabled = lblHDRBrightnessNits.Enabled = enabled;
+        }
+
+        private void cbHDRToneMappingMode_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (cbHDRToneMappingMode.SelectedIndex >= 0)
+            {
+                TaskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
+                TaskSettings.CaptureSettings.HdrSettings.ToneMappingMode =
+                    (HdrToneMappingMode)cbHDRToneMappingMode.SelectedIndex;
+            }
         }
 
         private void nudHDRBrightnessNits_ValueChanged(object sender, EventArgs e)

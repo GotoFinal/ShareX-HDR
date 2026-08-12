@@ -139,6 +139,8 @@
             tcCapture = new System.Windows.Forms.TabControl();
             tpCaptureGeneral = new System.Windows.Forms.TabPage();
             pCapture = new System.Windows.Forms.Panel();
+            cbHDRToneMappingMode = new System.Windows.Forms.ComboBox();
+            lblHDRToneMappingMode = new System.Windows.Forms.Label();
             nudHDRBrightnessNits = new System.Windows.Forms.NumericUpDown();
             lblHDRBrightnessNits = new System.Windows.Forms.Label();
             cbUseHDRSupport = new System.Windows.Forms.CheckBox();
@@ -1191,6 +1193,8 @@
             // 
             // pCapture
             // 
+            pCapture.Controls.Add(cbHDRToneMappingMode);
+            pCapture.Controls.Add(lblHDRToneMappingMode);
             pCapture.Controls.Add(nudHDRBrightnessNits);
             pCapture.Controls.Add(lblHDRBrightnessNits);
             pCapture.Controls.Add(cbUseHDRSupport);
@@ -1219,6 +1223,19 @@
             pCapture.Controls.Add(nudCaptureShadowOffset);
             resources.ApplyResources(pCapture, "pCapture");
             pCapture.Name = "pCapture";
+            //
+            // cbHDRToneMappingMode
+            //
+            cbHDRToneMappingMode.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            cbHDRToneMappingMode.FormattingEnabled = true;
+            resources.ApplyResources(cbHDRToneMappingMode, "cbHDRToneMappingMode");
+            cbHDRToneMappingMode.Name = "cbHDRToneMappingMode";
+            cbHDRToneMappingMode.SelectedIndexChanged += cbHDRToneMappingMode_SelectedIndexChanged;
+            //
+            // lblHDRToneMappingMode
+            //
+            resources.ApplyResources(lblHDRToneMappingMode, "lblHDRToneMappingMode");
+            lblHDRToneMappingMode.Name = "lblHDRToneMappingMode";
             //
             // nudHDRBrightnessNits
             //
@@ -2644,6 +2661,8 @@
         private System.Windows.Forms.NumericUpDown nudScreenshotDelay;
         private System.Windows.Forms.NumericUpDown nudCaptureShadowOffset;
         private System.Windows.Forms.CheckBox cbUseHDRSupport;
+        private System.Windows.Forms.ComboBox cbHDRToneMappingMode;
+        private System.Windows.Forms.Label lblHDRToneMappingMode;
         private System.Windows.Forms.Label lblHDRBrightnessNits;
         private System.Windows.Forms.NumericUpDown nudHDRBrightnessNits;
         private System.Windows.Forms.CheckBox cbCaptureClientArea;

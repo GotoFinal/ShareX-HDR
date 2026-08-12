@@ -127,7 +127,8 @@ namespace ShareX.ScreenCaptureLib
                             using Bitmap monitorBitmap = captureDevice.CaptureMonitor(
                                 target.Monitor,
                                 settings,
-                                target.SdrWhiteNits);
+                                target.SdrWhiteNits,
+                                target.MaxLuminanceNits);
                             DrawMonitorIntersection(
                                 graphics,
                                 monitorBitmap,
@@ -225,7 +226,8 @@ namespace ShareX.ScreenCaptureLib
                     intersection,
                     monitor,
                     metadata?.IsHdrActive == true,
-                    metadata?.SdrWhiteNits ?? 203f));
+                    metadata?.SdrWhiteNits ?? 203f,
+                    metadata?.MaxLuminanceNits ?? 1000f));
             }
 
             return targets;
@@ -238,19 +240,22 @@ namespace ShareX.ScreenCaptureLib
             public IntPtr Monitor { get; }
             public bool IsHdrActive { get; }
             public float SdrWhiteNits { get; }
+            public float MaxLuminanceNits { get; }
 
             public MonitorCaptureTarget(
                 Rectangle monitorBounds,
                 Rectangle intersection,
                 IntPtr monitor,
                 bool isHdrActive,
-                float sdrWhiteNits)
+                float sdrWhiteNits,
+                float maxLuminanceNits)
             {
                 MonitorBounds = monitorBounds;
                 Intersection = intersection;
                 Monitor = monitor;
                 IsHdrActive = isHdrActive;
                 SdrWhiteNits = sdrWhiteNits;
+                MaxLuminanceNits = maxLuminanceNits;
             }
         }
 
@@ -296,7 +301,8 @@ namespace ShareX.ScreenCaptureLib
             public Bitmap CaptureMonitor(
                 IntPtr monitor,
                 HdrCaptureSettings settings,
-                float sdrWhiteNits)
+                float sdrWhiteNits,
+                float maxLuminanceNits)
             {
                 GraphicsCaptureItem item = CreateItemForMonitor(monitor);
 
@@ -324,7 +330,7 @@ namespace ShareX.ScreenCaptureLib
                     session.StartCapture();
 
                     using Direct3D11CaptureFrame frame = WaitForFrame(framePool);
-                    return CopyAndToneMap(frame, settings, sdrWhiteNits);
+                    return CopyAndToneMap(frame, settings, sdrWhiteNits, maxLuminanceNits);
                 }
                 finally
                 {
@@ -335,7 +341,8 @@ namespace ShareX.ScreenCaptureLib
             private Bitmap CopyAndToneMap(
                 Direct3D11CaptureFrame frame,
                 HdrCaptureSettings settings,
-                float sdrWhiteNits)
+                float sdrWhiteNits,
+                float maxLuminanceNits)
             {
                 using ID3D11Texture2D sourceTexture = GetTexture(frame.Surface);
                 Texture2DDescription sourceDescription = sourceTexture.Description;
@@ -374,7 +381,8 @@ namespace ShareX.ScreenCaptureLib
                         width,
                         height,
                         settings,
-                        sdrWhiteNits);
+                        sdrWhiteNits,
+                        maxLuminanceNits);
                 }
                 finally
                 {

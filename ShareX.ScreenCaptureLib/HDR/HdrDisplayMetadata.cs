@@ -22,14 +22,19 @@ namespace ShareX.ScreenCaptureLib
     internal sealed class HdrDisplayMetadata
     {
         private const float DefaultSdrWhiteNits = 203f;
+        private const float DefaultMaxLuminanceNits = 1000f;
 
         public bool IsHdrActive { get; }
         public float SdrWhiteNits { get; }
+        public float MaxLuminanceNits { get; }
 
-        private HdrDisplayMetadata(bool isHdrActive, float sdrWhiteNits)
+        private HdrDisplayMetadata(bool isHdrActive, float sdrWhiteNits, float maxLuminanceNits)
         {
             IsHdrActive = isHdrActive;
             SdrWhiteNits = Math.Clamp(sdrWhiteNits, 80f, 1000f);
+            MaxLuminanceNits = float.IsFinite(maxLuminanceNits) && maxLuminanceNits >= 80f
+                ? Math.Clamp(maxLuminanceNits, 80f, 10000f)
+                : DefaultMaxLuminanceNits;
         }
 
         public static Dictionary<IntPtr, HdrDisplayMetadata> GetByMonitor()
@@ -63,7 +68,10 @@ namespace ShareX.ScreenCaptureLib
                                 ? value
                                 : DefaultSdrWhiteNits;
 
-                            metadataByMonitor[description.Monitor] = new HdrDisplayMetadata(isHdrActive, sdrWhiteNits);
+                            metadataByMonitor[description.Monitor] = new HdrDisplayMetadata(
+                                isHdrActive,
+                                sdrWhiteNits,
+                                description.MaxLuminance);
                         }
                     }
                 }

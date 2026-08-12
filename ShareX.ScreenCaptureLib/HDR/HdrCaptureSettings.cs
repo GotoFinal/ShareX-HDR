@@ -13,9 +13,19 @@
 #endregion License Information (GPL v3)
 
 using System;
+using System.ComponentModel;
 
 namespace ShareX.ScreenCaptureLib
 {
+    public enum HdrToneMappingMode
+    {
+        [Description("Content-aware (recommended)")]
+        ContentAware,
+
+        [Description("Uniform (entire HDR monitor)")]
+        Uniform
+    }
+
     public sealed class HdrCaptureSettings
     {
         public const float MinimumBrightnessNits = 80f;
@@ -23,6 +33,13 @@ namespace ShareX.ScreenCaptureLib
         public const float DefaultBrightnessNits = 203f;
 
         private float hdrBrightnessNits = DefaultBrightnessNits;
+        private HdrToneMappingMode toneMappingMode = HdrToneMappingMode.ContentAware;
+
+        public HdrToneMappingMode ToneMappingMode
+        {
+            get => toneMappingMode;
+            set => toneMappingMode = Enum.IsDefined(value) ? value : HdrToneMappingMode.ContentAware;
+        }
 
         public float HdrBrightnessNits
         {

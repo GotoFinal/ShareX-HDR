@@ -3423,8 +3423,56 @@
   <data name="&gt;&gt;nudCaptureShadowOffset.ZOrder" xml:space="preserve">
     <value>22</value>
   </data>
+  <data name="cbHDRToneMappingMode.Location" type="System.Drawing.Point, System.Drawing">
+    <value>368, 390</value>
+  </data>
+  <data name="cbHDRToneMappingMode.Size" type="System.Drawing.Size, System.Drawing">
+    <value>179, 21</value>
+  </data>
+  <data name="cbHDRToneMappingMode.TabIndex" type="System.Int32, mscorlib">
+    <value>27</value>
+  </data>
+  <data name="&gt;&gt;cbHDRToneMappingMode.Name" xml:space="preserve">
+    <value>cbHDRToneMappingMode</value>
+  </data>
+  <data name="&gt;&gt;cbHDRToneMappingMode.Type" xml:space="preserve">
+    <value>System.Windows.Forms.ComboBox, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;cbHDRToneMappingMode.Parent" xml:space="preserve">
+    <value>pCapture</value>
+  </data>
+  <data name="&gt;&gt;cbHDRToneMappingMode.ZOrder" xml:space="preserve">
+    <value>0</value>
+  </data>
+  <data name="lblHDRToneMappingMode.AutoSize" type="System.Boolean, mscorlib">
+    <value>True</value>
+  </data>
+  <data name="lblHDRToneMappingMode.Location" type="System.Drawing.Point, System.Drawing">
+    <value>270, 394</value>
+  </data>
+  <data name="lblHDRToneMappingMode.Size" type="System.Drawing.Size, System.Drawing">
+    <value>96, 13</value>
+  </data>
+  <data name="lblHDRToneMappingMode.TabIndex" type="System.Int32, mscorlib">
+    <value>26</value>
+  </data>
+  <data name="lblHDRToneMappingMode.Text" xml:space="preserve">
+    <value>Tone mapping:</value>
+  </data>
+  <data name="&gt;&gt;lblHDRToneMappingMode.Name" xml:space="preserve">
+    <value>lblHDRToneMappingMode</value>
+  </data>
+  <data name="&gt;&gt;lblHDRToneMappingMode.Type" xml:space="preserve">
+    <value>System.Windows.Forms.Label, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;lblHDRToneMappingMode.Parent" xml:space="preserve">
+    <value>pCapture</value>
+  </data>
+  <data name="&gt;&gt;lblHDRToneMappingMode.ZOrder" xml:space="preserve">
+    <value>1</value>
+  </data>
   <data name="nudHDRBrightnessNits.Location" type="System.Drawing.Point, System.Drawing">
-    <value>176, 390</value>
+    <value>190, 390</value>
   </data>
   <data name="nudHDRBrightnessNits.Size" type="System.Drawing.Size, System.Drawing">
     <value>72, 20</value>
@@ -3454,13 +3502,13 @@
     <value>28, 394</value>
   </data>
   <data name="lblHDRBrightnessNits.Size" type="System.Drawing.Size, System.Drawing">
-    <value>142, 13</value>
+    <value>156, 13</value>
   </data>
   <data name="lblHDRBrightnessNits.TabIndex" type="System.Int32, mscorlib">
     <value>24</value>
   </data>
   <data name="lblHDRBrightnessNits.Text" xml:space="preserve">
-    <value>HDR peak brightness (nits):</value>
+    <value>HDR peak nits (203 = auto):</value>
   </data>
   <data name="&gt;&gt;lblHDRBrightnessNits.Name" xml:space="preserve">
     <value>lblHDRBrightnessNits</value>

@@ -41,7 +41,8 @@ namespace ShareX.ScreenCaptureLib
             int width,
             int height,
             HdrCaptureSettings settings,
-            float sdrWhiteNits)
+            float sdrWhiteNits,
+            float displayMaxLuminanceNits)
         {
             ArgumentNullException.ThrowIfNull(settings);
 
@@ -79,7 +80,9 @@ namespace ShareX.ScreenCaptureLib
                         width,
                         height,
                         settings.HdrBrightnessNits,
-                        sdrWhiteNits);
+                        settings.ToneMappingMode,
+                        sdrWhiteNits,
+                        displayMaxLuminanceNits);
                 }
                 finally
                 {
@@ -103,31 +106,29 @@ namespace ShareX.ScreenCaptureLib
             int width,
             int height,
             float configuredPeakNits,
-            float sdrWhiteNits)
+            HdrToneMappingMode toneMappingMode,
+            float sdrWhiteNits,
+            float displayMaxLuminanceNits)
         {
             float paperWhiteNits = Math.Clamp(
                 sdrWhiteNits,
                 HdrCaptureSettings.MinimumBrightnessNits,
                 HdrCaptureSettings.MaximumBrightnessNits);
             float paperWhiteScRgb = paperWhiteNits / ScRgbNitsPerUnit;
-            HdrFrameAnalysis analysis = AnalyzeFrame(
-                source,
-                sourceRowPitch,
-                width,
-                height,
-                paperWhiteScRgb);
-            float sourcePeakNits = Math.Clamp(
+            bool useContentDetection = toneMappingMode == HdrToneMappingMode.ContentAware;
+            HdrFrameAnalysis analysis = useContentDetection
+                ? AnalyzeFrame(
+                    source,
+                    sourceRowPitch,
+                    width,
+                    height,
+                    paperWhiteScRgb)
+                : HdrFrameAnalysis.Empty;
+            float sourcePeakNits = ResolveSourcePeakNits(
                 configuredPeakNits,
-                HdrCaptureSettings.MinimumBrightnessNits,
-                HdrCaptureSettings.MaximumBrightnessNits);
-
-            // A peak at or below the active SDR white level cannot describe
-            // HDR headroom. Treat the old 203-nit default as automatic 1000-nit
-            // content so existing settings get a useful reference curve.
-            if (sourcePeakNits <= paperWhiteNits * HdrDetectionMargin)
-            {
-                sourcePeakNits = AutomaticHdrPeakNits;
-            }
+                toneMappingMode,
+                paperWhiteNits,
+                displayMaxLuminanceNits);
 
             ReferenceWhiteToneMapper toneMapper = new ReferenceWhiteToneMapper(
                 sourcePeakNits / paperWhiteNits);
@@ -148,7 +149,7 @@ namespace ShareX.ScreenCaptureLib
                         ref blue,
                         paperWhiteScRgb,
                         toneMapper,
-                        analysis.GetToneMapAmount(x, y));
+                        useContentDetection ? analysis.GetToneMapAmount(x, y) : 1f);
 
                     destinationPixel[0] = ToSrgbByte(blue);
                     destinationPixel[1] = ToSrgbByte(green);
@@ -159,6 +160,40 @@ namespace ShareX.ScreenCaptureLib
                     destinationPixel += 4;
                 }
             }
+        }
+
+        private static float ResolveSourcePeakNits(
+            float configuredPeakNits,
+            HdrToneMappingMode toneMappingMode,
+            float paperWhiteNits,
+            float displayMaxLuminanceNits)
+        {
+            float sourcePeakNits = Math.Clamp(
+                configuredPeakNits,
+                HdrCaptureSettings.MinimumBrightnessNits,
+                HdrCaptureSettings.MaximumBrightnessNits);
+            bool useAutomaticPeak = Math.Abs(sourcePeakNits - HdrCaptureSettings.DefaultBrightnessNits) < 0.01f ||
+                sourcePeakNits <= paperWhiteNits * HdrDetectionMargin;
+
+            if (!useAutomaticPeak)
+            {
+                return sourcePeakNits;
+            }
+
+            // Content-aware mode targets the conventional 1000-nit mastering
+            // range. Uniform mode is display-referred, so calibrate it from
+            // the monitor's DXGI-reported peak and the Windows SDR-white level.
+            if (toneMappingMode == HdrToneMappingMode.Uniform &&
+                float.IsFinite(displayMaxLuminanceNits) &&
+                displayMaxLuminanceNits > paperWhiteNits * HdrDetectionMargin)
+            {
+                return Math.Clamp(
+                    displayMaxLuminanceNits,
+                    HdrCaptureSettings.MinimumBrightnessNits,
+                    HdrCaptureSettings.MaximumBrightnessNits);
+            }
+
+            return AutomaticHdrPeakNits;
         }
 
         private static void ToneMapPixel(
@@ -620,6 +655,8 @@ namespace ShareX.ScreenCaptureLib
 
         private sealed class HdrFrameAnalysis
         {
+            public static HdrFrameAnalysis Empty { get; } = new HdrFrameAnalysis(new List<ToneMapRegion>());
+
             private readonly List<ToneMapRegion> regions;
 
             public HdrFrameAnalysis(List<ToneMapRegion> regions)
