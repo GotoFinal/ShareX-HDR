@@ -141,6 +141,7 @@
             pCapture = new System.Windows.Forms.Panel();
             cbHDRProcessingBackend = new System.Windows.Forms.ComboBox();
             lblHDRProcessingBackend = new System.Windows.Forms.Label();
+            cbHDRPeakBrightnessMode = new System.Windows.Forms.ComboBox();
             cbHDRToneMappingMode = new System.Windows.Forms.ComboBox();
             lblHDRToneMappingMode = new System.Windows.Forms.Label();
             nudHDRBrightnessNits = new System.Windows.Forms.NumericUpDown();
@@ -1197,6 +1198,7 @@
             // 
             pCapture.Controls.Add(cbHDRProcessingBackend);
             pCapture.Controls.Add(lblHDRProcessingBackend);
+            pCapture.Controls.Add(cbHDRPeakBrightnessMode);
             pCapture.Controls.Add(cbHDRToneMappingMode);
             pCapture.Controls.Add(lblHDRToneMappingMode);
             pCapture.Controls.Add(nudHDRBrightnessNits);
@@ -1240,6 +1242,14 @@
             //
             resources.ApplyResources(lblHDRProcessingBackend, "lblHDRProcessingBackend");
             lblHDRProcessingBackend.Name = "lblHDRProcessingBackend";
+            //
+            // cbHDRPeakBrightnessMode
+            //
+            cbHDRPeakBrightnessMode.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            cbHDRPeakBrightnessMode.FormattingEnabled = true;
+            resources.ApplyResources(cbHDRPeakBrightnessMode, "cbHDRPeakBrightnessMode");
+            cbHDRPeakBrightnessMode.Name = "cbHDRPeakBrightnessMode";
+            cbHDRPeakBrightnessMode.SelectedIndexChanged += cbHDRPeakBrightnessMode_SelectedIndexChanged;
             //
             // cbHDRToneMappingMode
             //
@@ -2680,6 +2690,7 @@
         private System.Windows.Forms.CheckBox cbUseHDRSupport;
         private System.Windows.Forms.ComboBox cbHDRProcessingBackend;
         private System.Windows.Forms.Label lblHDRProcessingBackend;
+        private System.Windows.Forms.ComboBox cbHDRPeakBrightnessMode;
         private System.Windows.Forms.ComboBox cbHDRToneMappingMode;
         private System.Windows.Forms.Label lblHDRToneMappingMode;
         private System.Windows.Forms.Label lblHDRBrightnessNits;

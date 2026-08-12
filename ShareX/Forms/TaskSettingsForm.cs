@@ -284,6 +284,8 @@ namespace ShareX
             cbUseHDRSupport.Checked = TaskSettings.CaptureSettings.UseHDRSupport;
             cbHDRProcessingBackend.Items.AddRange(Helpers.GetEnumDescriptions<HdrProcessingBackend>());
             cbHDRProcessingBackend.SelectedIndex = (int)TaskSettings.CaptureSettings.HdrSettings.ProcessingBackend;
+            cbHDRPeakBrightnessMode.Items.AddRange(Helpers.GetEnumDescriptions<HdrPeakBrightnessMode>());
+            cbHDRPeakBrightnessMode.SelectedIndex = (int)TaskSettings.CaptureSettings.HdrSettings.PeakBrightnessMode;
             cbHDRToneMappingMode.Items.AddRange(Helpers.GetEnumDescriptions<HdrToneMappingMode>());
             cbHDRToneMappingMode.SelectedIndex = (int)TaskSettings.CaptureSettings.HdrSettings.ToneMappingMode;
             SetHdrControlsEnabled(TaskSettings.CaptureSettings.UseHDRSupport);
@@ -1126,8 +1128,11 @@ namespace ShareX
         private void SetHdrControlsEnabled(bool enabled)
         {
             cbHDRProcessingBackend.Enabled = lblHDRProcessingBackend.Enabled = enabled;
+            cbHDRPeakBrightnessMode.Enabled = enabled;
             cbHDRToneMappingMode.Enabled = lblHDRToneMappingMode.Enabled = enabled;
-            nudHDRBrightnessNits.Enabled = lblHDRBrightnessNits.Enabled = enabled;
+            lblHDRBrightnessNits.Enabled = enabled;
+            nudHDRBrightnessNits.Enabled = enabled &&
+                TaskSettings.CaptureSettings.HdrSettings?.PeakBrightnessMode == HdrPeakBrightnessMode.Custom;
         }
 
         private void cbHDRProcessingBackend_SelectedIndexChanged(object sender, EventArgs e)
@@ -1147,6 +1152,18 @@ namespace ShareX
                 TaskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
                 TaskSettings.CaptureSettings.HdrSettings.ToneMappingMode =
                     (HdrToneMappingMode)cbHDRToneMappingMode.SelectedIndex;
+            }
+        }
+
+        private void cbHDRPeakBrightnessMode_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (cbHDRPeakBrightnessMode.SelectedIndex >= 0)
+            {
+                TaskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
+                TaskSettings.CaptureSettings.HdrSettings.PeakBrightnessMode =
+                    (HdrPeakBrightnessMode)cbHDRPeakBrightnessMode.SelectedIndex;
+                nudHDRBrightnessNits.Enabled = cbUseHDRSupport.Checked &&
+                    TaskSettings.CaptureSettings.HdrSettings.PeakBrightnessMode == HdrPeakBrightnessMode.Custom;
             }
         }
 

@@ -50,6 +50,7 @@ namespace ShareX.ScreenCaptureLib
             HdrToSdrToneMapper.ToneMapParameters parameters =
                 HdrToSdrToneMapper.CreateToneMapParameters(
                     settings.HdrBrightnessNits,
+                    settings.PeakBrightnessMode,
                     settings.ToneMappingMode,
                     sdrWhiteNits,
                     displayMaxLuminanceNits);

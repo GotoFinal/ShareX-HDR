@@ -104,6 +104,7 @@ namespace ShareX.ScreenCaptureLib
 
                 try
                 {
+                    using Screenshot.CaptureSession captureSession = screenshot.CreateCaptureSession();
                     selectedWindow.Activate();
 
                     await Task.Delay(Options.StartDelay);
@@ -118,7 +119,7 @@ namespace ShareX.ScreenCaptureLib
 
                     while (!stopRequested)
                     {
-                        lastScreenshot = screenshot.CaptureRectangle(selectedRectangle);
+                        lastScreenshot = captureSession.CaptureRectangle(selectedRectangle);
 
                         if (CompareLastTwoImages())
                         {

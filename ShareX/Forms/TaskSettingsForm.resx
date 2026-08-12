@@ -3447,6 +3447,27 @@
   <data name="lblHDRProcessingBackend.Text" xml:space="preserve">
     <value>Processing:</value>
   </data>
+  <data name="cbHDRPeakBrightnessMode.Location" type="System.Drawing.Point, System.Drawing">
+    <value>98, 390</value>
+  </data>
+  <data name="cbHDRPeakBrightnessMode.Size" type="System.Drawing.Size, System.Drawing">
+    <value>86, 21</value>
+  </data>
+  <data name="cbHDRPeakBrightnessMode.TabIndex" type="System.Int32, mscorlib">
+    <value>25</value>
+  </data>
+  <data name="&gt;&gt;cbHDRPeakBrightnessMode.Name" xml:space="preserve">
+    <value>cbHDRPeakBrightnessMode</value>
+  </data>
+  <data name="&gt;&gt;cbHDRPeakBrightnessMode.Type" xml:space="preserve">
+    <value>System.Windows.Forms.ComboBox, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;cbHDRPeakBrightnessMode.Parent" xml:space="preserve">
+    <value>pCapture</value>
+  </data>
+  <data name="&gt;&gt;cbHDRPeakBrightnessMode.ZOrder" xml:space="preserve">
+    <value>2</value>
+  </data>
   <data name="&gt;&gt;lblHDRProcessingBackend.Name" xml:space="preserve">
     <value>lblHDRProcessingBackend</value>
   </data>
@@ -3550,13 +3571,13 @@
     <value>28, 394</value>
   </data>
   <data name="lblHDRBrightnessNits.Size" type="System.Drawing.Size, System.Drawing">
-    <value>156, 13</value>
+    <value>64, 13</value>
   </data>
   <data name="lblHDRBrightnessNits.TabIndex" type="System.Int32, mscorlib">
     <value>24</value>
   </data>
   <data name="lblHDRBrightnessNits.Text" xml:space="preserve">
-    <value>HDR peak nits (203 = auto):</value>
+    <value>HDR peak:</value>
   </data>
   <data name="&gt;&gt;lblHDRBrightnessNits.Name" xml:space="preserve">
     <value>lblHDRBrightnessNits</value>

@@ -83,6 +83,7 @@ namespace ShareX.ScreenCaptureLib
                         width,
                         height,
                         settings.HdrBrightnessNits,
+                        settings.PeakBrightnessMode,
                         settings.ToneMappingMode,
                         sdrWhiteNits,
                         displayMaxLuminanceNits);
@@ -103,6 +104,7 @@ namespace ShareX.ScreenCaptureLib
 
         internal static ToneMapParameters CreateToneMapParameters(
             float configuredPeakNits,
+            HdrPeakBrightnessMode peakBrightnessMode,
             HdrToneMappingMode toneMappingMode,
             float sdrWhiteNits,
             float displayMaxLuminanceNits)
@@ -113,13 +115,14 @@ namespace ShareX.ScreenCaptureLib
                 HdrCaptureSettings.MaximumBrightnessNits);
             float sourcePeakNits = ResolveSourcePeakNits(
                 configuredPeakNits,
-                toneMappingMode,
+                peakBrightnessMode,
                 paperWhiteNits,
                 displayMaxLuminanceNits);
 
             return new ToneMapParameters(
+                paperWhiteNits,
                 paperWhiteNits / ScRgbNitsPerUnit,
-                sourcePeakNits / paperWhiteNits);
+                sourcePeakNits);
         }
 
         internal static byte[] CreateToneMapMaskR8(
@@ -168,12 +171,14 @@ namespace ShareX.ScreenCaptureLib
             int width,
             int height,
             float configuredPeakNits,
+            HdrPeakBrightnessMode peakBrightnessMode,
             HdrToneMappingMode toneMappingMode,
             float sdrWhiteNits,
             float displayMaxLuminanceNits)
         {
             ToneMapParameters parameters = CreateToneMapParameters(
                 configuredPeakNits,
+                peakBrightnessMode,
                 toneMappingMode,
                 sdrWhiteNits,
                 displayMaxLuminanceNits);
@@ -223,7 +228,7 @@ namespace ShareX.ScreenCaptureLib
 
         private static float ResolveSourcePeakNits(
             float configuredPeakNits,
-            HdrToneMappingMode toneMappingMode,
+            HdrPeakBrightnessMode peakBrightnessMode,
             float paperWhiteNits,
             float displayMaxLuminanceNits)
         {
@@ -231,27 +236,17 @@ namespace ShareX.ScreenCaptureLib
                 configuredPeakNits,
                 HdrCaptureSettings.MinimumBrightnessNits,
                 HdrCaptureSettings.MaximumBrightnessNits);
-            bool useAutomaticPeak = Math.Abs(sourcePeakNits - HdrCaptureSettings.DefaultBrightnessNits) < 0.01f ||
-                sourcePeakNits <= paperWhiteNits * HdrDetectionMargin;
-
-            if (!useAutomaticPeak)
+            if (peakBrightnessMode == HdrPeakBrightnessMode.Custom)
             {
                 return sourcePeakNits;
             }
 
-            // Content-aware mode targets the conventional 1000-nit mastering
-            // range. Uniform mode is display-referred, so calibrate it from
-            // the monitor's DXGI-reported peak and the Windows SDR-white level.
-            if (toneMappingMode == HdrToneMappingMode.Uniform &&
-                float.IsFinite(displayMaxLuminanceNits) &&
-                displayMaxLuminanceNits > paperWhiteNits * HdrDetectionMargin)
-            {
-                return Math.Clamp(
-                    displayMaxLuminanceNits,
-                    HdrCaptureSettings.MinimumBrightnessNits,
-                    HdrCaptureSettings.MaximumBrightnessNits);
-            }
-
+            // DXGI MaxLuminance describes the display, not necessarily the
+            // content values retained in the scRGB compositor surface. Using
+            // it as the content maximum clipped every value above the panel
+            // peak to identical SDR white. Automatic mode keeps the standard
+            // 1000-nit mastering headroom while paper white remains calibrated
+            // from DISPLAYCONFIG_SDR_WHITE_LEVEL metadata.
             return AutomaticHdrPeakNits;
         }
 
@@ -911,7 +906,9 @@ namespace ShareX.ScreenCaptureLib
 
         internal readonly struct ToneMapParameters
         {
+            public float PaperWhiteNits { get; }
             public float PaperWhiteScRgb { get; }
+            public float SourcePeakNits { get; }
             public float InputMaximum { get; }
             public float OutputWhite { get; }
             public float CurveXA { get; }
@@ -919,10 +916,13 @@ namespace ShareX.ScreenCaptureLib
             public float CurveYA { get; }
             public float CurveYB { get; }
 
-            public ToneMapParameters(float paperWhiteScRgb, float inputMaximum)
+            public ToneMapParameters(float paperWhiteNits, float paperWhiteScRgb, float sourcePeakNits)
             {
+                float inputMaximum = sourcePeakNits / paperWhiteNits;
                 ReferenceWhiteToneMapper mapper = new ReferenceWhiteToneMapper(inputMaximum);
+                PaperWhiteNits = paperWhiteNits;
                 PaperWhiteScRgb = paperWhiteScRgb;
+                SourcePeakNits = sourcePeakNits;
                 InputMaximum = mapper.inputMaximum;
                 OutputWhite = mapper.outputWhite;
                 CurveXA = mapper.xA;

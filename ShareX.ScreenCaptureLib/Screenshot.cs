@@ -43,13 +43,18 @@ namespace ShareX.ScreenCaptureLib
 
         public Bitmap CaptureRectangle(Rectangle rect)
         {
+            return CaptureRectangle(rect, null);
+        }
+
+        private Bitmap CaptureRectangle(Rectangle rect, WindowsGraphicsCapture.CaptureContext captureContext)
+        {
             if (RemoveOutsideScreenArea)
             {
                 Rectangle bounds = CaptureHelpers.GetScreenBounds();
                 rect = Rectangle.Intersect(bounds, rect);
             }
 
-            if (UseHDRSupport && WindowsGraphicsCapture.TryCapture(rect, HdrSettings, out Bitmap hdrBitmap))
+            if (UseHDRSupport && WindowsGraphicsCapture.TryCapture(rect, HdrSettings, captureContext, out Bitmap hdrBitmap))
             {
                 if (CaptureCursor)
                 {
@@ -70,6 +75,36 @@ namespace ShareX.ScreenCaptureLib
             }
 
             return CaptureRectangleNative(rect, CaptureCursor);
+        }
+
+        internal CaptureSession CreateCaptureSession()
+        {
+            return new CaptureSession(this);
+        }
+
+        internal sealed class CaptureSession : IDisposable
+        {
+            private Screenshot screenshot;
+            private WindowsGraphicsCapture.CaptureContext captureContext;
+
+            public CaptureSession(Screenshot screenshot)
+            {
+                this.screenshot = screenshot ?? throw new ArgumentNullException(nameof(screenshot));
+                captureContext = new WindowsGraphicsCapture.CaptureContext(true);
+            }
+
+            public Bitmap CaptureRectangle(Rectangle rect)
+            {
+                ObjectDisposedException.ThrowIf(screenshot == null, this);
+                return screenshot.CaptureRectangle(rect, captureContext);
+            }
+
+            public void Dispose()
+            {
+                captureContext?.Dispose();
+                captureContext = null;
+                screenshot = null;
+            }
         }
 
         public Bitmap CaptureFullscreen()

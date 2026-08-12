@@ -35,6 +35,15 @@ namespace ShareX.ScreenCaptureLib
         Gpu
     }
 
+    public enum HdrPeakBrightnessMode
+    {
+        [Description("Automatic")]
+        Automatic,
+
+        [Description("Custom")]
+        Custom
+    }
+
     public sealed class HdrCaptureSettings
     {
         public const float MinimumBrightnessNits = 80f;
@@ -44,6 +53,19 @@ namespace ShareX.ScreenCaptureLib
         private float hdrBrightnessNits = DefaultBrightnessNits;
         private HdrToneMappingMode toneMappingMode = HdrToneMappingMode.ContentAware;
         private HdrProcessingBackend processingBackend = HdrProcessingBackend.Cpu;
+        private HdrPeakBrightnessMode? peakBrightnessMode;
+
+        public HdrPeakBrightnessMode PeakBrightnessMode
+        {
+            // Older settings used 203 as the implicit automatic sentinel. An
+            // absent mode therefore migrates 203 to Automatic and preserves
+            // every other old value as an explicit Custom value.
+            get => peakBrightnessMode ??
+                (Math.Abs(hdrBrightnessNits - DefaultBrightnessNits) < 0.01f
+                    ? HdrPeakBrightnessMode.Automatic
+                    : HdrPeakBrightnessMode.Custom);
+            set => peakBrightnessMode = Enum.IsDefined(value) ? value : HdrPeakBrightnessMode.Automatic;
+        }
 
         public HdrProcessingBackend ProcessingBackend
         {
