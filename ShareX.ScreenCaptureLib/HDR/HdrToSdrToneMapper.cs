@@ -16,6 +16,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Threading.Tasks;
 
 namespace ShareX.ScreenCaptureLib
 {
@@ -34,6 +35,8 @@ namespace ShareX.ScreenCaptureLib
         private const int UncertainBoundaryFeather = TileSize * 2;
         private const float MinimumBoundaryStrength = 0.015f;
         private const float BoundaryStrengthRatio = 4f;
+        private const int SrgbLutMaximum = 65535;
+        private static readonly byte[] SrgbEncodingLut = CreateSrgbEncodingLut();
 
         public static Bitmap ToneMapRgba16Float(
             IntPtr source,
@@ -133,10 +136,13 @@ namespace ShareX.ScreenCaptureLib
             ReferenceWhiteToneMapper toneMapper = new ReferenceWhiteToneMapper(
                 sourcePeakNits / paperWhiteNits);
 
-            for (int y = 0; y < height; y++)
+            nint sourceAddress = (nint)source;
+            nint destinationAddress = (nint)destination;
+
+            Parallel.For(0, height, y =>
             {
-                ushort* sourcePixel = (ushort*)(source + y * sourceRowPitch);
-                byte* destinationPixel = destination + y * destinationStride;
+                ushort* sourcePixel = (ushort*)((byte*)sourceAddress + y * sourceRowPitch);
+                byte* destinationPixel = (byte*)destinationAddress + y * destinationStride;
 
                 for (int x = 0; x < width; x++)
                 {
@@ -159,7 +165,7 @@ namespace ShareX.ScreenCaptureLib
                     sourcePixel += 4;
                     destinationPixel += 4;
                 }
-            }
+            });
         }
 
         private static float ResolveSourcePeakNits(
@@ -239,43 +245,46 @@ namespace ShareX.ScreenCaptureLib
         {
             int tilesX = (width + TileSize - 1) / TileSize;
             int tilesY = (height + TileSize - 1) / TileSize;
-            int[] headroomPixelCounts = new int[tilesX * tilesY];
+            bool[] seedTiles = new bool[tilesX * tilesY];
             float headroomThreshold = paperWhiteScRgb * HdrDetectionMargin;
+            nint sourceAddress = (nint)source;
 
-            for (int y = 0; y < height; y++)
+            Parallel.For(0, tilesY, tileY =>
             {
-                ushort* sourcePixel = (ushort*)(source + y * sourceRowPitch);
-
-                for (int x = 0; x < width; x++)
-                {
-                    float red = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[0]));
-                    float green = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[1]));
-                    float blue = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[2]));
-
-                    if (GetRec2020Max(red, green, blue) > headroomThreshold)
-                    {
-                        int tileIndex = y / TileSize * tilesX + x / TileSize;
-                        headroomPixelCounts[tileIndex]++;
-                    }
-
-                    sourcePixel += 4;
-                }
-            }
-
-            bool[] seedTiles = new bool[headroomPixelCounts.Length];
-
-            for (int tileY = 0; tileY < tilesY; tileY++)
-            {
-                int tileHeight = Math.Min(TileSize, height - tileY * TileSize);
+                int top = tileY * TileSize;
+                int bottom = Math.Min(height, top + TileSize);
 
                 for (int tileX = 0; tileX < tilesX; tileX++)
                 {
-                    int tileWidth = Math.Min(TileSize, width - tileX * TileSize);
-                    int minimumHeadroomPixels = Math.Max(2, (tileWidth * tileHeight + 99) / 100);
+                    int left = tileX * TileSize;
+                    int right = Math.Min(width, left + TileSize);
+                    int headroomPixelCount = 0;
+
+                    for (int y = top; y < bottom; y++)
+                    {
+                        ushort* sourcePixel = (ushort*)((byte*)sourceAddress + y * sourceRowPitch) + left * 4;
+
+                        for (int x = left; x < right; x++)
+                        {
+                            float red = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[0]));
+                            float green = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[1]));
+                            float blue = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[2]));
+
+                            if (GetRec2020Max(red, green, blue) > headroomThreshold)
+                            {
+                                headroomPixelCount++;
+                            }
+
+                            sourcePixel += 4;
+                        }
+                    }
+
+                    int tilePixels = (right - left) * (bottom - top);
+                    int minimumHeadroomPixels = Math.Max(2, (tilePixels + 99) / 100);
                     int tileIndex = tileY * tilesX + tileX;
-                    seedTiles[tileIndex] = headroomPixelCounts[tileIndex] >= minimumHeadroomPixels;
+                    seedTiles[tileIndex] = headroomPixelCount >= minimumHeadroomPixels;
                 }
-            }
+            });
 
             return new HdrFrameAnalysis(BuildToneMapRegions(
                 source,
@@ -914,11 +923,24 @@ namespace ShareX.ScreenCaptureLib
 
         private static byte ToSrgbByte(float linear)
         {
-            float srgb = linear <= 0.0031308f
-                ? linear * 12.92f
-                : 1.055f * MathF.Pow(linear, 1f / 2.4f) - 0.055f;
+            int index = Math.Clamp((int)MathF.Round(linear * SrgbLutMaximum), 0, SrgbLutMaximum);
+            return SrgbEncodingLut[index];
+        }
 
-            return ToByte(srgb);
+        private static byte[] CreateSrgbEncodingLut()
+        {
+            byte[] result = new byte[SrgbLutMaximum + 1];
+
+            for (int index = 0; index < result.Length; index++)
+            {
+                float linear = (float)index / SrgbLutMaximum;
+                float srgb = linear <= 0.0031308f
+                    ? linear * 12.92f
+                    : 1.055f * MathF.Pow(linear, 1f / 2.4f) - 0.055f;
+                result[index] = ToByte(srgb);
+            }
+
+            return result;
         }
 
         private static float SanitizeLinear(float value)
