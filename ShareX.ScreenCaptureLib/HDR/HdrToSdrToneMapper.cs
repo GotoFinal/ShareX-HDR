@@ -101,6 +101,65 @@ namespace ShareX.ScreenCaptureLib
             }
         }
 
+        internal static ToneMapParameters CreateToneMapParameters(
+            float configuredPeakNits,
+            HdrToneMappingMode toneMappingMode,
+            float sdrWhiteNits,
+            float displayMaxLuminanceNits)
+        {
+            float paperWhiteNits = Math.Clamp(
+                sdrWhiteNits,
+                HdrCaptureSettings.MinimumBrightnessNits,
+                HdrCaptureSettings.MaximumBrightnessNits);
+            float sourcePeakNits = ResolveSourcePeakNits(
+                configuredPeakNits,
+                toneMappingMode,
+                paperWhiteNits,
+                displayMaxLuminanceNits);
+
+            return new ToneMapParameters(
+                paperWhiteNits / ScRgbNitsPerUnit,
+                sourcePeakNits / paperWhiteNits);
+        }
+
+        internal static byte[] CreateToneMapMaskR8(
+            IntPtr source,
+            int sourceRowPitch,
+            int width,
+            int height,
+            float paperWhiteScRgb)
+        {
+            if (source == IntPtr.Zero)
+            {
+                throw new ArgumentException(nameof(source));
+            }
+
+            if (sourceRowPitch < width * sizeof(ushort) * 4)
+            {
+                throw new ArgumentOutOfRangeException(nameof(sourceRowPitch));
+            }
+
+            HdrFrameAnalysis analysis = AnalyzeFrame(
+                (byte*)source,
+                sourceRowPitch,
+                width,
+                height,
+                paperWhiteScRgb);
+            byte[] mask = new byte[checked(width * height)];
+
+            Parallel.For(0, height, y =>
+            {
+                int rowOffset = y * width;
+
+                for (int x = 0; x < width; x++)
+                {
+                    mask[rowOffset + x] = ToByte(analysis.GetToneMapAmount(x, y));
+                }
+            });
+
+            return mask;
+        }
+
         private static void ToneMapRgba16Float(
             byte* source,
             int sourceRowPitch,
@@ -113,11 +172,12 @@ namespace ShareX.ScreenCaptureLib
             float sdrWhiteNits,
             float displayMaxLuminanceNits)
         {
-            float paperWhiteNits = Math.Clamp(
+            ToneMapParameters parameters = CreateToneMapParameters(
+                configuredPeakNits,
+                toneMappingMode,
                 sdrWhiteNits,
-                HdrCaptureSettings.MinimumBrightnessNits,
-                HdrCaptureSettings.MaximumBrightnessNits);
-            float paperWhiteScRgb = paperWhiteNits / ScRgbNitsPerUnit;
+                displayMaxLuminanceNits);
+            float paperWhiteScRgb = parameters.PaperWhiteScRgb;
             bool useContentDetection = toneMappingMode == HdrToneMappingMode.ContentAware;
             HdrFrameAnalysis analysis = useContentDetection
                 ? AnalyzeFrame(
@@ -127,14 +187,7 @@ namespace ShareX.ScreenCaptureLib
                     height,
                     paperWhiteScRgb)
                 : HdrFrameAnalysis.Empty;
-            float sourcePeakNits = ResolveSourcePeakNits(
-                configuredPeakNits,
-                toneMappingMode,
-                paperWhiteNits,
-                displayMaxLuminanceNits);
-
-            ReferenceWhiteToneMapper toneMapper = new ReferenceWhiteToneMapper(
-                sourcePeakNits / paperWhiteNits);
+            ReferenceWhiteToneMapper toneMapper = new ReferenceWhiteToneMapper(parameters.InputMaximum);
 
             nint sourceAddress = (nint)source;
             nint destinationAddress = (nint)destination;
@@ -856,6 +909,29 @@ namespace ShareX.ScreenCaptureLib
             }
         }
 
+        internal readonly struct ToneMapParameters
+        {
+            public float PaperWhiteScRgb { get; }
+            public float InputMaximum { get; }
+            public float OutputWhite { get; }
+            public float CurveXA { get; }
+            public float CurveXB { get; }
+            public float CurveYA { get; }
+            public float CurveYB { get; }
+
+            public ToneMapParameters(float paperWhiteScRgb, float inputMaximum)
+            {
+                ReferenceWhiteToneMapper mapper = new ReferenceWhiteToneMapper(inputMaximum);
+                PaperWhiteScRgb = paperWhiteScRgb;
+                InputMaximum = mapper.inputMaximum;
+                OutputWhite = mapper.outputWhite;
+                CurveXA = mapper.xA;
+                CurveXB = mapper.xB;
+                CurveYA = mapper.yA;
+                CurveYB = mapper.yB;
+            }
+        }
+
         private readonly struct ReferenceWhiteToneMapper
         {
             // SMPTE ST 2094-50 RWTMO curve construction. Skia uses the same
@@ -864,12 +940,12 @@ namespace ShareX.ScreenCaptureLib
             private const float Kappa = 0.65f;
             private static readonly float ReferenceHeadroom = MathF.Log2(1000f / ReferenceHdrWhiteNits);
 
-            private readonly float inputMaximum;
-            private readonly float outputWhite;
-            private readonly float xA;
-            private readonly float xB;
-            private readonly float yA;
-            private readonly float yB;
+            internal readonly float inputMaximum;
+            internal readonly float outputWhite;
+            internal readonly float xA;
+            internal readonly float xB;
+            internal readonly float yA;
+            internal readonly float yB;
 
             public ReferenceWhiteToneMapper(float sourcePeakRelativeToWhite)
             {

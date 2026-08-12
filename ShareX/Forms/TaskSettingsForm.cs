@@ -282,6 +282,8 @@ namespace ShareX
             cbCaptureAutoHideTaskbar.Checked = TaskSettings.CaptureSettings.CaptureAutoHideTaskbar;
             TaskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
             cbUseHDRSupport.Checked = TaskSettings.CaptureSettings.UseHDRSupport;
+            cbHDRProcessingBackend.Items.AddRange(Helpers.GetEnumDescriptions<HdrProcessingBackend>());
+            cbHDRProcessingBackend.SelectedIndex = (int)TaskSettings.CaptureSettings.HdrSettings.ProcessingBackend;
             cbHDRToneMappingMode.Items.AddRange(Helpers.GetEnumDescriptions<HdrToneMappingMode>());
             cbHDRToneMappingMode.SelectedIndex = (int)TaskSettings.CaptureSettings.HdrSettings.ToneMappingMode;
             SetHdrControlsEnabled(TaskSettings.CaptureSettings.UseHDRSupport);
@@ -1123,8 +1125,19 @@ namespace ShareX
 
         private void SetHdrControlsEnabled(bool enabled)
         {
+            cbHDRProcessingBackend.Enabled = lblHDRProcessingBackend.Enabled = enabled;
             cbHDRToneMappingMode.Enabled = lblHDRToneMappingMode.Enabled = enabled;
             nudHDRBrightnessNits.Enabled = lblHDRBrightnessNits.Enabled = enabled;
+        }
+
+        private void cbHDRProcessingBackend_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (cbHDRProcessingBackend.SelectedIndex >= 0)
+            {
+                TaskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
+                TaskSettings.CaptureSettings.HdrSettings.ProcessingBackend =
+                    (HdrProcessingBackend)cbHDRProcessingBackend.SelectedIndex;
+            }
         }
 
         private void cbHDRToneMappingMode_SelectedIndexChanged(object sender, EventArgs e)

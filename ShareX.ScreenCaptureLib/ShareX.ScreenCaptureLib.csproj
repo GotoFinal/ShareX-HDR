@@ -19,4 +19,9 @@
       <HintPath>..\Libs\ImageListView.dll</HintPath>
     </Reference>
   </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include='HDR\Shaders\HdrToneMap.hlsl'>
+      <LogicalName>ShareX.ScreenCaptureLib.HDR.HdrToneMap.hlsl</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
 </Project>

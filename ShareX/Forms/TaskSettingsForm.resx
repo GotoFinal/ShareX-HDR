@@ -3411,6 +3411,54 @@
   <data name="nudCaptureShadowOffset.TextAlign" type="System.Windows.Forms.HorizontalAlignment, System.Windows.Forms">
     <value>Center</value>
   </data>
+  <data name="cbHDRProcessingBackend.Location" type="System.Drawing.Point, System.Drawing">
+    <value>368, 363</value>
+  </data>
+  <data name="cbHDRProcessingBackend.Size" type="System.Drawing.Size, System.Drawing">
+    <value>179, 21</value>
+  </data>
+  <data name="cbHDRProcessingBackend.TabIndex" type="System.Int32, mscorlib">
+    <value>25</value>
+  </data>
+  <data name="&gt;&gt;cbHDRProcessingBackend.Name" xml:space="preserve">
+    <value>cbHDRProcessingBackend</value>
+  </data>
+  <data name="&gt;&gt;cbHDRProcessingBackend.Type" xml:space="preserve">
+    <value>System.Windows.Forms.ComboBox, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;cbHDRProcessingBackend.Parent" xml:space="preserve">
+    <value>pCapture</value>
+  </data>
+  <data name="&gt;&gt;cbHDRProcessingBackend.ZOrder" xml:space="preserve">
+    <value>0</value>
+  </data>
+  <data name="lblHDRProcessingBackend.AutoSize" type="System.Boolean, mscorlib">
+    <value>True</value>
+  </data>
+  <data name="lblHDRProcessingBackend.Location" type="System.Drawing.Point, System.Drawing">
+    <value>270, 367</value>
+  </data>
+  <data name="lblHDRProcessingBackend.Size" type="System.Drawing.Size, System.Drawing">
+    <value>92, 13</value>
+  </data>
+  <data name="lblHDRProcessingBackend.TabIndex" type="System.Int32, mscorlib">
+    <value>24</value>
+  </data>
+  <data name="lblHDRProcessingBackend.Text" xml:space="preserve">
+    <value>Processing:</value>
+  </data>
+  <data name="&gt;&gt;lblHDRProcessingBackend.Name" xml:space="preserve">
+    <value>lblHDRProcessingBackend</value>
+  </data>
+  <data name="&gt;&gt;lblHDRProcessingBackend.Type" xml:space="preserve">
+    <value>System.Windows.Forms.Label, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;lblHDRProcessingBackend.Parent" xml:space="preserve">
+    <value>pCapture</value>
+  </data>
+  <data name="&gt;&gt;lblHDRProcessingBackend.ZOrder" xml:space="preserve">
+    <value>1</value>
+  </data>
   <data name="&gt;&gt;nudCaptureShadowOffset.Name" xml:space="preserve">
     <value>nudCaptureShadowOffset</value>
   </data>

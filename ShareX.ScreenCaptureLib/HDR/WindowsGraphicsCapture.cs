@@ -351,6 +351,30 @@ namespace ShareX.ScreenCaptureLib
                 {
                     throw new InvalidOperationException($"Windows Graphics Capture returned the unexpected format {sourceDescription.Format}.");
                 }
+
+                int width = Math.Min(frame.ContentSize.Width, (int)sourceDescription.Width);
+                int height = Math.Min(frame.ContentSize.Height, (int)sourceDescription.Height);
+
+                if (settings.ProcessingBackend == HdrProcessingBackend.Gpu)
+                {
+                    try
+                    {
+                        return GpuHdrToSdrToneMapper.ToneMap(
+                            device,
+                            context,
+                            sourceTexture,
+                            width,
+                            height,
+                            settings,
+                            sdrWhiteNits,
+                            maxLuminanceNits);
+                    }
+                    catch (Exception e)
+                    {
+                        DebugHelper.WriteException(e, "GPU HDR tone mapping failed. Falling back to CPU tone mapping.");
+                    }
+                }
+
                 Texture2DDescription stagingDescription = new Texture2DDescription
                 {
                     Width = sourceDescription.Width,
@@ -372,9 +396,6 @@ namespace ShareX.ScreenCaptureLib
 
                 try
                 {
-                    int width = Math.Min(frame.ContentSize.Width, (int)sourceDescription.Width);
-                    int height = Math.Min(frame.ContentSize.Height, (int)sourceDescription.Height);
-
                     return HdrToSdrToneMapper.ToneMapRgba16Float(
                         mapped.DataPointer,
                         (int)mapped.RowPitch,

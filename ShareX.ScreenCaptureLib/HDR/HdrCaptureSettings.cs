@@ -26,6 +26,15 @@ namespace ShareX.ScreenCaptureLib
         Uniform
     }
 
+    public enum HdrProcessingBackend
+    {
+        [Description("CPU (compatible)")]
+        Cpu,
+
+        [Description("GPU (faster, falls back to CPU)")]
+        Gpu
+    }
+
     public sealed class HdrCaptureSettings
     {
         public const float MinimumBrightnessNits = 80f;
@@ -34,6 +43,13 @@ namespace ShareX.ScreenCaptureLib
 
         private float hdrBrightnessNits = DefaultBrightnessNits;
         private HdrToneMappingMode toneMappingMode = HdrToneMappingMode.ContentAware;
+        private HdrProcessingBackend processingBackend = HdrProcessingBackend.Cpu;
+
+        public HdrProcessingBackend ProcessingBackend
+        {
+            get => processingBackend;
+            set => processingBackend = Enum.IsDefined(value) ? value : HdrProcessingBackend.Cpu;
+        }
 
         public HdrToneMappingMode ToneMappingMode
         {
