@@ -382,6 +382,8 @@ namespace ShareX
         public bool CaptureAutoHideDesktopIcons = false;
         public Rectangle CaptureCustomRegion = new Rectangle(0, 0, 0, 0);
         public string CaptureCustomWindow = "";
+        public bool UseHDRSupport = false;
+        public HdrCaptureSettings HdrSettings = new HdrCaptureSettings();
 
         #endregion Capture / General
 

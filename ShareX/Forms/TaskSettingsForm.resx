@@ -3423,6 +3423,84 @@
   <data name="&gt;&gt;nudCaptureShadowOffset.ZOrder" xml:space="preserve">
     <value>22</value>
   </data>
+  <data name="nudHDRBrightnessNits.Location" type="System.Drawing.Point, System.Drawing">
+    <value>176, 390</value>
+  </data>
+  <data name="nudHDRBrightnessNits.Size" type="System.Drawing.Size, System.Drawing">
+    <value>72, 20</value>
+  </data>
+  <data name="nudHDRBrightnessNits.TabIndex" type="System.Int32, mscorlib">
+    <value>25</value>
+  </data>
+  <data name="nudHDRBrightnessNits.TextAlign" type="System.Windows.Forms.HorizontalAlignment, System.Windows.Forms">
+    <value>Center</value>
+  </data>
+  <data name="&gt;&gt;nudHDRBrightnessNits.Name" xml:space="preserve">
+    <value>nudHDRBrightnessNits</value>
+  </data>
+  <data name="&gt;&gt;nudHDRBrightnessNits.Type" xml:space="preserve">
+    <value>System.Windows.Forms.NumericUpDown, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;nudHDRBrightnessNits.Parent" xml:space="preserve">
+    <value>pCapture</value>
+  </data>
+  <data name="&gt;&gt;nudHDRBrightnessNits.ZOrder" xml:space="preserve">
+    <value>0</value>
+  </data>
+  <data name="lblHDRBrightnessNits.AutoSize" type="System.Boolean, mscorlib">
+    <value>True</value>
+  </data>
+  <data name="lblHDRBrightnessNits.Location" type="System.Drawing.Point, System.Drawing">
+    <value>28, 394</value>
+  </data>
+  <data name="lblHDRBrightnessNits.Size" type="System.Drawing.Size, System.Drawing">
+    <value>142, 13</value>
+  </data>
+  <data name="lblHDRBrightnessNits.TabIndex" type="System.Int32, mscorlib">
+    <value>24</value>
+  </data>
+  <data name="lblHDRBrightnessNits.Text" xml:space="preserve">
+    <value>HDR peak brightness (nits):</value>
+  </data>
+  <data name="&gt;&gt;lblHDRBrightnessNits.Name" xml:space="preserve">
+    <value>lblHDRBrightnessNits</value>
+  </data>
+  <data name="&gt;&gt;lblHDRBrightnessNits.Type" xml:space="preserve">
+    <value>System.Windows.Forms.Label, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;lblHDRBrightnessNits.Parent" xml:space="preserve">
+    <value>pCapture</value>
+  </data>
+  <data name="&gt;&gt;lblHDRBrightnessNits.ZOrder" xml:space="preserve">
+    <value>1</value>
+  </data>
+  <data name="cbUseHDRSupport.AutoSize" type="System.Boolean, mscorlib">
+    <value>True</value>
+  </data>
+  <data name="cbUseHDRSupport.Location" type="System.Drawing.Point, System.Drawing">
+    <value>8, 366</value>
+  </data>
+  <data name="cbUseHDRSupport.Size" type="System.Drawing.Size, System.Drawing">
+    <value>180, 17</value>
+  </data>
+  <data name="cbUseHDRSupport.TabIndex" type="System.Int32, mscorlib">
+    <value>23</value>
+  </data>
+  <data name="cbUseHDRSupport.Text" xml:space="preserve">
+    <value>Enable HDR screenshot support</value>
+  </data>
+  <data name="&gt;&gt;cbUseHDRSupport.Name" xml:space="preserve">
+    <value>cbUseHDRSupport</value>
+  </data>
+  <data name="&gt;&gt;cbUseHDRSupport.Type" xml:space="preserve">
+    <value>System.Windows.Forms.CheckBox, System.Windows.Forms, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </data>
+  <data name="&gt;&gt;cbUseHDRSupport.Parent" xml:space="preserve">
+    <value>pCapture</value>
+  </data>
+  <data name="&gt;&gt;cbUseHDRSupport.ZOrder" xml:space="preserve">
+    <value>2</value>
+  </data>
   <data name="pCapture.Dock" type="System.Windows.Forms.DockStyle, System.Windows.Forms">
     <value>Fill</value>
   </data>

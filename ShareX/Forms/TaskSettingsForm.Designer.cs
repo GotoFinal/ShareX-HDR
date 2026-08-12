@@ -139,6 +139,9 @@
             tcCapture = new System.Windows.Forms.TabControl();
             tpCaptureGeneral = new System.Windows.Forms.TabPage();
             pCapture = new System.Windows.Forms.Panel();
+            nudHDRBrightnessNits = new System.Windows.Forms.NumericUpDown();
+            lblHDRBrightnessNits = new System.Windows.Forms.Label();
+            cbUseHDRSupport = new System.Windows.Forms.CheckBox();
             cbCaptureAutoHideDesktopIcons = new System.Windows.Forms.CheckBox();
             txtCaptureCustomWindow = new System.Windows.Forms.TextBox();
             lblCaptureCustomWindow = new System.Windows.Forms.Label();
@@ -342,6 +345,7 @@
             ((System.ComponentModel.ISupportInitialize)nudCaptureCustomRegionWidth).BeginInit();
             ((System.ComponentModel.ISupportInitialize)nudCaptureCustomRegionY).BeginInit();
             ((System.ComponentModel.ISupportInitialize)nudCaptureCustomRegionX).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)nudHDRBrightnessNits).BeginInit();
             ((System.ComponentModel.ISupportInitialize)nudScreenshotDelay).BeginInit();
             ((System.ComponentModel.ISupportInitialize)nudCaptureShadowOffset).BeginInit();
             tpRegionCapture.SuspendLayout();
@@ -1187,6 +1191,9 @@
             // 
             // pCapture
             // 
+            pCapture.Controls.Add(nudHDRBrightnessNits);
+            pCapture.Controls.Add(lblHDRBrightnessNits);
+            pCapture.Controls.Add(cbUseHDRSupport);
             pCapture.Controls.Add(cbCaptureAutoHideDesktopIcons);
             pCapture.Controls.Add(txtCaptureCustomWindow);
             pCapture.Controls.Add(lblCaptureCustomWindow);
@@ -1212,6 +1219,27 @@
             pCapture.Controls.Add(nudCaptureShadowOffset);
             resources.ApplyResources(pCapture, "pCapture");
             pCapture.Name = "pCapture";
+            //
+            // nudHDRBrightnessNits
+            //
+            resources.ApplyResources(nudHDRBrightnessNits, "nudHDRBrightnessNits");
+            nudHDRBrightnessNits.Maximum = new decimal(new int[] { 1000, 0, 0, 0 });
+            nudHDRBrightnessNits.Minimum = new decimal(new int[] { 80, 0, 0, 0 });
+            nudHDRBrightnessNits.Name = "nudHDRBrightnessNits";
+            nudHDRBrightnessNits.Value = new decimal(new int[] { 203, 0, 0, 0 });
+            nudHDRBrightnessNits.ValueChanged += nudHDRBrightnessNits_ValueChanged;
+            //
+            // lblHDRBrightnessNits
+            //
+            resources.ApplyResources(lblHDRBrightnessNits, "lblHDRBrightnessNits");
+            lblHDRBrightnessNits.Name = "lblHDRBrightnessNits";
+            //
+            // cbUseHDRSupport
+            //
+            resources.ApplyResources(cbUseHDRSupport, "cbUseHDRSupport");
+            cbUseHDRSupport.Name = "cbUseHDRSupport";
+            cbUseHDRSupport.UseVisualStyleBackColor = true;
+            cbUseHDRSupport.CheckedChanged += cbUseHDRSupport_CheckedChanged;
             // 
             // cbCaptureAutoHideDesktopIcons
             // 
@@ -2526,6 +2554,7 @@
             ((System.ComponentModel.ISupportInitialize)nudCaptureCustomRegionWidth).EndInit();
             ((System.ComponentModel.ISupportInitialize)nudCaptureCustomRegionY).EndInit();
             ((System.ComponentModel.ISupportInitialize)nudCaptureCustomRegionX).EndInit();
+            ((System.ComponentModel.ISupportInitialize)nudHDRBrightnessNits).EndInit();
             ((System.ComponentModel.ISupportInitialize)nudScreenshotDelay).EndInit();
             ((System.ComponentModel.ISupportInitialize)nudCaptureShadowOffset).EndInit();
             tpRegionCapture.ResumeLayout(false);
@@ -2614,6 +2643,9 @@
         private System.Windows.Forms.Label lblScreenshotDelayInfo;
         private System.Windows.Forms.NumericUpDown nudScreenshotDelay;
         private System.Windows.Forms.NumericUpDown nudCaptureShadowOffset;
+        private System.Windows.Forms.CheckBox cbUseHDRSupport;
+        private System.Windows.Forms.Label lblHDRBrightnessNits;
+        private System.Windows.Forms.NumericUpDown nudHDRBrightnessNits;
         private System.Windows.Forms.CheckBox cbCaptureClientArea;
         private System.Windows.Forms.CheckBox cbCaptureShadow;
         private System.Windows.Forms.CheckBox cbShowCursor;

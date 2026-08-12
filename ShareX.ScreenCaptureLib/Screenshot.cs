@@ -38,6 +38,8 @@ namespace ShareX.ScreenCaptureLib
         public bool CaptureShadow { get; set; } = false;
         public int ShadowOffset { get; set; } = 20;
         public bool AutoHideTaskbar { get; set; } = false;
+        public bool UseHDRSupport { get; set; } = false;
+        public HdrCaptureSettings HdrSettings { get; set; } = new HdrCaptureSettings();
 
         public Bitmap CaptureRectangle(Rectangle rect)
         {
@@ -45,6 +47,26 @@ namespace ShareX.ScreenCaptureLib
             {
                 Rectangle bounds = CaptureHelpers.GetScreenBounds();
                 rect = Rectangle.Intersect(bounds, rect);
+            }
+
+            if (UseHDRSupport && WindowsGraphicsCapture.TryCapture(rect, HdrSettings, out Bitmap hdrBitmap))
+            {
+                if (CaptureCursor)
+                {
+                    using Graphics graphics = Graphics.FromImage(hdrBitmap);
+                    IntPtr hdc = graphics.GetHdc();
+
+                    try
+                    {
+                        DrawCursor(hdc, rect.Location);
+                    }
+                    finally
+                    {
+                        graphics.ReleaseHdc(hdc);
+                    }
+                }
+
+                return hdrBitmap;
             }
 
             return CaptureRectangleNative(rect, CaptureCursor);
@@ -109,13 +131,13 @@ namespace ShareX.ScreenCaptureLib
             return CaptureRectangle(bounds);
         }
 
-        private Bitmap CaptureRectangleNative(Rectangle rect, bool captureCursor = false)
+        internal static Bitmap CaptureRectangleNative(Rectangle rect, bool captureCursor = false)
         {
             IntPtr handle = NativeMethods.GetDesktopWindow();
             return CaptureRectangleNative(handle, rect, captureCursor);
         }
 
-        private Bitmap CaptureRectangleNative(IntPtr handle, Rectangle rect, bool captureCursor = false)
+        private static Bitmap CaptureRectangleNative(IntPtr handle, Rectangle rect, bool captureCursor = false)
         {
             if (rect.Width == 0 || rect.Height == 0)
             {
@@ -130,15 +152,7 @@ namespace ShareX.ScreenCaptureLib
 
             if (captureCursor)
             {
-                try
-                {
-                    CursorData cursorData = new CursorData();
-                    cursorData.DrawCursor(hdcDest, rect.Location);
-                }
-                catch (Exception e)
-                {
-                    DebugHelper.WriteException(e, "Cursor capture failed.");
-                }
+                DrawCursor(hdcDest, rect.Location);
             }
 
             NativeMethods.SelectObject(hdcDest, hOld);
@@ -148,6 +162,19 @@ namespace ShareX.ScreenCaptureLib
             NativeMethods.DeleteObject(hBitmap);
 
             return bmp;
+        }
+
+        private static void DrawCursor(IntPtr destinationHdc, Point captureOrigin)
+        {
+            try
+            {
+                CursorData cursorData = new CursorData();
+                cursorData.DrawCursor(destinationHdc, captureOrigin);
+            }
+            catch (Exception e)
+            {
+                DebugHelper.WriteException(e, "Cursor capture failed.");
+            }
         }
 
         private Bitmap CaptureRectangleManaged(Rectangle rect)

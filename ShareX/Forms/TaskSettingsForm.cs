@@ -280,6 +280,10 @@ namespace ShareX
             cbCaptureClientArea.Checked = TaskSettings.CaptureSettings.CaptureClientArea;
             cbCaptureAutoHideDesktopIcons.Checked = TaskSettings.CaptureSettings.CaptureAutoHideDesktopIcons;
             cbCaptureAutoHideTaskbar.Checked = TaskSettings.CaptureSettings.CaptureAutoHideTaskbar;
+            TaskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
+            cbUseHDRSupport.Checked = TaskSettings.CaptureSettings.UseHDRSupport;
+            nudHDRBrightnessNits.Enabled = lblHDRBrightnessNits.Enabled = TaskSettings.CaptureSettings.UseHDRSupport;
+            nudHDRBrightnessNits.SetValue((decimal)TaskSettings.CaptureSettings.HdrSettings.HdrBrightnessNits);
             nudCaptureCustomRegionX.SetValue(TaskSettings.CaptureSettings.CaptureCustomRegion.X);
             nudCaptureCustomRegionY.SetValue(TaskSettings.CaptureSettings.CaptureCustomRegion.Y);
             nudCaptureCustomRegionWidth.SetValue(TaskSettings.CaptureSettings.CaptureCustomRegion.Width);
@@ -1107,6 +1111,18 @@ namespace ShareX
         private void cbCaptureAutoHideTaskbar_CheckedChanged(object sender, EventArgs e)
         {
             TaskSettings.CaptureSettings.CaptureAutoHideTaskbar = cbCaptureAutoHideTaskbar.Checked;
+        }
+
+        private void cbUseHDRSupport_CheckedChanged(object sender, EventArgs e)
+        {
+            TaskSettings.CaptureSettings.UseHDRSupport = cbUseHDRSupport.Checked;
+            nudHDRBrightnessNits.Enabled = lblHDRBrightnessNits.Enabled = cbUseHDRSupport.Checked;
+        }
+
+        private void nudHDRBrightnessNits_ValueChanged(object sender, EventArgs e)
+        {
+            TaskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
+            TaskSettings.CaptureSettings.HdrSettings.HdrBrightnessNits = (float)nudHDRBrightnessNits.Value;
         }
 
         private void nudScreenRegionX_ValueChanged(object sender, EventArgs e)
