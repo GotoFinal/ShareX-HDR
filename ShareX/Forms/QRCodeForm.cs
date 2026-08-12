@@ -56,9 +56,12 @@ namespace ShareX
         }
 
         private bool isReady;
+        private TaskSettings taskSettings;
 
-        public QRCodeForm(string text = null)
+        public QRCodeForm(string text = null, TaskSettings taskSettings = null)
         {
+            this.taskSettings = taskSettings ?? TaskSettings.GetDefaultTaskSettings();
+
             InitializeComponent();
             ShareXResources.ApplyTheme(this, true);
 
@@ -68,35 +71,37 @@ namespace ShareX
             }
         }
 
-        public static QRCodeForm GenerateQRCodeFromClipboard()
+        public static QRCodeForm GenerateQRCodeFromClipboard(TaskSettings taskSettings = null)
         {
             string text = ClipboardHelpers.GetText(true);
 
             if (!string.IsNullOrEmpty(text) && TaskHelpers.CheckQRCodeContent(text))
             {
-                return new QRCodeForm(text);
+                return new QRCodeForm(text, taskSettings);
             }
 
-            return new QRCodeForm();
+            return new QRCodeForm(taskSettings: taskSettings);
         }
 
-        public static QRCodeForm OpenFormScanFromImageFile(string filePath)
+        public static QRCodeForm OpenFormScanFromImageFile(string filePath, TaskSettings taskSettings = null)
         {
-            QRCodeForm form = new QRCodeForm();
+            QRCodeForm form = new QRCodeForm(taskSettings: taskSettings);
             form.ScanFromImageFile(filePath);
             return form;
         }
 
-        public static QRCodeForm OpenFormScanScreen()
+        public static QRCodeForm OpenFormScanScreen(TaskSettings taskSettings = null)
         {
             QRCodeForm form = Instance;
+            form.taskSettings = taskSettings ?? TaskSettings.GetDefaultTaskSettings();
             form.ScanScreen();
             return form;
         }
 
-        public static QRCodeForm OpenFormScanRegion()
+        public static QRCodeForm OpenFormScanRegion(TaskSettings taskSettings = null)
         {
             QRCodeForm form = Instance;
+            form.taskSettings = taskSettings ?? TaskSettings.GetDefaultTaskSettings();
             form.ScanRegion();
             return form;
         }
@@ -169,7 +174,7 @@ namespace ShareX
                     Thread.Sleep(250);
                 }
 
-                using (Bitmap bmp = new Screenshot().CaptureFullscreen())
+                using (Bitmap bmp = TaskHelpers.GetScreenshotWithoutCursor(taskSettings).CaptureFullscreen())
                 {
                     ScanImage(bmp);
                 }
@@ -192,9 +197,8 @@ namespace ShareX
                     Thread.Sleep(250);
                 }
 
-                TaskSettings taskSettings = TaskSettings.GetDefaultTaskSettings();
-
-                using (Bitmap bmp = RegionCaptureTasks.GetRegionImage(taskSettings.CaptureSettings.SurfaceOptions))
+                using (Bitmap bmp = RegionCaptureTasks.GetRegionImage(taskSettings.CaptureSettings.SurfaceOptions,
+                    TaskHelpers.GetScreenshotWithoutCursor(taskSettings)))
                 {
                     ScanImage(bmp);
                 }

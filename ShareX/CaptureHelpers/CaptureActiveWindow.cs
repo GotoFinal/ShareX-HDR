@@ -31,7 +31,12 @@ namespace ShareX
         {
             TaskMetadata metadata = CreateMetadata();
 
-            if (taskSettings.CaptureSettings.CaptureTransparent && !taskSettings.CaptureSettings.CaptureClientArea)
+            // Transparent window capture uses the legacy GDI path, which cannot
+            // preserve HDR desktop pixels. Prefer the HDR-aware monitor capture
+            // whenever HDR support is enabled.
+            if (taskSettings.CaptureSettings.CaptureTransparent &&
+                !taskSettings.CaptureSettings.CaptureClientArea &&
+                !taskSettings.CaptureSettings.UseHDRSupport)
             {
                 metadata.Image = TaskHelpers.GetScreenshot(taskSettings).CaptureActiveWindowTransparent();
             }

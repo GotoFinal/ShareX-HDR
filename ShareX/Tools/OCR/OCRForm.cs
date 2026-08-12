@@ -39,13 +39,15 @@ namespace ShareX
         public string Result { get; private set; }
 
         private Bitmap bmpSource;
+        private readonly Screenshot screenshot;
         private bool loaded;
         private bool busy;
 
-        public OCRForm(Bitmap bmp, OCROptions options)
+        public OCRForm(Bitmap bmp, OCROptions options, Screenshot screenshot = null)
         {
             bmpSource = (Bitmap)bmp.Clone();
             Options = options;
+            this.screenshot = screenshot ?? TaskHelpers.GetScreenshotWithoutCursor();
 
             InitializeComponent();
             ShareXResources.ApplyTheme(this, true);
@@ -176,7 +178,7 @@ namespace ShareX
             FormWindowState previousState = WindowState;
             WindowState = FormWindowState.Minimized;
             await Task.Delay(250);
-            Bitmap regionImage = RegionCaptureTasks.GetRegionImage();
+            Bitmap regionImage = RegionCaptureTasks.GetRegionImage(screenshot: screenshot);
             WindowState = previousState;
 
             if (regionImage != null)

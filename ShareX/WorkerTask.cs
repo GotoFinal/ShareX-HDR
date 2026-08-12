@@ -778,7 +778,8 @@ namespace ShareX
 
                 if (Info.TaskSettings.AfterCaptureJob.HasFlag(AfterCaptureTasks.AnalyzeImage) && Info.DataType == EDataType.Image)
                 {
-                    using (AIForm aiForm = new AIForm(Info.FilePath, Info.TaskSettings.ToolsSettingsReference.AIOptions))
+                    using (AIForm aiForm = new AIForm(Info.FilePath, Info.TaskSettings.ToolsSettingsReference.AIOptions,
+                        TaskHelpers.GetScreenshotWithoutCursor(Info.TaskSettings)))
                     {
                         aiForm.ShowDialog();
                     }

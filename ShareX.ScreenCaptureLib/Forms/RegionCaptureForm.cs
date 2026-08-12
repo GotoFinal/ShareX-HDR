@@ -64,6 +64,7 @@ namespace ShareX.ScreenCaptureLib
 
         public Point CurrentPosition { get; private set; }
         public SimpleWindowInfo SelectedWindow { get; private set; }
+        public Screenshot ScreenCapture { get; private set; }
 
         internal Vector2 CanvasCenterOffset { get; set; } = new Vector2(0f, 0f);
 
@@ -105,10 +106,11 @@ namespace ShareX.ScreenCaptureLib
         private Color canvasBackgroundColor, canvasBorderColor, textColor, textShadowColor, textBackgroundColor, textOuterBorderColor, textInnerBorderColor;
         private float zoomFactor = 1;
 
-        public RegionCaptureForm(RegionCaptureMode mode, RegionCaptureOptions options, Bitmap canvas = null)
+        public RegionCaptureForm(RegionCaptureMode mode, RegionCaptureOptions options, Bitmap canvas = null, Screenshot screenshot = null)
         {
             Mode = mode;
             Options = options;
+            ScreenCapture = screenshot ?? new Screenshot();
 
             IsFullscreen = !IsEditorMode || Options.ImageEditorStartMode == ImageEditorStartMode.Fullscreen;
 
@@ -118,7 +120,7 @@ namespace ShareX.ScreenCaptureLib
 
                 if (canvas == null)
                 {
-                    canvas = new Screenshot().CaptureRectangle(ScreenBounds);
+                    canvas = ScreenCapture.CaptureRectangle(ScreenBounds);
                 }
 
                 Helpers.LockCursorToWindow(this);
@@ -129,7 +131,7 @@ namespace ShareX.ScreenCaptureLib
 
                 if (canvas == null)
                 {
-                    canvas = new Screenshot().CaptureRectangle(ScreenBounds);
+                    canvas = ScreenCapture.CaptureRectangle(ScreenBounds);
                 }
             }
 

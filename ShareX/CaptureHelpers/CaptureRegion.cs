@@ -92,7 +92,8 @@ namespace ShareX
                 cursorData = new CursorData();
             }
 
-            using (RegionCaptureForm form = new RegionCaptureForm(mode, taskSettings.CaptureSettingsReference.SurfaceOptions, canvas))
+            using (RegionCaptureForm form = new RegionCaptureForm(mode,
+                taskSettings.CaptureSettingsReference.SurfaceOptions, canvas, screenshot))
             {
                 if (cursorData != null && cursorData.IsVisible)
                 {

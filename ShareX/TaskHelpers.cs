@@ -308,18 +308,18 @@ namespace ShareX
                 case HotkeyType.QRCode:
                     if (!string.IsNullOrEmpty(filePath))
                     {
-                        OpenQRCodeScanFromImageFile(filePath);
+                        OpenQRCodeScanFromImageFile(filePath, safeTaskSettings);
                     }
                     else
                     {
-                        OpenQRCode();
+                        OpenQRCode(safeTaskSettings);
                     }
                     break;
                 case HotkeyType.QRCodeDecodeFromScreen:
-                    OpenQRCodeScanScreen();
+                    OpenQRCodeScanScreen(safeTaskSettings);
                     break;
                 case HotkeyType.QRCodeScanRegion:
-                    OpenQRCodeScanRegion();
+                    OpenQRCodeScanRegion(safeTaskSettings);
                     break;
                 case HotkeyType.HashCheck:
                     OpenHashCheck(filePath, safeTaskSettings);
@@ -797,7 +797,8 @@ namespace ShareX
 
             await ScrollingCaptureForm.StartStopScrollingCapture(taskSettings.CaptureSettingsReference.ScrollingCaptureOptions,
                 img => UploadManager.RunImageTask(img, taskSettings),
-                () => PlayNotificationSoundAsync(NotificationSound.ActionCompleted, taskSettings));
+                () => PlayNotificationSoundAsync(NotificationSound.ActionCompleted, taskSettings),
+                GetScreenshotWithoutCursor(taskSettings));
         }
 
         public static void OpenAutoCapture(TaskSettings taskSettings = null)
@@ -889,7 +890,8 @@ namespace ShareX
             if (taskSettings == null) taskSettings = TaskSettings.GetDefaultTaskSettings();
             taskSettings.CaptureSettings.SurfaceOptions.ScreenColorPickerInfoText = taskSettings.ToolsSettings.ScreenColorPickerInfoText;
 
-            RegionCaptureTasks.ShowScreenColorPickerDialog(taskSettings.CaptureSettingsReference.SurfaceOptions);
+            RegionCaptureTasks.ShowScreenColorPickerDialog(taskSettings.CaptureSettingsReference.SurfaceOptions,
+                GetScreenshotWithoutCursor(taskSettings));
         }
 
         public static void OpenScreenColorPicker(TaskSettings taskSettings = null)
@@ -897,7 +899,8 @@ namespace ShareX
             if (taskSettings == null) taskSettings = TaskSettings.GetDefaultTaskSettings();
             taskSettings.CaptureSettings.SurfaceOptions.ScreenColorPickerInfoText = taskSettings.ToolsSettings.ScreenColorPickerInfoText;
 
-            PointInfo pointInfo = RegionCaptureTasks.GetPointInfo(taskSettings.CaptureSettings.SurfaceOptions);
+            PointInfo pointInfo = RegionCaptureTasks.GetPointInfo(taskSettings.CaptureSettings.SurfaceOptions, null,
+                GetScreenshotWithoutCursor(taskSettings));
 
             if (pointInfo != null)
             {
@@ -1269,7 +1272,7 @@ namespace ShareX
                     RegionCaptureMode mode = taskMode ? RegionCaptureMode.TaskEditor : RegionCaptureMode.Editor;
                     RegionCaptureOptions options = taskSettings.CaptureSettingsReference.SurfaceOptions;
 
-                    using (RegionCaptureForm form = new RegionCaptureForm(mode, options, bmp))
+                    using (RegionCaptureForm form = new RegionCaptureForm(mode, options, bmp, GetScreenshotWithoutCursor(taskSettings)))
                     {
                         form.ImageFilePath = filePath;
 
@@ -1665,31 +1668,31 @@ namespace ShareX
             }
         }
 
-        public static void OpenQRCode()
+        public static void OpenQRCode(TaskSettings taskSettings = null)
         {
-            QRCodeForm.GenerateQRCodeFromClipboard().Show();
+            QRCodeForm.GenerateQRCodeFromClipboard(taskSettings).Show();
         }
 
-        public static void OpenQRCodeScanFromImageFile(string filePath)
+        public static void OpenQRCodeScanFromImageFile(string filePath, TaskSettings taskSettings = null)
         {
-            QRCodeForm.OpenFormScanFromImageFile(filePath).Show();
+            QRCodeForm.OpenFormScanFromImageFile(filePath, taskSettings).Show();
         }
 
-        public static void OpenQRCodeScanScreen()
+        public static void OpenQRCodeScanScreen(TaskSettings taskSettings = null)
         {
-            QRCodeForm.OpenFormScanScreen();
+            QRCodeForm.OpenFormScanScreen(taskSettings);
         }
 
-        public static void OpenQRCodeScanRegion()
+        public static void OpenQRCodeScanRegion(TaskSettings taskSettings = null)
         {
-            QRCodeForm.OpenFormScanRegion();
+            QRCodeForm.OpenFormScanRegion(taskSettings);
         }
 
         public static void OpenRuler(TaskSettings taskSettings = null)
         {
             if (taskSettings == null) taskSettings = TaskSettings.GetDefaultTaskSettings();
 
-            RegionCaptureTasks.ShowScreenRuler(taskSettings.CaptureSettings.SurfaceOptions);
+            RegionCaptureTasks.ShowScreenRuler(taskSettings.CaptureSettings.SurfaceOptions, GetScreenshotWithoutCursor(taskSettings));
         }
 
         public static void SearchImageUsingGoogleLens(string url)
@@ -1706,7 +1709,7 @@ namespace ShareX
         {
             if (taskSettings == null) taskSettings = TaskSettings.GetDefaultTaskSettings();
 
-            AIForm aiForm = new AIForm(taskSettings.ToolsSettingsReference.AIOptions);
+            AIForm aiForm = new AIForm(taskSettings.ToolsSettingsReference.AIOptions, GetScreenshotWithoutCursor(taskSettings));
             aiForm.Show();
         }
 
@@ -1714,7 +1717,7 @@ namespace ShareX
         {
             if (taskSettings == null) taskSettings = TaskSettings.GetDefaultTaskSettings();
 
-            AIForm aiForm = new AIForm(filePath, taskSettings.ToolsSettingsReference.AIOptions);
+            AIForm aiForm = new AIForm(filePath, taskSettings.ToolsSettingsReference.AIOptions, GetScreenshotWithoutCursor(taskSettings));
             aiForm.Show();
         }
 
@@ -1722,7 +1725,8 @@ namespace ShareX
         {
             if (taskSettings == null) taskSettings = TaskSettings.GetDefaultTaskSettings();
 
-            using (Bitmap bmp = RegionCaptureTasks.GetRegionImage(taskSettings.CaptureSettings.SurfaceOptions))
+            using (Bitmap bmp = RegionCaptureTasks.GetRegionImage(taskSettings.CaptureSettings.SurfaceOptions,
+                GetScreenshotWithoutCursor(taskSettings)))
             {
                 await OCRImage(bmp, taskSettings);
             }
@@ -1762,7 +1766,7 @@ namespace ShareX
                     }
                     else
                     {
-                        using (OCRForm form = new OCRForm(bmp, options))
+                        using (OCRForm form = new OCRForm(bmp, options, GetScreenshotWithoutCursor(taskSettings)))
                         {
                             form.ShowDialog();
 
@@ -1818,7 +1822,9 @@ namespace ShareX
 
         public static void PinToScreen(TaskSettings taskSettings = null)
         {
-            using (PinToScreenStartupForm form = new PinToScreenStartupForm())
+            if (taskSettings == null) taskSettings = TaskSettings.GetDefaultTaskSettings();
+
+            using (PinToScreenStartupForm form = new PinToScreenStartupForm(GetScreenshotWithoutCursor(taskSettings)))
             {
                 if (form.ShowDialog() == DialogResult.OK)
                 {
@@ -1856,7 +1862,10 @@ namespace ShareX
 
         public static void PinToScreenFromScreen(TaskSettings taskSettings = null)
         {
-            Image image = RegionCaptureTasks.GetRegionImage(out Rectangle rect);
+            if (taskSettings == null) taskSettings = TaskSettings.GetDefaultTaskSettings();
+
+            Image image = RegionCaptureTasks.GetRegionImage(out Rectangle rect,
+                taskSettings.CaptureSettings.SurfaceOptions, GetScreenshotWithoutCursor(taskSettings));
 
             PinToScreen(image, rect.Location, taskSettings);
         }
@@ -2239,6 +2248,13 @@ namespace ShareX
                 HdrSettings = taskSettings.CaptureSettings.HdrSettings ?? new HdrCaptureSettings()
             };
 
+            return screenshot;
+        }
+
+        public static Screenshot GetScreenshotWithoutCursor(TaskSettings taskSettings = null)
+        {
+            Screenshot screenshot = GetScreenshot(taskSettings);
+            screenshot.CaptureCursor = false;
             return screenshot;
         }
 

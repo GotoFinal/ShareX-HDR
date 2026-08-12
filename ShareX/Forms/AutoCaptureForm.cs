@@ -124,7 +124,8 @@ namespace ShareX
 
         private void SelectRegion()
         {
-            if (RegionCaptureTasks.GetRectangleRegion(out Rectangle rect, TaskSettings.CaptureSettings.SurfaceOptions))
+            if (RegionCaptureTasks.GetRectangleRegion(out Rectangle rect, TaskSettings.CaptureSettings.SurfaceOptions,
+                TaskHelpers.GetScreenshotWithoutCursor(TaskSettings)))
             {
                 Program.Settings.AutoCaptureRegion = rect;
                 UpdateRegion();

@@ -37,9 +37,11 @@ namespace ShareX
     {
         public Bitmap Image { get; private set; }
         public Point? PinToScreenLocation { get; private set; }
+        private readonly Screenshot screenshot;
 
-        public PinToScreenStartupForm()
+        public PinToScreenStartupForm(Screenshot screenshot = null)
         {
+            this.screenshot = screenshot ?? TaskHelpers.GetScreenshotWithoutCursor();
             InitializeComponent();
             ShareXResources.ApplyTheme(this, true);
         }
@@ -49,7 +51,7 @@ namespace ShareX
             Hide();
             Thread.Sleep(250);
 
-            Image = RegionCaptureTasks.GetRegionImage(out Rectangle rect);
+            Image = RegionCaptureTasks.GetRegionImage(out Rectangle rect, screenshot: screenshot);
 
             if (Image != null)
             {

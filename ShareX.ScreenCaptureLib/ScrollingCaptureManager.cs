@@ -47,10 +47,13 @@ namespace ShareX.ScreenCaptureLib
         private int bestMatchCount, bestMatchIndex, bestIgnoreBottomOffset;
         private WindowInfo selectedWindow;
         private Rectangle selectedRectangle;
+        private readonly Screenshot screenshot;
 
-        public ScrollingCaptureManager(ScrollingCaptureOptions options)
+        public ScrollingCaptureManager(ScrollingCaptureOptions options, Screenshot screenshot = null)
         {
             Options = options;
+            this.screenshot = screenshot ?? new Screenshot();
+            this.screenshot.CaptureCursor = false;
         }
 
         public void Dispose()
@@ -112,11 +115,6 @@ namespace ShareX.ScreenCaptureLib
 
                         await Task.Delay(Options.ScrollDelay);
                     }
-
-                    Screenshot screenshot = new Screenshot()
-                    {
-                        CaptureCursor = false
-                    };
 
                     while (!stopRequested)
                     {
@@ -212,7 +210,8 @@ namespace ShareX.ScreenCaptureLib
 
         public bool SelectWindow()
         {
-            return RegionCaptureTasks.GetRectangleRegion(out selectedRectangle, out selectedWindow, new RegionCaptureOptions());
+            return RegionCaptureTasks.GetRectangleRegion(out selectedRectangle, out selectedWindow,
+                new RegionCaptureOptions(), screenshot);
         }
 
         private bool IsScrollReachedBottom(IntPtr handle)

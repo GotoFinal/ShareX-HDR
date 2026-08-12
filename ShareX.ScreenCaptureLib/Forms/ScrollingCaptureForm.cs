@@ -47,17 +47,18 @@ namespace ShareX.ScreenCaptureLib
         private ScrollingCaptureManager manager;
         private Point dragStartPosition;
 
-        private ScrollingCaptureForm(ScrollingCaptureOptions options)
+        private ScrollingCaptureForm(ScrollingCaptureOptions options, Screenshot screenshot)
         {
             Options = options;
 
             InitializeComponent();
             ShareXResources.ApplyTheme(this, true);
 
-            manager = new ScrollingCaptureManager(Options);
+            manager = new ScrollingCaptureManager(Options, screenshot);
         }
 
-        public static async Task StartStopScrollingCapture(ScrollingCaptureOptions options, Action<Bitmap> uploadRequested = null, Action playNotificationSound = null)
+        public static async Task StartStopScrollingCapture(ScrollingCaptureOptions options,
+            Action<Bitmap> uploadRequested = null, Action playNotificationSound = null, Screenshot screenshot = null)
         {
             if (instance == null || instance.IsDisposed)
             {
@@ -65,7 +66,7 @@ namespace ShareX.ScreenCaptureLib
                 {
                     if (instance == null || instance.IsDisposed)
                     {
-                        instance = new ScrollingCaptureForm(options);
+                        instance = new ScrollingCaptureForm(options, screenshot);
 
                         if (uploadRequested != null)
                         {

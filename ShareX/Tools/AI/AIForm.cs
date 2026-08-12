@@ -36,10 +36,12 @@ namespace ShareX
     public partial class AIForm : Form
     {
         public AIOptions Options { get; private set; }
+        private readonly Screenshot screenshot;
 
-        public AIForm(AIOptions options)
+        public AIForm(AIOptions options, Screenshot screenshot = null)
         {
             Options = options;
+            this.screenshot = screenshot ?? TaskHelpers.GetScreenshotWithoutCursor();
             InitializeComponent();
             ShareXResources.ApplyTheme(this, true);
 
@@ -59,7 +61,7 @@ namespace ShareX
             cmsPresets.Items.Add(item);
         }
 
-        public AIForm(string filePath, AIOptions options) : this(options)
+        public AIForm(string filePath, AIOptions options, Screenshot screenshot = null) : this(options, screenshot)
         {
             if (!string.IsNullOrEmpty(filePath))
             {
@@ -171,7 +173,7 @@ namespace ShareX
         {
             if (string.IsNullOrEmpty(txtImage.Text) && Options.AutoStartRegion)
             {
-                Bitmap regionImage = RegionCaptureTasks.GetRegionImage();
+                Bitmap regionImage = RegionCaptureTasks.GetRegionImage(screenshot: screenshot);
 
                 if (regionImage != null)
                 {
@@ -227,7 +229,7 @@ namespace ShareX
             FormWindowState previousState = WindowState;
             WindowState = FormWindowState.Minimized;
             await Task.Delay(250);
-            Bitmap regionImage = RegionCaptureTasks.GetRegionImage();
+            Bitmap regionImage = RegionCaptureTasks.GetRegionImage(screenshot: screenshot);
             WindowState = previousState;
 
             if (regionImage != null)

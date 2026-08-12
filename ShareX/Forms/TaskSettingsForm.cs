@@ -1165,7 +1165,8 @@ namespace ShareX
 
         private void btnCaptureCustomRegionSelectRectangle_Click(object sender, EventArgs e)
         {
-            if (RegionCaptureTasks.GetRectangleRegion(out Rectangle rect, TaskSettings.CaptureSettings.SurfaceOptions))
+            if (RegionCaptureTasks.GetRectangleRegion(out Rectangle rect, TaskSettings.CaptureSettings.SurfaceOptions,
+                TaskHelpers.GetScreenshotWithoutCursor(TaskSettings)))
             {
                 nudCaptureCustomRegionX.SetValue(rect.X);
                 nudCaptureCustomRegionY.SetValue(rect.Y);

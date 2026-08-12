@@ -32,11 +32,11 @@ namespace ShareX.ScreenCaptureLib
 {
     public static class RegionCaptureTasks
     {
-        public static Bitmap GetRegionImage(RegionCaptureOptions options = null)
+        public static Bitmap GetRegionImage(RegionCaptureOptions options = null, Screenshot screenshot = null)
         {
             RegionCaptureOptions newOptions = GetRegionCaptureOptions(options);
 
-            using (RegionCaptureForm form = new RegionCaptureForm(RegionCaptureMode.Default, newOptions))
+            using (RegionCaptureForm form = new RegionCaptureForm(RegionCaptureMode.Default, newOptions, null, screenshot))
             {
                 form.ShowDialog();
 
@@ -44,11 +44,11 @@ namespace ShareX.ScreenCaptureLib
             }
         }
 
-        public static Bitmap GetRegionImage(out Rectangle rect, RegionCaptureOptions options = null)
+        public static Bitmap GetRegionImage(out Rectangle rect, RegionCaptureOptions options = null, Screenshot screenshot = null)
         {
             RegionCaptureOptions newOptions = GetRegionCaptureOptions(options);
 
-            using (RegionCaptureForm form = new RegionCaptureForm(RegionCaptureMode.Default, newOptions))
+            using (RegionCaptureForm form = new RegionCaptureForm(RegionCaptureMode.Default, newOptions, null, screenshot))
             {
                 form.ShowDialog();
 
@@ -57,11 +57,11 @@ namespace ShareX.ScreenCaptureLib
             }
         }
 
-        public static bool GetRectangleRegion(out Rectangle rect, RegionCaptureOptions options = null)
+        public static bool GetRectangleRegion(out Rectangle rect, RegionCaptureOptions options = null, Screenshot screenshot = null)
         {
             RegionCaptureOptions newOptions = GetRegionCaptureOptions(options);
 
-            using (RegionCaptureForm form = new RegionCaptureForm(RegionCaptureMode.Default, newOptions))
+            using (RegionCaptureForm form = new RegionCaptureForm(RegionCaptureMode.Default, newOptions, null, screenshot))
             {
                 form.ShowDialog();
 
@@ -71,11 +71,11 @@ namespace ShareX.ScreenCaptureLib
             return !rect.IsEmpty;
         }
 
-        public static bool GetRectangleRegion(out Rectangle rect, out WindowInfo windowInfo, RegionCaptureOptions options = null)
+        public static bool GetRectangleRegion(out Rectangle rect, out WindowInfo windowInfo, RegionCaptureOptions options = null, Screenshot screenshot = null)
         {
             RegionCaptureOptions newOptions = GetRegionCaptureOptions(options);
 
-            using (RegionCaptureForm form = new RegionCaptureForm(RegionCaptureMode.Default, newOptions))
+            using (RegionCaptureForm form = new RegionCaptureForm(RegionCaptureMode.Default, newOptions, null, screenshot))
             {
                 form.ShowDialog();
 
@@ -101,13 +101,13 @@ namespace ShareX.ScreenCaptureLib
             return false;
         }
 
-        public static PointInfo GetPointInfo(RegionCaptureOptions options, Bitmap canvas = null)
+        public static PointInfo GetPointInfo(RegionCaptureOptions options, Bitmap canvas = null, Screenshot screenshot = null)
         {
             RegionCaptureOptions newOptions = GetRegionCaptureOptions(options);
             newOptions.DetectWindows = false;
             newOptions.BackgroundDimStrength = 0;
 
-            using (RegionCaptureForm form = new RegionCaptureForm(RegionCaptureMode.ScreenColorPicker, newOptions, canvas))
+            using (RegionCaptureForm form = new RegionCaptureForm(RegionCaptureMode.ScreenColorPicker, newOptions, canvas, screenshot))
             {
                 form.ShowDialog();
 
@@ -123,13 +123,13 @@ namespace ShareX.ScreenCaptureLib
             return null;
         }
 
-        public static SimpleWindowInfo GetWindowInfo(RegionCaptureOptions options)
+        public static SimpleWindowInfo GetWindowInfo(RegionCaptureOptions options, Screenshot screenshot = null)
         {
             RegionCaptureOptions newOptions = GetRegionCaptureOptions(options);
             newOptions.BackgroundDimStrength = 0;
             newOptions.ShowMagnifier = false;
 
-            using (RegionCaptureForm form = new RegionCaptureForm(RegionCaptureMode.OneClick, newOptions))
+            using (RegionCaptureForm form = new RegionCaptureForm(RegionCaptureMode.OneClick, newOptions, null, screenshot))
             {
                 form.ShowDialog();
 
@@ -142,21 +142,21 @@ namespace ShareX.ScreenCaptureLib
             return null;
         }
 
-        public static void ShowScreenColorPickerDialog(RegionCaptureOptions options)
+        public static void ShowScreenColorPickerDialog(RegionCaptureOptions options, Screenshot screenshot = null)
         {
             Color color = Color.Red;
             ColorPickerForm colorPickerForm = new ColorPickerForm(color, true, true, options.ColorPickerOptions);
-            colorPickerForm.EnableScreenColorPickerButton(() => GetPointInfo(options));
+            colorPickerForm.EnableScreenColorPickerButton(() => GetPointInfo(options, null, screenshot));
             colorPickerForm.Show();
         }
 
-        public static void ShowScreenRuler(RegionCaptureOptions options)
+        public static void ShowScreenRuler(RegionCaptureOptions options, Screenshot screenshot = null)
         {
             RegionCaptureOptions newOptions = GetRegionCaptureOptions(options);
             newOptions.QuickCrop = false;
             newOptions.UseLightResizeNodes = true;
 
-            using (RegionCaptureForm form = new RegionCaptureForm(RegionCaptureMode.Ruler, newOptions))
+            using (RegionCaptureForm form = new RegionCaptureForm(RegionCaptureMode.Ruler, newOptions, null, screenshot))
             {
                 form.ShowDialog();
             }

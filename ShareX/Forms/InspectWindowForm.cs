@@ -106,7 +106,7 @@ namespace ShareX
 
             SelectedWindow = null;
 
-            SimpleWindowInfo simpleWindowInfo = RegionCaptureTasks.GetWindowInfo(options);
+            SimpleWindowInfo simpleWindowInfo = RegionCaptureTasks.GetWindowInfo(options, TaskHelpers.GetScreenshotWithoutCursor());
 
             if (simpleWindowInfo != null)
             {

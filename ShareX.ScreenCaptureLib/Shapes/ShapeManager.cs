@@ -2170,7 +2170,7 @@ namespace ShareX.ScreenCaptureLib
                 menuForm.Hide();
                 Thread.Sleep(250);
 
-                bmp = RegionCaptureTasks.GetRegionImage(Options);
+                bmp = RegionCaptureTasks.GetRegionImage(Options, Form.ScreenCapture);
             }
             finally
             {
@@ -2397,7 +2397,7 @@ namespace ShareX.ScreenCaptureLib
             }
             else
             {
-                openScreenColorPicker = () => RegionCaptureTasks.GetPointInfo(Options);
+                openScreenColorPicker = () => RegionCaptureTasks.GetPointInfo(Options, null, Form.ScreenCapture);
             }
 
             return ColorPickerForm.PickColor(currentColor, out newColor, Form, openScreenColorPicker, Options.ColorPickerOptions);

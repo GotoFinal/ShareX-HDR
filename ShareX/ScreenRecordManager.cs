@@ -136,7 +136,8 @@ namespace ShareX
                     }
                     else
                     {
-                        RegionCaptureTasks.GetRectangleRegion(out captureRectangle, out WindowInfo windowInfo, taskSettings.CaptureSettings.SurfaceOptions);
+                        RegionCaptureTasks.GetRectangleRegion(out captureRectangle, out WindowInfo windowInfo,
+                            taskSettings.CaptureSettings.SurfaceOptions, TaskHelpers.GetScreenshotWithoutCursor(taskSettings));
 
                         metadata.UpdateInfo(windowInfo);
                     }
