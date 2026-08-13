@@ -81,9 +81,9 @@ public class ObsGameCaptureSettingsTests
         Assert.Equal(ObsGameCaptureAlphaMode.Opaque, options.AlphaMode);
         Assert.False(options.CaptureThirdPartyOverlays);
         Assert.Equal(ObsGameCaptureRgb10A2Interpretation.Automatic, options.Rgb10A2Interpretation);
-        Assert.Equal(ObsGameCaptureFrameRate.Fps60, options.CaptureFrameRate);
+        Assert.Equal(ObsGameCaptureFrameRate.Fps15, options.CaptureFrameRate);
         Assert.True(options.ReuseExistingHook);
-        Assert.Equal(120, options.SessionIdleTimeoutSeconds);
+        Assert.Equal(15, options.SessionIdleTimeoutSeconds);
         Assert.Equal(ObsGameCaptureCursorMode.UseShareXSetting, options.CursorMode);
     }
 

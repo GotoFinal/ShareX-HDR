@@ -234,10 +234,10 @@ namespace ShareX.ScreenCaptureLib
 
         private List<string> processNames = new List<string>();
         private List<ObsGameCaptureProcessOptions> processOptions = new List<ObsGameCaptureProcessOptions>();
-        private int sessionIdleTimeoutSeconds = 120;
+        private int sessionIdleTimeoutSeconds = 15;
         private ObsGameCaptureRgb10A2Interpretation rgb10A2Interpretation;
         private ObsGameCaptureAlphaMode alphaMode;
-        private ObsGameCaptureFrameRate captureFrameRate = ObsGameCaptureFrameRate.Fps60;
+        private ObsGameCaptureFrameRate captureFrameRate = ObsGameCaptureFrameRate.Fps15;
         private ObsGameCaptureCursorMode cursorMode;
 
         public bool Enabled { get; set; }
@@ -262,7 +262,7 @@ namespace ShareX.ScreenCaptureLib
         public ObsGameCaptureFrameRate CaptureFrameRate
         {
             get => captureFrameRate;
-            set => captureFrameRate = Enum.IsDefined(value) ? value : ObsGameCaptureFrameRate.Fps60;
+            set => captureFrameRate = Enum.IsDefined(value) ? value : ObsGameCaptureFrameRate.Fps15;
         }
 
         public ObsGameCaptureCursorMode CursorMode

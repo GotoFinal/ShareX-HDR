@@ -178,7 +178,12 @@ namespace ShareX.ScreenCaptureLib
             WindowsGraphicsCapture.CaptureContext captureContext,
             IntPtr preferredWindow = default)
         {
-            Bitmap bitmap = CaptureRectangle(rect, captureContext, preferredWindow, out HdrImageDocument document);
+            Bitmap bitmap = CaptureRectangle(
+                rect,
+                captureContext,
+                captureScope: null,
+                preferredWindow,
+                out HdrImageDocument document);
             document?.Dispose();
             return bitmap;
         }
@@ -186,6 +191,37 @@ namespace ShareX.ScreenCaptureLib
         private Bitmap CaptureRectangle(
             Rectangle rect,
             WindowsGraphicsCapture.CaptureContext captureContext,
+            ObsGameCaptureCaptureScope captureScope,
+            IntPtr preferredWindow = default)
+        {
+            Bitmap bitmap = CaptureRectangle(
+                rect,
+                captureContext,
+                captureScope,
+                preferredWindow,
+                out HdrImageDocument document);
+            document?.Dispose();
+            return bitmap;
+        }
+
+        private Bitmap CaptureRectangle(
+            Rectangle rect,
+            WindowsGraphicsCapture.CaptureContext captureContext,
+            IntPtr preferredWindow,
+            out HdrImageDocument document)
+        {
+            return CaptureRectangle(
+                rect,
+                captureContext,
+                captureScope: null,
+                preferredWindow,
+                out document);
+        }
+
+        private Bitmap CaptureRectangle(
+            Rectangle rect,
+            WindowsGraphicsCapture.CaptureContext captureContext,
+            ObsGameCaptureCaptureScope captureScope,
             IntPtr preferredWindow,
             out HdrImageDocument document)
         {
@@ -200,6 +236,7 @@ namespace ShareX.ScreenCaptureLib
             if (TryCaptureObsGame(
                 rect,
                 preferredWindow,
+                captureScope,
                 out HdrImageDocument obsDocument,
                 out ObsGameCaptureAttempt obsAttempt))
             {
@@ -256,6 +293,21 @@ namespace ShareX.ScreenCaptureLib
             out HdrImageDocument document,
             out ObsGameCaptureAttempt attempt)
         {
+            return TryCaptureObsGame(
+                rect,
+                preferredWindow,
+                captureScope: null,
+                out document,
+                out attempt);
+        }
+
+        private bool TryCaptureObsGame(
+            Rectangle rect,
+            IntPtr preferredWindow,
+            ObsGameCaptureCaptureScope captureScope,
+            out HdrImageDocument document,
+            out ObsGameCaptureAttempt attempt)
+        {
             document = null;
             attempt = null;
 
@@ -265,10 +317,11 @@ namespace ShareX.ScreenCaptureLib
             }
 
             ObsGameCaptureService service = GetObsGameCaptureService();
-            bool captured = service.TryCapture(
+            bool captured = service.TryCaptureScoped(
                 rect,
                 HdrSettings,
                 preferredWindow,
+                captureScope,
                 out document,
                 out attempt);
             DebugHelper.WriteLine(
@@ -276,7 +329,8 @@ namespace ShareX.ScreenCaptureLib
                 $"pid={attempt.ProcessId} source={attempt.SessionSource} format={attempt.DxgiFormat} " +
                 $"color={attempt.ColorInterpretation} alpha={attempt.AlphaMode} " +
                 $"overlays={attempt.CaptureThirdPartyOverlays} rate={attempt.CaptureFrameRate} " +
-                $"cursor={attempt.CursorMode} elapsed={attempt.Duration.TotalMilliseconds:F1}ms " +
+                $"cursor={attempt.CursorMode} retained={attempt.OwnedSessionRetained} " +
+                $"elapsed={attempt.Duration.TotalMilliseconds:F1}ms " +
                 $"message={attempt.Message}");
             return captured;
         }
@@ -320,21 +374,29 @@ namespace ShareX.ScreenCaptureLib
         {
             private Screenshot screenshot;
             private WindowsGraphicsCapture.CaptureContext captureContext;
+            private ObsGameCaptureCaptureScope obsGameCaptureScope;
 
             public CaptureSession(Screenshot screenshot)
             {
                 this.screenshot = screenshot ?? throw new ArgumentNullException(nameof(screenshot));
                 captureContext = new WindowsGraphicsCapture.CaptureContext(true);
+
+                if (screenshot.UseHDRSupport && screenshot.HdrSettings?.ObsGameCapture?.Enabled == true)
+                {
+                    obsGameCaptureScope = GetObsGameCaptureService().CreateCaptureScope();
+                }
             }
 
             public Bitmap CaptureRectangle(Rectangle rect)
             {
                 ObjectDisposedException.ThrowIf(screenshot == null, this);
-                return screenshot.CaptureRectangle(rect, captureContext);
+                return screenshot.CaptureRectangle(rect, captureContext, obsGameCaptureScope);
             }
 
             public void Dispose()
             {
+                obsGameCaptureScope?.Dispose();
+                obsGameCaptureScope = null;
                 captureContext?.Dispose();
                 captureContext = null;
                 screenshot = null;

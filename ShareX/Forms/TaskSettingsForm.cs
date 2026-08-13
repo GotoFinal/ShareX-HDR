@@ -1332,7 +1332,7 @@ namespace ShareX
             {
                 AutoSize = true,
                 Location = new Point(4, 280),
-                Text = "Hook capture rate:"
+                Text = "Hook rate while capturing:"
             };
             pObsGameCapture.Controls.Add(frameRateLabel);
 
@@ -1476,7 +1476,7 @@ namespace ShareX
             {
                 AutoSize = true,
                 Location = new Point(4, 516),
-                Text = "Keep ShareX-owned hook alive when idle (seconds):"
+                Text = "Inactive-session safety timeout (seconds):"
             };
             pObsGameCapture.Controls.Add(idleLabel);
 
@@ -1485,7 +1485,7 @@ namespace ShareX
                 Location = new Point(310, 512),
                 Minimum = 5,
                 Maximum = 600,
-                Value = 120,
+                Value = 15,
                 Size = new Size(100, 23)
             };
             nudObsSessionIdleTimeout.ValueChanged += (_, _) =>
@@ -1502,11 +1502,13 @@ namespace ShareX
             {
                 AutoSize = false,
                 Location = new Point(4, 551),
-                Size = new Size(514, 125),
+                Size = new Size(514, 145),
                 Text = "Experimental. ShareX only considers configured visible processes whose client area " +
                     "intersects the screenshot; pixels outside the game client use normal desktop capture. " +
                     "Precise-mode promotion always maps known game clients; automatic mode learns only foreground " +
                     "fullscreen windows with coherent HDR highlights. " +
+                    "Normal screenshots stop ShareX-owned hooks after copying one frame; multi-frame capture reuses " +
+                    "the hook only for that capture session. " +
                     "Existing OBS publications are opened read-only and retain the owner's hook rate/overlay setting. " +
                     "Cursor exclusion prevents ShareX from adding the desktop cursor; it cannot remove a cursor rendered by the game. " +
                     "A valid OBS signature does not guarantee acceptance by every game or anti-cheat."
@@ -2024,7 +2026,7 @@ namespace ShareX
                 Padding = new Padding(8),
                 Text = "Each row inherits the global defaults unless overridden. Render process maps a launcher/profile " +
                     "to a different executable; title and class accept case-insensitive * and ? globs. Hook rate and " +
-                    "overlay changes restart a ShareX-owned session. Existing foreign hooks keep their owner's hook options."
+                    "overlay changes apply to ShareX-owned capture sessions. Existing foreign hooks keep their owner's options."
             };
             var grid = new DataGridView
             {
@@ -2324,9 +2326,10 @@ namespace ShareX
             result.AppendLine($"Default alpha interpretation: {settings.AlphaMode.GetDescription()}");
             result.AppendLine($"Default capture third-party overlays: {(settings.CaptureThirdPartyOverlays ? "Enabled" : "Disabled")}");
             result.AppendLine($"Default RGB10A2 interpretation: {settings.Rgb10A2Interpretation.GetDescription()}");
-            result.AppendLine($"Default hook capture rate: {settings.CaptureFrameRate.GetDescription()}");
+            result.AppendLine($"Default hook rate while ShareX is capturing: {settings.CaptureFrameRate.GetDescription()}");
             result.AppendLine($"Default cursor: {settings.CursorMode.GetDescription()}");
-            result.AppendLine($"Default owned-session idle timeout: {settings.SessionIdleTimeoutSeconds} seconds");
+            result.AppendLine($"Inactive-session safety timeout: {settings.SessionIdleTimeoutSeconds} seconds");
+            result.AppendLine("Lifecycle: normal screenshots stop ShareX-owned hooks after one copied frame; multi-frame capture retains them only for its active session.");
             result.AppendLine($"Precise-mode game promotion: {gameWindowPromotionMode.GetDescription()}");
             result.AppendLine($"Configured processes: {(settings.ProcessNames.Count > 0 ? string.Join(", ", settings.ProcessNames) : "None")}");
             result.AppendLine($"OBS path: {(string.IsNullOrWhiteSpace(settings.ObsInstallationPath) ? "Automatic discovery" : settings.ObsInstallationPath)}");

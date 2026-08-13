@@ -46,16 +46,47 @@ namespace ShareX.ScreenCaptureLib
         bool CaptureThirdPartyOverlays,
         ObsGameCaptureFrameRate CaptureFrameRate,
         ObsGameCaptureCursorMode CursorMode,
+        bool OwnedSessionRetained,
         TimeSpan Duration,
         string Message);
 
+    internal sealed class ObsGameCaptureCaptureScope : IDisposable
+    {
+        private ObsGameCaptureService service;
+
+        internal Guid Id { get; } = Guid.NewGuid();
+
+        internal ObsGameCaptureCaptureScope(ObsGameCaptureService service)
+        {
+            this.service = service ?? throw new ArgumentNullException(nameof(service));
+        }
+
+        internal Guid GetId(ObsGameCaptureService expectedService)
+        {
+            ObsGameCaptureService owner = Volatile.Read(ref service);
+            ObjectDisposedException.ThrowIf(owner == null, this);
+
+            if (!ReferenceEquals(owner, expectedService))
+            {
+                throw new InvalidOperationException("The OBS Game Capture scope belongs to another service.");
+            }
+
+            return Id;
+        }
+
+        public void Dispose()
+        {
+            Interlocked.Exchange(ref service, null)?.ReleaseCaptureScope(Id);
+        }
+    }
+
     /// <summary>
     /// Application-owned coordinator for configured OBS Game Capture targets.
-    /// Owned hooks are cached briefly; foreign/OBS-owned hooks are read only.
+    /// Owned hooks can be retained for an explicit capture scope; foreign/OBS-owned hooks are read only.
     /// </summary>
     public sealed class ObsGameCaptureService : IDisposable
     {
-        private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(15);
+        private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(5);
 
         private readonly SemaphoreSlim gate = new SemaphoreSlim(1, 1);
         private readonly Dictionary<uint, CachedOwnedSession> ownedSessions =
@@ -78,6 +109,47 @@ namespace ShareX.ScreenCaptureLib
             Rectangle requestedBounds,
             HdrCaptureSettings hdrSettings,
             IntPtr preferredWindow,
+            out HdrImageDocument document,
+            out ObsGameCaptureAttempt attempt)
+        {
+            return TryCaptureCore(
+                requestedBounds,
+                hdrSettings,
+                preferredWindow,
+                captureScopeId: null,
+                out document,
+                out attempt);
+        }
+
+        internal ObsGameCaptureCaptureScope CreateCaptureScope()
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            return new ObsGameCaptureCaptureScope(this);
+        }
+
+        internal bool TryCaptureScoped(
+            Rectangle requestedBounds,
+            HdrCaptureSettings hdrSettings,
+            IntPtr preferredWindow,
+            ObsGameCaptureCaptureScope captureScope,
+            out HdrImageDocument document,
+            out ObsGameCaptureAttempt attempt)
+        {
+            Guid? captureScopeId = captureScope?.GetId(this);
+            return TryCaptureCore(
+                requestedBounds,
+                hdrSettings,
+                preferredWindow,
+                captureScopeId,
+                out document,
+                out attempt);
+        }
+
+        private bool TryCaptureCore(
+            Rectangle requestedBounds,
+            HdrCaptureSettings hdrSettings,
+            IntPtr preferredWindow,
+            Guid? captureScopeId,
             out HdrImageDocument document,
             out ObsGameCaptureAttempt attempt)
         {
@@ -113,6 +185,7 @@ namespace ShareX.ScreenCaptureLib
                     requestedBounds,
                     effectiveOptions,
                     stopwatch,
+                    captureScopeId,
                     out document,
                     out attempt))
                 {
@@ -158,6 +231,7 @@ namespace ShareX.ScreenCaptureLib
                             ObsGameCaptureSessionSource.ReusedExistingHostReadOnly,
                             colorInterpretation,
                             effectiveOptions,
+                            false,
                             "Copied an existing OBS-compatible publication read-only.");
                         return true;
                     }
@@ -200,6 +274,7 @@ namespace ShareX.ScreenCaptureLib
                         effectiveOptions.CaptureThirdPartyOverlays,
                         effectiveOptions.CaptureFrameRate);
                     ownedSessions[target.ProcessId] = cached;
+                    bool retained = cached.Attach(captureScopeId);
                     document = CopyPublicationToRequestedDocument(
                         publication,
                         target,
@@ -216,9 +291,16 @@ namespace ShareX.ScreenCaptureLib
                             : ObsGameCaptureSessionSource.StartedOwnedHook,
                         colorInterpretation,
                         effectiveOptions,
-                        session.UsedExistingHook
-                            ? "Restarted an inactive exact OBS hook and retained the owned session."
-                            : "Started the exact installed OBS hook and retained the owned session.");
+                        retained,
+                        BuildOwnedSessionMessage(
+                            session.UsedExistingHook ? "Restarted an inactive exact OBS hook" : "Started the exact installed OBS hook",
+                            retained));
+
+                    if (!retained)
+                    {
+                        RemoveOwnedSession(target.ProcessId);
+                    }
+
                     return true;
                 }
                 catch
@@ -249,6 +331,7 @@ namespace ShareX.ScreenCaptureLib
             Rectangle requestedBounds,
             ObsGameCaptureEffectiveOptions effectiveOptions,
             Stopwatch stopwatch,
+            Guid? captureScopeId,
             out HdrImageDocument document,
             out ObsGameCaptureAttempt attempt)
         {
@@ -279,6 +362,7 @@ namespace ShareX.ScreenCaptureLib
                     out string colorInterpretation);
                 cached.LastUsedUtc = DateTimeOffset.UtcNow;
                 cached.IdleTimeout = TimeSpan.FromSeconds(effectiveOptions.SessionIdleTimeoutSeconds);
+                bool retained = cached.Attach(captureScopeId);
                 attempt = Success(
                     stopwatch,
                     target,
@@ -286,7 +370,16 @@ namespace ShareX.ScreenCaptureLib
                     ObsGameCaptureSessionSource.ReusedOwnedHook,
                     colorInterpretation,
                     effectiveOptions,
-                    "Reused the ShareX-owned OBS hook publication without reinjection.");
+                    retained,
+                    BuildOwnedSessionMessage(
+                        "Reused the ShareX-owned OBS hook publication without reinjection",
+                        retained));
+
+                if (!retained)
+                {
+                    RemoveOwnedSession(target.ProcessId);
+                }
+
                 return true;
             }
             catch
@@ -594,6 +687,50 @@ namespace ShareX.ScreenCaptureLib
             }
         }
 
+        internal void ReleaseCaptureScope(Guid captureScopeId)
+        {
+            if (disposed)
+            {
+                return;
+            }
+
+            gate.Wait();
+
+            try
+            {
+                if (disposed)
+                {
+                    return;
+                }
+
+                uint[] released = ownedSessions
+                    .Where(x => x.Value.Release(captureScopeId) && !x.Value.ShouldRetain)
+                    .Select(x => x.Key)
+                    .ToArray();
+
+                foreach (uint processId in released)
+                {
+                    RemoveOwnedSession(processId);
+                }
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+
+        private static string BuildOwnedSessionMessage(
+            string action,
+            bool retained)
+        {
+            if (!retained)
+            {
+                return $"{action}; stopped it after copying the one-shot frame.";
+            }
+
+            return $"{action}; retained it only for the active capture session.";
+        }
+
         private static ObsGameCaptureAttempt Success(
             Stopwatch stopwatch,
             ObsGameCaptureTarget target,
@@ -601,6 +738,7 @@ namespace ShareX.ScreenCaptureLib
             ObsGameCaptureSessionSource source,
             string colorInterpretation,
             ObsGameCaptureEffectiveOptions effectiveOptions,
+            bool ownedSessionRetained,
             string message)
         {
             return new ObsGameCaptureAttempt(
@@ -614,6 +752,7 @@ namespace ShareX.ScreenCaptureLib
                 effectiveOptions.CaptureThirdPartyOverlays,
                 effectiveOptions.CaptureFrameRate,
                 effectiveOptions.CursorMode,
+                ownedSessionRetained,
                 stopwatch.Elapsed,
                 message);
         }
@@ -632,8 +771,9 @@ namespace ShareX.ScreenCaptureLib
                 string.Empty,
                 ObsGameCaptureAlphaMode.Opaque,
                 false,
-                ObsGameCaptureFrameRate.Fps60,
+                ObsGameCaptureFrameRate.Fps15,
                 ObsGameCaptureCursorMode.UseShareXSetting,
+                false,
                 stopwatch.Elapsed,
                 message);
         }
@@ -680,6 +820,9 @@ namespace ShareX.ScreenCaptureLib
             public TimeSpan IdleTimeout { get; set; }
             public bool CaptureThirdPartyOverlays { get; }
             public ObsGameCaptureFrameRate CaptureFrameRate { get; }
+            public bool ShouldRetain => captureScopeIds.Count > 0;
+
+            private readonly HashSet<Guid> captureScopeIds = new HashSet<Guid>();
 
             public CachedOwnedSession(
                 ObsGameCaptureTarget target,
@@ -697,6 +840,21 @@ namespace ShareX.ScreenCaptureLib
                 IdleTimeout = idleTimeout;
                 CaptureThirdPartyOverlays = captureThirdPartyOverlays;
                 CaptureFrameRate = captureFrameRate;
+            }
+
+            public bool Attach(Guid? captureScopeId)
+            {
+                if (captureScopeId.HasValue)
+                {
+                    captureScopeIds.Add(captureScopeId.Value);
+                }
+
+                return ShouldRetain;
+            }
+
+            public bool Release(Guid captureScopeId)
+            {
+                return captureScopeIds.Remove(captureScopeId);
             }
 
             public bool Matches(

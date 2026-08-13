@@ -24,12 +24,14 @@ public class ObsGameCaptureServiceIntegrationTests
         using HarnessContext harness = await HarnessContext.StartAsync(cancellationToken);
         HdrCaptureSettings settings = CreateSettings(harness.Process.ProcessName);
         using var service = new ObsGameCaptureService();
+        using ObsGameCaptureCaptureScope captureScope = service.CreateCaptureScope();
 
         Assert.True(
-            service.TryCapture(
+            service.TryCaptureScoped(
                 harness.ClientBounds,
                 settings,
                 harness.Window,
+                captureScope,
                 out HdrImageDocument firstDocument,
                 out ObsGameCaptureAttempt firstAttempt),
             firstAttempt.Message);
@@ -39,6 +41,7 @@ public class ObsGameCaptureServiceIntegrationTests
             Assert.Equal(
                 ObsGameCaptureSessionSource.StartedOwnedHook,
                 firstAttempt.SessionSource);
+            Assert.True(firstAttempt.OwnedSessionRetained);
             Assert.Equal(harness.ClientBounds, firstDocument.RequestedBounds);
             Assert.Equal(harness.ClientBounds.Width, firstDocument.MasterPixels.Width);
             Assert.Equal(harness.ClientBounds.Height, firstDocument.MasterPixels.Height);
@@ -53,10 +56,11 @@ public class ObsGameCaptureServiceIntegrationTests
         for (int capture = 0; capture < 3; capture++)
         {
             Assert.True(
-                service.TryCapture(
+                service.TryCaptureScoped(
                     cropBounds,
                     settings,
                     harness.Window,
+                    captureScope,
                     out HdrImageDocument reusedDocument,
                     out ObsGameCaptureAttempt reusedAttempt),
                 reusedAttempt.Message);
@@ -66,6 +70,7 @@ public class ObsGameCaptureServiceIntegrationTests
                 Assert.Equal(
                     ObsGameCaptureSessionSource.ReusedOwnedHook,
                     reusedAttempt.SessionSource);
+                Assert.True(reusedAttempt.OwnedSessionRetained);
                 Assert.Equal(cropBounds, reusedDocument.RequestedBounds);
                 Assert.Equal(320, reusedDocument.MasterPixels.Width);
                 Assert.Equal(180, reusedDocument.MasterPixels.Height);
@@ -73,10 +78,11 @@ public class ObsGameCaptureServiceIntegrationTests
         }
         Rectangle framedBounds = Rectangle.Inflate(harness.ClientBounds, 12, 12);
         Assert.True(
-            service.TryCapture(
+            service.TryCaptureScoped(
                 framedBounds,
                 settings,
                 harness.Window,
+                captureScope,
                 out HdrImageDocument framedDocument,
                 out ObsGameCaptureAttempt framedAttempt),
             framedAttempt.Message);
@@ -102,6 +108,95 @@ public class ObsGameCaptureServiceIntegrationTests
 
 
         Assert.True(compatibility.IsCompatible);
+    }
+
+    [Fact]
+    public async Task ScopedSession_IsReusedOnlyUntilScopeIsDisposed()
+    {
+        if (!IntegrationTestsEnabled())
+        {
+            return;
+        }
+
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        await GetCompatibleObsAsync(cancellationToken);
+        using HarnessContext harness = await HarnessContext.StartAsync(cancellationToken);
+        HdrCaptureSettings settings = CreateSettings(harness.Process.ProcessName);
+        using var service = new ObsGameCaptureService();
+        using (ObsGameCaptureCaptureScope captureScope = service.CreateCaptureScope())
+        {
+            Assert.True(
+                service.TryCaptureScoped(
+                    harness.ClientBounds,
+                    settings,
+                    harness.Window,
+                    captureScope,
+                    out HdrImageDocument firstDocument,
+                    out ObsGameCaptureAttempt firstAttempt),
+                firstAttempt.Message);
+            firstDocument.Dispose();
+            Assert.True(firstAttempt.OwnedSessionRetained);
+
+            Assert.True(
+                service.TryCaptureScoped(
+                    harness.ClientBounds,
+                    settings,
+                    harness.Window,
+                    captureScope,
+                    out HdrImageDocument reusedDocument,
+                    out ObsGameCaptureAttempt reusedAttempt),
+                reusedAttempt.Message);
+            reusedDocument.Dispose();
+            Assert.Equal(ObsGameCaptureSessionSource.ReusedOwnedHook, reusedAttempt.SessionSource);
+            Assert.True(reusedAttempt.OwnedSessionRetained);
+        }
+
+        await Task.Delay(100, cancellationToken);
+
+        Assert.True(
+            service.TryCaptureScoped(
+                harness.ClientBounds,
+                settings,
+                harness.Window,
+                captureScope: null,
+                out HdrImageDocument oneShotDocument,
+                out ObsGameCaptureAttempt oneShotAttempt),
+            oneShotAttempt.Message);
+        oneShotDocument.Dispose();
+        Assert.NotEqual(ObsGameCaptureSessionSource.ReusedOwnedHook, oneShotAttempt.SessionSource);
+        Assert.False(oneShotAttempt.OwnedSessionRetained);
+    }
+
+    [Fact]
+    public async Task OneShotSession_IsStoppedAfterFrameCopy()
+    {
+        if (!IntegrationTestsEnabled())
+        {
+            return;
+        }
+
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        await GetCompatibleObsAsync(cancellationToken);
+        using HarnessContext harness = await HarnessContext.StartAsync(cancellationToken);
+        HdrCaptureSettings settings = CreateSettings(harness.Process.ProcessName);
+        using var service = new ObsGameCaptureService();
+
+        for (int capture = 0; capture < 2; capture++)
+        {
+            Assert.True(
+                service.TryCaptureScoped(
+                    harness.ClientBounds,
+                    settings,
+                    harness.Window,
+                    captureScope: null,
+                    out HdrImageDocument document,
+                    out ObsGameCaptureAttempt attempt),
+                attempt.Message);
+            document.Dispose();
+            Assert.NotEqual(ObsGameCaptureSessionSource.ReusedOwnedHook, attempt.SessionSource);
+            Assert.False(attempt.OwnedSessionRetained);
+            await Task.Delay(100, cancellationToken);
+        }
     }
 
     [Fact]
@@ -146,6 +241,7 @@ public class ObsGameCaptureServiceIntegrationTests
                 Assert.Equal(
                     ObsGameCaptureSessionSource.ReusedExistingHostReadOnly,
                     attempt.SessionSource);
+                Assert.False(attempt.OwnedSessionRetained);
                 Assert.Equal(harness.ClientBounds.Width, document.MasterPixels.Width);
                 Assert.Equal(harness.ClientBounds.Height, document.MasterPixels.Height);
             }
