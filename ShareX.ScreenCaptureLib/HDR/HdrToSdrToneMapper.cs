@@ -30,6 +30,9 @@ namespace ShareX.ScreenCaptureLib
         private const float ReferenceHdrWhiteNits = 203f;
         private const int TileSize = 16;
         private const int TileLinkRadius = 6;
+        private const int TileInfluenceFullRadius = TileLinkRadius - 2;
+        private const float TileTraversalBoundaryStrength = 0.06f;
+        private const float TileBarrierStrengthRatio = 3f;
         private const int MinimumRegionSeedTiles = 4;
         private const int BoundarySearchDistance = TileSize * 4;
         private const int UncertainBoundaryFeather = TileSize * 2;
@@ -356,7 +359,7 @@ namespace ShareX.ScreenCaptureLib
                 }
             });
 
-            return new HdrFrameAnalysis(BuildToneMapRegions(
+            List<ToneMapRegion> regions = BuildToneMapRegions(
                 source,
                 sourceRowPitch,
                 width,
@@ -364,7 +367,176 @@ namespace ShareX.ScreenCaptureLib
                 paperWhiteScRgb,
                 seedTiles,
                 tilesX,
-                tilesY));
+                tilesY);
+            if (regions.Count == 0)
+            {
+                return HdrFrameAnalysis.Empty;
+            }
+
+            float[] tileSupport = BuildToneMapTileSupport(
+                source,
+                sourceRowPitch,
+                width,
+                height,
+                paperWhiteScRgb,
+                seedTiles,
+                tilesX,
+                tilesY);
+            return new HdrFrameAnalysis(regions, tileSupport, tilesX, tilesY);
+        }
+
+        private static float[] BuildToneMapTileSupport(
+            byte* source,
+            int sourceRowPitch,
+            int width,
+            int height,
+            float paperWhiteScRgb,
+            bool[] seedTiles,
+            int tilesX,
+            int tilesY)
+        {
+            bool[] barrierTiles = new bool[seedTiles.Length];
+            nint sourceAddress = (nint)source;
+
+            Parallel.For(0, tilesY, tileY =>
+            {
+                int top = tileY * TileSize;
+                int bottom = Math.Min(height, top + TileSize);
+
+                for (int tileX = 0; tileX < tilesX; tileX++)
+                {
+                    int left = tileX * TileSize;
+                    int right = Math.Min(width, left + TileSize);
+                    barrierTiles[tileY * tilesX + tileX] = HasStrongInternalTileBoundary(
+                        (byte*)sourceAddress,
+                        sourceRowPitch,
+                        paperWhiteScRgb,
+                        left,
+                        top,
+                        right,
+                        bottom);
+                }
+            });
+
+            int[] distances = new int[seedTiles.Length];
+            Array.Fill(distances, -1);
+            Queue<int> pending = new Queue<int>();
+
+            for (int tileIndex = 0; tileIndex < seedTiles.Length; tileIndex++)
+            {
+                if (!seedTiles[tileIndex])
+                {
+                    continue;
+                }
+
+                distances[tileIndex] = 0;
+                if (!barrierTiles[tileIndex])
+                {
+                    pending.Enqueue(tileIndex);
+                }
+            }
+
+            while (pending.Count > 0)
+            {
+                int current = pending.Dequeue();
+                int currentDistance = distances[current];
+                if (currentDistance >= TileLinkRadius)
+                {
+                    continue;
+                }
+
+                int currentX = current % tilesX;
+                int currentY = current / tilesX;
+                TryExpand(currentX - 1, currentY);
+                TryExpand(currentX + 1, currentY);
+                TryExpand(currentX, currentY - 1);
+                TryExpand(currentX, currentY + 1);
+
+                void TryExpand(int tileX, int tileY)
+                {
+                    if (tileX < 0 || tileX >= tilesX || tileY < 0 || tileY >= tilesY)
+                    {
+                        return;
+                    }
+
+                    int neighbor = tileY * tilesX + tileX;
+                    int nextDistance = currentDistance + 1;
+                    if ((distances[neighbor] >= 0 && distances[neighbor] <= nextDistance) ||
+                        !CanTraverseTileBoundary(
+                            source,
+                            sourceRowPitch,
+                            width,
+                            height,
+                            paperWhiteScRgb,
+                            currentX,
+                            currentY,
+                            tileX,
+                            tileY))
+                    {
+                        return;
+                    }
+
+                    distances[neighbor] = nextDistance;
+
+                    // A straight, high-contrast edge inside a tile is commonly an
+                    // image/window boundary. Give that tile feathered influence,
+                    // but do not let HDR support flood through it into an SDR gap
+                    // or an occluding window whose edge is not tile-aligned.
+                    if (!barrierTiles[neighbor])
+                    {
+                        pending.Enqueue(neighbor);
+                    }
+                }
+            }
+
+            float[] support = new float[distances.Length];
+            int featherSteps = TileLinkRadius - TileInfluenceFullRadius + 1;
+            for (int index = 0; index < distances.Length; index++)
+            {
+                int distance = distances[index];
+                if (distance < 0)
+                {
+                    continue;
+                }
+
+                support[index] = distance <= TileInfluenceFullRadius
+                    ? 1f
+                    : (float)(TileLinkRadius + 1 - distance) / featherSteps;
+            }
+
+            return support;
+        }
+
+        private static bool CanTraverseTileBoundary(
+            byte* source,
+            int sourceRowPitch,
+            int width,
+            int height,
+            float paperWhiteScRgb,
+            int firstX,
+            int firstY,
+            int secondX,
+            int secondY)
+        {
+            float strength;
+            if (firstY != secondY)
+            {
+                int boundaryY = Math.Max(firstY, secondY) * TileSize;
+                int left = firstX * TileSize;
+                int right = Math.Min(width, left + TileSize);
+                strength = GetHorizontalTileBoundaryStrength(
+                    source, sourceRowPitch, paperWhiteScRgb, left, right, boundaryY);
+            }
+            else
+            {
+                int boundaryX = Math.Max(firstX, secondX) * TileSize;
+                int top = firstY * TileSize;
+                int bottom = Math.Min(height, top + TileSize);
+                strength = GetVerticalTileBoundaryStrength(
+                    source, sourceRowPitch, paperWhiteScRgb, top, bottom, boundaryX);
+            }
+
+            return strength < TileTraversalBoundaryStrength;
         }
 
         private static List<ToneMapRegion> BuildToneMapRegions(
@@ -640,6 +812,91 @@ namespace ShareX.ScreenCaptureLib
             return GetMedian(differences);
         }
 
+        private static bool HasStrongInternalTileBoundary(
+            byte* source,
+            int sourceRowPitch,
+            float paperWhiteScRgb,
+            int left,
+            int top,
+            int right,
+            int bottom)
+        {
+            Span<float> strengths = stackalloc float[(TileSize - 1) * 2];
+            int count = 0;
+
+            for (int y = top + 1; y < bottom; y++)
+            {
+                strengths[count++] = GetHorizontalTileBoundaryStrength(
+                    source, sourceRowPitch, paperWhiteScRgb, left, right, y);
+            }
+
+            for (int x = left + 1; x < right; x++)
+            {
+                strengths[count++] = GetVerticalTileBoundaryStrength(
+                    source, sourceRowPitch, paperWhiteScRgb, top, bottom, x);
+            }
+
+            if (count == 0)
+            {
+                return false;
+            }
+
+            Span<float> populated = strengths.Slice(0, count);
+            populated.Sort();
+            float strongest = populated[^1];
+            float median = populated[count / 2];
+            return strongest >= TileTraversalBoundaryStrength &&
+                strongest >= Math.Max(
+                    median * TileBarrierStrengthRatio,
+                    TileTraversalBoundaryStrength);
+        }
+
+        private static float GetHorizontalTileBoundaryStrength(
+            byte* source,
+            int sourceRowPitch,
+            float paperWhiteScRgb,
+            int left,
+            int right,
+            int y)
+        {
+            ushort* previous = (ushort*)(source + (y - 1) * sourceRowPitch) + left * 4;
+            ushort* current = (ushort*)(source + y * sourceRowPitch) + left * 4;
+            float total = 0f;
+            int count = 0;
+
+            for (int x = left; x < right; x += 2)
+            {
+                total += GetPixelDifference(previous, current) / paperWhiteScRgb;
+                count++;
+                previous += 8;
+                current += 8;
+            }
+
+            return count > 0 ? total / count : 0f;
+        }
+
+        private static float GetVerticalTileBoundaryStrength(
+            byte* source,
+            int sourceRowPitch,
+            float paperWhiteScRgb,
+            int top,
+            int bottom,
+            int x)
+        {
+            float total = 0f;
+            int count = 0;
+
+            for (int y = top; y < bottom; y += 2)
+            {
+                ushort* previous = (ushort*)(source + y * sourceRowPitch) + (x - 1) * 4;
+                ushort* current = previous + 4;
+                total += GetPixelDifference(previous, current) / paperWhiteScRgb;
+                count++;
+            }
+
+            return count > 0 ? total / count : 0f;
+        }
+
         private static float GetMedian(List<float> values)
         {
             if (values.Count == 0)
@@ -737,10 +994,20 @@ namespace ShareX.ScreenCaptureLib
             public static HdrFrameAnalysis Empty { get; } = new HdrFrameAnalysis(new List<ToneMapRegion>());
 
             private readonly List<ToneMapRegion> regions;
+            private readonly float[] tileSupport;
+            private readonly int tilesX;
+            private readonly int tilesY;
 
-            public HdrFrameAnalysis(List<ToneMapRegion> regions)
+            public HdrFrameAnalysis(
+                List<ToneMapRegion> regions,
+                float[] tileSupport = null,
+                int tilesX = 0,
+                int tilesY = 0)
             {
                 this.regions = regions;
+                this.tileSupport = tileSupport;
+                this.tilesX = tilesX;
+                this.tilesY = tilesY;
             }
 
             public float GetToneMapAmount(int x, int y)
@@ -757,7 +1024,36 @@ namespace ShareX.ScreenCaptureLib
                     }
                 }
 
-                return amount;
+                return amount > 0f ? amount * GetTileSupport(x, y) : 0f;
+            }
+
+            private float GetTileSupport(int x, int y)
+            {
+                if (tileSupport == null || tileSupport.Length == 0 || tilesX <= 0 || tilesY <= 0)
+                {
+                    return 1f;
+                }
+
+                float gridX = (x + 0.5f) / TileSize - 0.5f;
+                float gridY = (y + 0.5f) / TileSize - 0.5f;
+                int left = (int)MathF.Floor(gridX);
+                int top = (int)MathF.Floor(gridY);
+                float horizontal = gridX - left;
+                float vertical = gridY - top;
+                float topLeft = SampleTileSupport(left, top);
+                float topRight = SampleTileSupport(left + 1, top);
+                float bottomLeft = SampleTileSupport(left, top + 1);
+                float bottomRight = SampleTileSupport(left + 1, top + 1);
+                float topValue = topLeft + (topRight - topLeft) * horizontal;
+                float bottomValue = bottomLeft + (bottomRight - bottomLeft) * horizontal;
+                return Math.Clamp(topValue + (bottomValue - topValue) * vertical, 0f, 1f);
+            }
+
+            private float SampleTileSupport(int x, int y)
+            {
+                x = Math.Clamp(x, 0, tilesX - 1);
+                y = Math.Clamp(y, 0, tilesY - 1);
+                return tileSupport[y * tilesX + x];
             }
         }
 
