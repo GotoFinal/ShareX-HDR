@@ -31,6 +31,8 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace ShareX
@@ -45,13 +47,21 @@ namespace ShareX
         private Panel pObsGameCapture;
         private CheckBox cbObsGameCaptureEnabled;
         private CheckBox cbObsReuseExistingHook;
+        private CheckBox cbObsCaptureThirdPartyOverlays;
         private TextBox txtObsGameProcesses;
         private TextBox txtObsInstallationPath;
+        private ComboBox cbObsAlphaMode;
+        private ComboBox cbObsCaptureFrameRate;
+        private ComboBox cbObsCursorMode;
+        private ComboBox cbHdrGameWindowPromotion;
         private ComboBox cbObsRgb10A2Interpretation;
         private NumericUpDown nudObsSessionIdleTimeout;
         private Panel pHdrFileOutput;
         private ComboBox cbHdrOutputMode;
+        private ComboBox cbHdrClipboardOutputMode;
+        private ComboBox cbHdrClipboardFileFormat;
         private ComboBox cbHdrFileFormat;
+        private ComboBox cbHdrOpenExrExposure;
         private Label lblHdrEncoderAvailability;
         private CheckBox cbHdrUploadWithFileUploader;
         private CheckBox cbHdrFlattenTransparencyForUltraHdr;
@@ -59,6 +69,12 @@ namespace ShareX
         private NumericUpDown nudHdrMasteringMinimumNits;
         private NumericUpDown nudHdrJpegQuality;
         private NumericUpDown nudHdrGainMapQuality;
+        private Label lblHdrJpegQuality;
+        private Label lblHdrGainMapQuality;
+        private Label lblHdrAvifQuality;
+        private Label lblHdrAvifSpeed;
+        private NumericUpDown nudHdrAvifQuality;
+        private NumericUpDown nudHdrAvifSpeed;
 
         private sealed class HdrFileFormatItem
         {
@@ -69,6 +85,34 @@ namespace ShareX
             {
                 Format = format;
                 Description = format.GetDescription();
+            }
+
+            public override string ToString() => Description;
+        }
+
+        private sealed class HdrToneMappingModeItem
+        {
+            public HdrToneMappingMode Mode { get; }
+            private string Description { get; }
+
+            public HdrToneMappingModeItem(HdrToneMappingMode mode)
+            {
+                Mode = mode;
+                Description = mode.GetDescription();
+            }
+
+            public override string ToString() => Description;
+        }
+
+        private sealed class ObsEnumItem<T> where T : struct, Enum
+        {
+            public T Value { get; }
+            public string Description { get; }
+
+            public ObsEnumItem(T value)
+            {
+                Value = value;
+                Description = value.GetDescription();
             }
 
             public override string ToString() => Description;
@@ -320,8 +364,16 @@ namespace ShareX
             cbHDRProcessingBackend.SelectedIndex = (int)TaskSettings.CaptureSettings.HdrSettings.ProcessingBackend;
             cbHDRPeakBrightnessMode.Items.AddRange(Helpers.GetEnumDescriptions<HdrPeakBrightnessMode>());
             cbHDRPeakBrightnessMode.SelectedIndex = (int)TaskSettings.CaptureSettings.HdrSettings.PeakBrightnessMode;
-            cbHDRToneMappingMode.Items.AddRange(Helpers.GetEnumDescriptions<HdrToneMappingMode>());
-            cbHDRToneMappingMode.SelectedIndex = (int)TaskSettings.CaptureSettings.HdrSettings.ToneMappingMode;
+            cbHDRToneMappingMode.Items.AddRange(new object[]
+            {
+                new HdrToneMappingModeItem(HdrToneMappingMode.ContentAware),
+                new HdrToneMappingModeItem(HdrToneMappingMode.PerWindow),
+                new HdrToneMappingModeItem(HdrToneMappingMode.Uniform)
+            });
+            cbHDRToneMappingMode.SelectedItem = cbHDRToneMappingMode.Items
+                .OfType<HdrToneMappingModeItem>()
+                .FirstOrDefault(x =>
+                    x.Mode == TaskSettings.CaptureSettings.HdrSettings.ToneMappingMode);
             SetHdrControlsEnabled(TaskSettings.CaptureSettings.UseHDRSupport);
             nudHDRBrightnessNits.SetValue((decimal)TaskSettings.CaptureSettings.HdrSettings.HdrBrightnessNits);
             LoadObsGameCaptureSettings();
@@ -1234,10 +1286,127 @@ namespace ShareX
             };
             pObsGameCapture.Controls.Add(cbObsReuseExistingHook);
 
+            var defaultsLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(4, 190),
+                Text = "Default options for configured games:"
+            };
+            pObsGameCapture.Controls.Add(defaultsLabel);
+
+            var alphaLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(4, 215),
+                Text = "Alpha interpretation:"
+            };
+            pObsGameCapture.Controls.Add(alphaLabel);
+
+            cbObsAlphaMode = CreateObsEnumComboBox<ObsGameCaptureAlphaMode>(168, 211, 242);
+            cbObsAlphaMode.SelectedIndexChanged += (_, _) =>
+            {
+                if (loaded && TryGetObsEnumValue(cbObsAlphaMode.SelectedItem, out ObsGameCaptureAlphaMode value))
+                {
+                    GetObsGameCaptureSettings().AlphaMode = value;
+                }
+            };
+            pObsGameCapture.Controls.Add(cbObsAlphaMode);
+
+            cbObsCaptureThirdPartyOverlays = new CheckBox
+            {
+                AutoSize = true,
+                Location = new Point(4, 245),
+                Text = "Capture third-party overlays"
+            };
+            cbObsCaptureThirdPartyOverlays.CheckedChanged += (_, _) =>
+            {
+                if (loaded)
+                {
+                    GetObsGameCaptureSettings().CaptureThirdPartyOverlays =
+                        cbObsCaptureThirdPartyOverlays.Checked;
+                }
+            };
+            pObsGameCapture.Controls.Add(cbObsCaptureThirdPartyOverlays);
+
+            var frameRateLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(4, 280),
+                Text = "Hook capture rate:"
+            };
+            pObsGameCapture.Controls.Add(frameRateLabel);
+
+            cbObsCaptureFrameRate = CreateObsEnumComboBox<ObsGameCaptureFrameRate>(168, 276, 242);
+            cbObsCaptureFrameRate.SelectedIndexChanged += (_, _) =>
+            {
+                if (loaded && TryGetObsEnumValue(cbObsCaptureFrameRate.SelectedItem, out ObsGameCaptureFrameRate value))
+                {
+                    GetObsGameCaptureSettings().CaptureFrameRate = value;
+                }
+            };
+            pObsGameCapture.Controls.Add(cbObsCaptureFrameRate);
+
+            var cursorLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(4, 314),
+                Text = "Cursor:"
+            };
+            pObsGameCapture.Controls.Add(cursorLabel);
+
+            cbObsCursorMode = CreateObsEnumComboBox<ObsGameCaptureCursorMode>(168, 310, 242);
+            cbObsCursorMode.SelectedIndexChanged += (_, _) =>
+            {
+                if (loaded && TryGetObsEnumValue(cbObsCursorMode.SelectedItem, out ObsGameCaptureCursorMode value))
+                {
+                    GetObsGameCaptureSettings().CursorMode = value;
+                }
+            };
+            pObsGameCapture.Controls.Add(cbObsCursorMode);
+
+            var promotionLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(4, 348),
+                Text = "Precise-mode game promotion:"
+            };
+            pObsGameCapture.Controls.Add(promotionLabel);
+
+            cbHdrGameWindowPromotion = CreateObsEnumComboBox<HdrGameWindowPromotionMode>(190, 344, 320);
+            cbHdrGameWindowPromotion.SelectedIndexChanged += (_, _) =>
+            {
+                if (loaded && TryGetObsEnumValue(
+                    cbHdrGameWindowPromotion.SelectedItem,
+                    out HdrGameWindowPromotionMode value))
+                {
+                    TaskSettings.CaptureSettings.HdrSettings.GameWindowPromotionMode = value;
+                }
+            };
+            pObsGameCapture.Controls.Add(cbHdrGameWindowPromotion);
+
+            var perGameOptions = new Button
+            {
+                AutoSize = true,
+                Location = new Point(4, 378),
+                Text = "Per-game options..."
+            };
+            perGameOptions.Click += (_, _) => ShowObsPerGameOptions();
+            pObsGameCapture.Controls.Add(perGameOptions);
+
+            var testConfiguration = new Button
+            {
+                AutoSize = true,
+                Location = new Point(150, 378),
+                Text = "Test configuration..."
+            };
+            testConfiguration.Click += async (_, _) =>
+                await TestObsGameCaptureConfigurationAsync(testConfiguration);
+            pObsGameCapture.Controls.Add(testConfiguration);
+
             var colorLabel = new Label
             {
                 AutoSize = true,
-                Location = new Point(4, 195),
+                Location = new Point(4, 420),
                 Text = "RGB10A2 interpretation:"
             };
             pObsGameCapture.Controls.Add(colorLabel);
@@ -1245,7 +1414,7 @@ namespace ShareX
             cbObsRgb10A2Interpretation = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Location = new Point(168, 191),
+                Location = new Point(168, 416),
                 Size = new Size(242, 23)
             };
             cbObsRgb10A2Interpretation.Items.AddRange(
@@ -1263,14 +1432,14 @@ namespace ShareX
             var pathLabel = new Label
             {
                 AutoSize = true,
-                Location = new Point(4, 229),
+                Location = new Point(4, 454),
                 Text = "OBS installation path (blank = discover installed OBS):"
             };
             pObsGameCapture.Controls.Add(pathLabel);
 
             txtObsInstallationPath = new TextBox
             {
-                Location = new Point(4, 251),
+                Location = new Point(4, 476),
                 Size = new Size(430, 23)
             };
             txtObsInstallationPath.TextChanged += (_, _) =>
@@ -1284,7 +1453,7 @@ namespace ShareX
 
             var browsePath = new Button
             {
-                Location = new Point(440, 250),
+                Location = new Point(440, 475),
                 Size = new Size(78, 25),
                 Text = "Browse..."
             };
@@ -1306,14 +1475,14 @@ namespace ShareX
             var idleLabel = new Label
             {
                 AutoSize = true,
-                Location = new Point(4, 291),
+                Location = new Point(4, 516),
                 Text = "Keep ShareX-owned hook alive when idle (seconds):"
             };
             pObsGameCapture.Controls.Add(idleLabel);
 
             nudObsSessionIdleTimeout = new NumericUpDown
             {
-                Location = new Point(310, 287),
+                Location = new Point(310, 512),
                 Minimum = 5,
                 Maximum = 600,
                 Value = 120,
@@ -1332,11 +1501,14 @@ namespace ShareX
             var warning = new Label
             {
                 AutoSize = false,
-                Location = new Point(4, 326),
-                Size = new Size(514, 90),
+                Location = new Point(4, 551),
+                Size = new Size(514, 125),
                 Text = "Experimental. ShareX only considers configured visible processes whose client area " +
                     "intersects the screenshot; pixels outside the game client use normal desktop capture. " +
-                    "Existing OBS publications are opened read-only. " +
+                    "Precise-mode promotion always maps known game clients; automatic mode learns only foreground " +
+                    "fullscreen windows with coherent HDR highlights. " +
+                    "Existing OBS publications are opened read-only and retain the owner's hook rate/overlay setting. " +
+                    "Cursor exclusion prevents ShareX from adding the desktop cursor; it cannot remove a cursor rendered by the game. " +
                     "A valid OBS signature does not guarantee acceptance by every game or anti-cheat."
             };
             pObsGameCapture.Controls.Add(warning);
@@ -1344,7 +1516,7 @@ namespace ShareX
 
         private void InitializeHdrFileOutputControls()
         {
-            var page = new TabPage("HDR files")
+            var page = new TabPage("HDR output")
             {
                 BackColor = SystemColors.Window,
                 Padding = new Padding(8)
@@ -1412,8 +1584,20 @@ namespace ShareX
                 }
             };
 
-            AddHdrOutputLabel("JPEG base quality:", 4, 145);
-            nudHdrJpegQuality = CreateHdrOutputNumeric(190, 141, 1, 100, 95);
+            AddHdrOutputLabel("EXR exposure:", 4, 145);
+            cbHdrOpenExrExposure = CreateHdrOutputComboBox(190, 141);
+            cbHdrOpenExrExposure.Items.AddRange(Helpers.GetEnumDescriptions<OpenExrExposureMode>());
+            cbHdrOpenExrExposure.SelectedIndexChanged += (_, _) =>
+            {
+                if (loaded && cbHdrOpenExrExposure.SelectedIndex >= 0)
+                {
+                    GetHdrFileOutputSettings().OpenExrExposureMode =
+                        (OpenExrExposureMode)cbHdrOpenExrExposure.SelectedIndex;
+                }
+            };
+
+            lblHdrJpegQuality = AddHdrOutputLabel("JPEG base quality:", 4, 179);
+            nudHdrJpegQuality = CreateHdrOutputNumeric(190, 175, 1, 100, 95);
             nudHdrJpegQuality.ValueChanged += (_, _) =>
             {
                 if (loaded)
@@ -1422,8 +1606,8 @@ namespace ShareX
                 }
             };
 
-            AddHdrOutputLabel("Gain-map quality:", 4, 179);
-            nudHdrGainMapQuality = CreateHdrOutputNumeric(190, 175, 1, 100, 90);
+            lblHdrGainMapQuality = AddHdrOutputLabel("Gain-map quality:", 4, 213);
+            nudHdrGainMapQuality = CreateHdrOutputNumeric(190, 209, 1, 100, 90);
             nudHdrGainMapQuality.ValueChanged += (_, _) =>
             {
                 if (loaded)
@@ -1432,10 +1616,30 @@ namespace ShareX
                 }
             };
 
+            lblHdrAvifQuality = AddHdrOutputLabel("AVIF quality:", 4, 247);
+            nudHdrAvifQuality = CreateHdrOutputNumeric(190, 243, 1, 100, 90);
+            nudHdrAvifQuality.ValueChanged += (_, _) =>
+            {
+                if (loaded)
+                {
+                    GetHdrFileOutputSettings().AvifQuality = (int)nudHdrAvifQuality.Value;
+                }
+            };
+
+            lblHdrAvifSpeed = AddHdrOutputLabel("AVIF speed (0 slow–10 fast):", 4, 281);
+            nudHdrAvifSpeed = CreateHdrOutputNumeric(190, 277, 0, 10, 6);
+            nudHdrAvifSpeed.ValueChanged += (_, _) =>
+            {
+                if (loaded)
+                {
+                    GetHdrFileOutputSettings().AvifSpeed = (int)nudHdrAvifSpeed.Value;
+                }
+            };
+
             cbHdrFlattenTransparencyForUltraHdr = new CheckBox
             {
                 AutoSize = false,
-                Location = new Point(4, 210),
+                Location = new Point(4, 312),
                 Size = new Size(514, 24),
                 Text = "Flatten transparent pixels to black for Ultra HDR JPEG"
             };
@@ -1452,7 +1656,7 @@ namespace ShareX
             cbHdrUploadWithFileUploader = new CheckBox
             {
                 AutoSize = false,
-                Location = new Point(4, 239),
+                Location = new Point(4, 341),
                 Size = new Size(514, 24),
                 Text = "Upload HDR through the image file uploader (preserves encoded bytes)"
             };
@@ -1466,10 +1670,44 @@ namespace ShareX
             };
             pHdrFileOutput.Controls.Add(cbHdrUploadWithFileUploader);
 
+            AddHdrOutputLabel("Clipboard output:", 4, 375);
+            cbHdrClipboardOutputMode = CreateHdrOutputComboBox(190, 371);
+            cbHdrClipboardOutputMode.Items.AddRange(
+                Helpers.GetEnumDescriptions<HdrClipboardOutputMode>());
+            cbHdrClipboardOutputMode.SelectedIndexChanged += (_, _) =>
+            {
+                if (loaded && cbHdrClipboardOutputMode.SelectedIndex >= 0)
+                {
+                    GetHdrFileOutputSettings().ClipboardOutputMode =
+                        (HdrClipboardOutputMode)cbHdrClipboardOutputMode.SelectedIndex;
+                    UpdateHdrFileOutputControlsEnabled();
+                }
+            };
+
+            AddHdrOutputLabel("Clipboard HDR format:", 4, 409);
+            cbHdrClipboardFileFormat = CreateHdrOutputComboBox(190, 405);
+            foreach (HdrFileFormat format in Enum.GetValues<HdrFileFormat>())
+            {
+                if (HdrEncoderCapabilities.TryGetAvailability(format, out _))
+                {
+                    cbHdrClipboardFileFormat.Items.Add(new HdrFileFormatItem(format));
+                }
+            }
+
+            cbHdrClipboardFileFormat.SelectedIndexChanged += (_, _) =>
+            {
+                if (loaded &&
+                    cbHdrClipboardFileFormat.SelectedItem is HdrFileFormatItem selectedFormat)
+                {
+                    GetHdrFileOutputSettings().ClipboardFileFormat = selectedFormat.Format;
+                    UpdateHdrFileOutputControlsEnabled();
+                }
+            };
+
             lblHdrEncoderAvailability = new Label
             {
                 AutoSize = false,
-                Location = new Point(4, 270),
+                Location = new Point(4, 440),
                 Size = new Size(514, 42)
             };
             pHdrFileOutput.Controls.Add(lblHdrEncoderAvailability);
@@ -1478,29 +1716,40 @@ namespace ShareX
             var details = new Label
             {
                 AutoSize = false,
-                Location = new Point(4, 317),
-                Size = new Size(514, 175),
+                Location = new Point(4, 487),
+                Size = new Size(514, 255),
                 Text =
                     "Ultra HDR JPEG is the recommended shareable format: HDR-aware viewers use its gain map, " +
-                    "and other viewers show the embedded SDR JPEG. OpenEXR stores the linear FP16 master " +
-                    "losslessly. HDR PNG stores 16-bit BT.2020/PQ and is experimental because viewer support " +
-                    "is still uneven. HDR and SDR writes a separate -SDR file for EXR/PNG; Ultra HDR needs " +
-                    "only its single dual-representation JPEG. Transparent pixels require OpenEXR/HDR PNG " +
+                    "and other viewers show the embedded SDR JPEG. HDR AVIF stores a compact 10-bit BT.2020/PQ " +
+                    "4:4:4 image with alpha, CICP, CLLI, and mastering metadata; viewers without HDR AVIF support " +
+                    "do not get an embedded SDR fallback. OpenEXR can normalize captured display white " +
+                    "to 1.0 for conventional viewers, or preserve raw scRGB HALF samples losslessly. " +
+                    "HDR PNG stores 16-bit BT.2020/PQ and is experimental because viewer support " +
+                    "is still uneven. HDR and SDR writes a separate -SDR file for EXR/PNG/AVIF; Ultra HDR needs " +
+                    "only its single dual-representation JPEG. Transparent pixels require OpenEXR/HDR PNG/AVIF " +
                     "unless the explicit Ultra HDR flatten-to-black option is enabled; JPEG cannot preserve alpha. " +
                     "The file-uploader option avoids image hosts that may decode or recompress the upload and " +
-                    "discard HDR metadata."
+                    "discard HDR metadata. Clipboard output has its own independent format selector. HDR-only " +
+                    "publishes the selected encoded file under its native registered name plus MIME and ShareX " +
+                    "formats. The recommended HDR + SDR mode places ordinary SDR Bitmap, DIB, and PNG data in " +
+                    "the standard compatibility slots, while retaining the selected HDR bytes in explicit MIME " +
+                    "and ShareX formats. Ultra HDR JPEG can also remain a normal JPEG because it contains its own " +
+                    "SDR base. Windows has no universal negotiated HDR clipboard bitmap format, so applications " +
+                    "must understand the selected encoded format to paste the HDR representation."
             };
             pHdrFileOutput.Controls.Add(details);
         }
 
-        private void AddHdrOutputLabel(string text, int x, int y)
+        private Label AddHdrOutputLabel(string text, int x, int y)
         {
-            pHdrFileOutput.Controls.Add(new Label
+            var label = new Label
             {
                 AutoSize = true,
                 Location = new Point(x, y),
                 Text = text
-            });
+            };
+            pHdrFileOutput.Controls.Add(label);
+            return label;
         }
 
         private ComboBox CreateHdrOutputComboBox(int x, int y)
@@ -1540,6 +1789,9 @@ namespace ShareX
             HdrFileFormatItem selectedFormat = cbHdrFileFormat.Items
                 .Cast<HdrFileFormatItem>()
                 .FirstOrDefault(x => x.Format == settings.FileFormat);
+            HdrFileFormatItem selectedClipboardFormat = cbHdrClipboardFileFormat.Items
+                .Cast<HdrFileFormatItem>()
+                .FirstOrDefault(x => x.Format == settings.ClipboardFileFormat);
 
             if (selectedFormat == null)
             {
@@ -1547,14 +1799,27 @@ namespace ShareX
                 settings.FileFormat = selectedFormat.Format;
             }
 
+            if (selectedClipboardFormat == null)
+            {
+                selectedClipboardFormat = cbHdrClipboardFileFormat.Items
+                    .Cast<HdrFileFormatItem>()
+                    .First();
+                settings.ClipboardFileFormat = selectedClipboardFormat.Format;
+            }
+
             cbHdrOutputMode.SelectedIndex = (int)settings.OutputMode;
             cbHdrFileFormat.SelectedItem = selectedFormat;
             nudHdrMasteringMaximumNits.SetValue((decimal)settings.MasteringDisplayMaximumNits);
             nudHdrMasteringMinimumNits.SetValue((decimal)settings.MasteringDisplayMinimumNits);
+            cbHdrOpenExrExposure.SelectedIndex = (int)settings.OpenExrExposureMode;
             nudHdrJpegQuality.SetValue(settings.JpegQuality);
             nudHdrGainMapQuality.SetValue(settings.GainMapQuality);
+            nudHdrAvifQuality.SetValue(settings.AvifQuality);
+            nudHdrAvifSpeed.SetValue(settings.AvifSpeed);
             cbHdrFlattenTransparencyForUltraHdr.Checked = settings.FlattenTransparencyForUltraHdr;
             cbHdrUploadWithFileUploader.Checked = settings.UploadWithFileUploader;
+            cbHdrClipboardOutputMode.SelectedIndex = (int)settings.ClipboardOutputMode;
+            cbHdrClipboardFileFormat.SelectedItem = selectedClipboardFormat;
             UpdateHdrFileOutputControlsEnabled();
         }
 
@@ -1569,32 +1834,71 @@ namespace ShareX
             bool hdrEnabled = cbUseHDRSupport.Checked;
             bool nativeOutputEnabled = hdrEnabled &&
                 cbHdrOutputMode.SelectedIndex != (int)HdrOutputMode.SdrOnly;
-            bool ultraHdr = cbHdrFileFormat.SelectedItem is HdrFileFormatItem selectedFormat &&
-                selectedFormat.Format == HdrFileFormat.UltraHdrJpeg;
+            bool hdrClipboardEnabled = hdrEnabled &&
+                cbHdrClipboardOutputMode.SelectedIndex != (int)HdrClipboardOutputMode.SdrOnly;
+            HdrFileFormat? diskFormat =
+                cbHdrFileFormat.SelectedItem is HdrFileFormatItem selectedDiskFormat
+                    ? selectedDiskFormat.Format
+                    : null;
+            HdrFileFormat? clipboardFormat =
+                cbHdrClipboardFileFormat.SelectedItem is HdrFileFormatItem selectedClipboardFormat
+                    ? selectedClipboardFormat.Format
+                    : null;
+            bool ultraHdr =
+                (nativeOutputEnabled && diskFormat == HdrFileFormat.UltraHdrJpeg) ||
+                (hdrClipboardEnabled && clipboardFormat == HdrFileFormat.UltraHdrJpeg);
+            bool openExr =
+                (nativeOutputEnabled && diskFormat == HdrFileFormat.OpenExr) ||
+                (hdrClipboardEnabled && clipboardFormat == HdrFileFormat.OpenExr);
+            bool avif =
+                (nativeOutputEnabled && diskFormat == HdrFileFormat.Avif) ||
+                (hdrClipboardEnabled && clipboardFormat == HdrFileFormat.Avif);
+            bool hdrEncodingEnabled = nativeOutputEnabled || hdrClipboardEnabled;
 
             pHdrFileOutput.Enabled = hdrEnabled;
+            cbHdrClipboardOutputMode.Enabled = hdrEnabled;
+            cbHdrClipboardFileFormat.Enabled = hdrClipboardEnabled;
             cbHdrFileFormat.Enabled = nativeOutputEnabled;
-            nudHdrMasteringMaximumNits.Enabled = nativeOutputEnabled;
-            nudHdrMasteringMinimumNits.Enabled = nativeOutputEnabled;
-            nudHdrJpegQuality.Enabled = nativeOutputEnabled && ultraHdr;
-            nudHdrGainMapQuality.Enabled = nativeOutputEnabled && ultraHdr;
-            cbHdrFlattenTransparencyForUltraHdr.Enabled = nativeOutputEnabled && ultraHdr;
+            nudHdrMasteringMaximumNits.Enabled = hdrEncodingEnabled;
+            nudHdrMasteringMinimumNits.Enabled = hdrEncodingEnabled;
+            cbHdrOpenExrExposure.Enabled = openExr;
+            nudHdrJpegQuality.Enabled = ultraHdr;
+            nudHdrGainMapQuality.Enabled = ultraHdr;
+            lblHdrJpegQuality.Visible = ultraHdr;
+            nudHdrJpegQuality.Visible = ultraHdr;
+            lblHdrGainMapQuality.Visible = ultraHdr;
+            nudHdrGainMapQuality.Visible = ultraHdr;
+            lblHdrAvifQuality.Visible = avif;
+            nudHdrAvifQuality.Visible = avif;
+            nudHdrAvifQuality.Enabled = avif;
+            lblHdrAvifSpeed.Visible = avif;
+            nudHdrAvifSpeed.Visible = avif;
+            nudHdrAvifSpeed.Enabled = avif;
+            cbHdrFlattenTransparencyForUltraHdr.Enabled = ultraHdr;
             cbHdrUploadWithFileUploader.Enabled = nativeOutputEnabled;
         }
 
         private void UpdateHdrEncoderAvailabilityLabel()
         {
+            string ultraHdrStatus;
             if (HdrEncoderCapabilities.TryGetAvailability(
                 HdrFileFormat.UltraHdrJpeg,
                 out string unavailableReason))
             {
-                lblHdrEncoderAvailability.Text =
-                    "Ultra HDR JPEG native encoder: available. OpenEXR and HDR PNG are managed and architecture-independent.";
+                ultraHdrStatus = "Ultra HDR JPEG: available";
             }
             else
             {
-                lblHdrEncoderAvailability.Text = unavailableReason;
+                ultraHdrStatus = unavailableReason;
             }
+
+            string avifStatus = HdrEncoderCapabilities.TryGetAvailability(
+                HdrFileFormat.Avif,
+                out string avifUnavailableReason)
+                ? "HDR AVIF: available"
+                : avifUnavailableReason;
+            lblHdrEncoderAvailability.Text =
+                $"{ultraHdrStatus}. {avifStatus}. OpenEXR and HDR PNG are managed and architecture-independent.";
         }
 
         private void LoadObsGameCaptureSettings()
@@ -1602,6 +1906,13 @@ namespace ShareX
             ObsGameCaptureSettings settings = GetObsGameCaptureSettings();
             cbObsGameCaptureEnabled.Checked = settings.Enabled;
             cbObsReuseExistingHook.Checked = settings.ReuseExistingHook;
+            cbObsCaptureThirdPartyOverlays.Checked = settings.CaptureThirdPartyOverlays;
+            SelectObsEnumValue(cbObsAlphaMode, settings.AlphaMode);
+            SelectObsEnumValue(cbObsCaptureFrameRate, settings.CaptureFrameRate);
+            SelectObsEnumValue(cbObsCursorMode, settings.CursorMode);
+            SelectObsEnumValue(
+                cbHdrGameWindowPromotion,
+                TaskSettings.CaptureSettings.HdrSettings.GameWindowPromotionMode);
             txtObsGameProcesses.Text = settings.GetProcessNamesText();
             txtObsInstallationPath.Text = settings.ObsInstallationPath;
             cbObsRgb10A2Interpretation.SelectedIndex = (int)settings.Rgb10A2Interpretation;
@@ -1663,8 +1974,464 @@ namespace ShareX
                 menu.Items.Add(item);
             }
 
-            menu.Closed += (_, _) => menu.Dispose();
+            // ToolStripDropDown still accesses its native handle after raising Closed.
+            // Disposing from the event itself races that cleanup on current WinForms.
+            menu.Closed += (_, _) =>
+            {
+                if (!IsDisposed && IsHandleCreated)
+                {
+                    try
+                    {
+                        BeginInvoke((MethodInvoker)(() => menu.Dispose()));
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // The settings form is already closing; no further UI work is safe.
+                    }
+                }
+            };
             menu.Show(owner, new Point(0, owner.Height));
+        }
+
+        private void ShowObsPerGameOptions()
+        {
+            ObsGameCaptureSettings settings = GetObsGameCaptureSettings();
+
+            if (settings.ProcessNames.Count == 0)
+            {
+                MessageBox.Show(this,
+                    "Add at least one game process before configuring per-game options.",
+                    "OBS Game Capture options",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
+            using var dialog = new Form
+            {
+                Text = "OBS Game Capture per-game options",
+                StartPosition = FormStartPosition.CenterParent,
+                ClientSize = new Size(1120, 440),
+                MinimumSize = new Size(800, 330),
+                ShowIcon = false,
+                ShowInTaskbar = false
+            };
+            var explanation = new Label
+            {
+                AutoSize = false,
+                Dock = DockStyle.Top,
+                Height = 72,
+                Padding = new Padding(8),
+                Text = "Each row inherits the global defaults unless overridden. Render process maps a launcher/profile " +
+                    "to a different executable; title and class accept case-insensitive * and ? globs. Hook rate and " +
+                    "overlay changes restart a ShareX-owned session. Existing foreign hooks keep their owner's hook options."
+            };
+            var grid = new DataGridView
+            {
+                AllowUserToAddRows = false,
+                AllowUserToDeleteRows = false,
+                AllowUserToResizeRows = false,
+                AutoGenerateColumns = false,
+                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None,
+                Dock = DockStyle.Fill,
+                RowHeadersVisible = false,
+                SelectionMode = DataGridViewSelectionMode.CellSelect,
+                ScrollBars = ScrollBars.Both
+            };
+            grid.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                HeaderText = "Game process",
+                ReadOnly = true,
+                Width = 120
+            });
+            grid.Columns.Add(CreateObsTextColumn("Render process", 125));
+            grid.Columns.Add(CreateObsTextColumn("Window title glob", 150));
+            grid.Columns.Add(CreateObsTextColumn("Window class glob", 130));
+            grid.Columns.Add(CreateObsEnumColumn<ObsGameCaptureAlphaModeOverride>("Alpha", 145));
+            grid.Columns.Add(CreateObsEnumColumn<ObsGameCaptureOptionOverride>("Overlays", 105));
+            grid.Columns.Add(CreateObsEnumColumn<ObsGameCaptureRgb10A2Override>("RGB10A2", 135));
+            grid.Columns.Add(CreateObsEnumColumn<ObsGameCaptureFrameRateOverride>("Hook rate", 105));
+            grid.Columns.Add(CreateObsEnumColumn<ObsGameCaptureOptionOverride>("Reuse hook", 105));
+            grid.Columns.Add(new DataGridViewTextBoxColumn
+            {
+                HeaderText = "Idle seconds (0=default)",
+                ValueType = typeof(int),
+                Width = 135
+            });
+            grid.Columns.Add(CreateObsEnumColumn<ObsGameCaptureCursorModeOverride>("Cursor", 145));
+
+            foreach (string processName in settings.ProcessNames)
+            {
+                ObsGameCaptureProcessOptions processOptions = settings.GetProcessOptions(processName);
+                grid.Rows.Add(
+                    processName,
+                    processOptions?.TargetProcessName ?? string.Empty,
+                    processOptions?.WindowTitlePattern ?? string.Empty,
+                    processOptions?.WindowClassPattern ?? string.Empty,
+                    processOptions?.AlphaMode ?? ObsGameCaptureAlphaModeOverride.UseDefault,
+                    processOptions?.CaptureThirdPartyOverlays ?? ObsGameCaptureOptionOverride.UseDefault,
+                    processOptions?.Rgb10A2Interpretation ?? ObsGameCaptureRgb10A2Override.UseDefault,
+                    processOptions?.CaptureFrameRate ?? ObsGameCaptureFrameRateOverride.UseDefault,
+                    processOptions?.ReuseExistingHook ?? ObsGameCaptureOptionOverride.UseDefault,
+                    processOptions?.SessionIdleTimeoutSeconds ?? 0,
+                    processOptions?.CursorMode ?? ObsGameCaptureCursorModeOverride.UseDefault);
+            }
+
+            var ok = new Button
+            {
+                AutoSize = true,
+                DialogResult = DialogResult.OK,
+                Text = "OK"
+            };
+            var cancel = new Button
+            {
+                AutoSize = true,
+                DialogResult = DialogResult.Cancel,
+                Text = "Cancel"
+            };
+            var buttons = new FlowLayoutPanel
+            {
+                AutoSize = true,
+                Dock = DockStyle.Bottom,
+                FlowDirection = FlowDirection.RightToLeft,
+                Padding = new Padding(8)
+            };
+            buttons.Controls.Add(ok);
+            buttons.Controls.Add(cancel);
+            dialog.Controls.Add(grid);
+            dialog.Controls.Add(explanation);
+            dialog.Controls.Add(buttons);
+            dialog.AcceptButton = ok;
+            dialog.CancelButton = cancel;
+            ShareXResources.ApplyTheme(dialog, true);
+
+            if (dialog.ShowDialog(this) == DialogResult.OK)
+            {
+                foreach (DataGridViewRow row in grid.Rows)
+                {
+                    settings.SetProcessOptions(new ObsGameCaptureProcessOptions
+                    {
+                        ProcessName = row.Cells[0].Value as string,
+                        TargetProcessName = row.Cells[1].Value as string,
+                        WindowTitlePattern = row.Cells[2].Value as string,
+                        WindowClassPattern = row.Cells[3].Value as string,
+                        AlphaMode = GetObsEnumValue(
+                            row.Cells[4].Value,
+                            ObsGameCaptureAlphaModeOverride.UseDefault),
+                        CaptureThirdPartyOverlays = GetObsEnumValue(
+                            row.Cells[5].Value,
+                            ObsGameCaptureOptionOverride.UseDefault),
+                        Rgb10A2Interpretation = GetObsEnumValue(
+                            row.Cells[6].Value,
+                            ObsGameCaptureRgb10A2Override.UseDefault),
+                        CaptureFrameRate = GetObsEnumValue(
+                            row.Cells[7].Value,
+                            ObsGameCaptureFrameRateOverride.UseDefault),
+                        ReuseExistingHook = GetObsEnumValue(
+                            row.Cells[8].Value,
+                            ObsGameCaptureOptionOverride.UseDefault),
+                        SessionIdleTimeoutSeconds = GetObsInteger(row.Cells[9].Value),
+                        CursorMode = GetObsEnumValue(
+                            row.Cells[10].Value,
+                            ObsGameCaptureCursorModeOverride.UseDefault)
+                    });
+                }
+            }
+        }
+
+        private static DataGridViewTextBoxColumn CreateObsTextColumn(string headerText, int width)
+        {
+            return new DataGridViewTextBoxColumn
+            {
+                HeaderText = headerText,
+                Width = width
+            };
+        }
+
+        private static DataGridViewComboBoxColumn CreateObsEnumColumn<T>(string headerText, int width)
+            where T : struct, Enum
+        {
+            return new DataGridViewComboBoxColumn
+            {
+                HeaderText = headerText,
+                DataSource = Enum.GetValues<T>()
+                    .Select(x => new ObsEnumItem<T>(x))
+                    .ToList(),
+                DisplayMember = nameof(ObsEnumItem<T>.Description),
+                ValueMember = nameof(ObsEnumItem<T>.Value),
+                ValueType = typeof(T),
+                Width = width
+            };
+        }
+
+        private static ComboBox CreateObsEnumComboBox<T>(int x, int y, int width)
+            where T : struct, Enum
+        {
+            var comboBox = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Location = new Point(x, y),
+                Size = new Size(width, 23)
+            };
+
+            comboBox.Items.AddRange(Enum.GetValues<T>()
+                .Select(x => (object)new ObsEnumItem<T>(x))
+                .ToArray());
+            return comboBox;
+        }
+
+        private static void SelectObsEnumValue<T>(ComboBox comboBox, T value)
+            where T : struct, Enum
+        {
+            for (int i = 0; i < comboBox.Items.Count; i++)
+            {
+                if (comboBox.Items[i] is ObsEnumItem<T> item && EqualityComparer<T>.Default.Equals(item.Value, value))
+                {
+                    comboBox.SelectedIndex = i;
+                    return;
+                }
+            }
+
+            comboBox.SelectedIndex = comboBox.Items.Count > 0 ? 0 : -1;
+        }
+
+        private static bool TryGetObsEnumValue<T>(object value, out T result)
+            where T : struct, Enum
+        {
+            if (value is ObsEnumItem<T> item && Enum.IsDefined(item.Value))
+            {
+                result = item.Value;
+                return true;
+            }
+
+            result = default;
+            return false;
+        }
+
+        private static T GetObsEnumValue<T>(object value, T defaultValue)
+            where T : struct, Enum
+        {
+            return value is T result && Enum.IsDefined(result) ? result : defaultValue;
+        }
+
+        private static int GetObsInteger(object value)
+        {
+            return int.TryParse(Convert.ToString(value), out int result) ? result : 0;
+        }
+
+        private async Task TestObsGameCaptureConfigurationAsync(Button button)
+        {
+            const string originalText = "Test configuration...";
+            button.Enabled = false;
+            button.Text = "Testing...";
+
+            try
+            {
+                ObsGameCaptureSettings settings = GetObsGameCaptureSettings();
+                var visibleMatches = new Dictionary<int,
+                    (string Name, string Path, string Title, string ClassName, ObsBinaryArchitecture Architecture)>();
+
+                foreach (WindowInfo window in new WindowsList().GetVisibleWindowsList())
+                {
+                    try
+                    {
+                        string processName = window.ProcessName;
+                        string processPath = window.ProcessFilePath ?? string.Empty;
+
+                        if (string.IsNullOrWhiteSpace(processName) || !settings.MatchesWindow(
+                            processName,
+                            processPath,
+                            window.Text,
+                            window.ClassName))
+                        {
+                            continue;
+                        }
+
+                        int processId = window.ProcessId;
+                        ObsBinaryArchitecture architecture = !string.IsNullOrWhiteSpace(processPath)
+                            ? ObsGameCaptureBinaryInspector.ReadArchitecture(processPath)
+                            : ObsBinaryArchitecture.Unsupported;
+                        visibleMatches.TryAdd(processId,
+                            (processName, processPath, window.Text, window.ClassName, architecture));
+                    }
+                    catch (Exception e)
+                    {
+                        DebugHelper.WriteException(e);
+                    }
+                }
+
+                ObsBinaryArchitecture[] architectures = visibleMatches.Values
+                    .Select(x => x.Architecture)
+                    .Where(x => x is ObsBinaryArchitecture.X86 or ObsBinaryArchitecture.X64)
+                    .Distinct()
+                    .ToArray();
+
+                if (architectures.Length == 0)
+                {
+                    architectures = new[] { ObsBinaryArchitecture.X64 };
+                }
+
+                var reports = new Dictionary<ObsBinaryArchitecture, ObsGameCaptureCompatibilityReport>();
+
+                foreach (ObsBinaryArchitecture architecture in architectures)
+                {
+                    reports[architecture] = await ObsGameCaptureCompatibilityProbe.ProbeAsync(
+                        architecture,
+                        settings.ObsInstallationPath);
+                }
+
+                if (!IsDisposed)
+                {
+                    ShowObsGameCaptureTestReport(BuildObsGameCaptureTestReport(
+                        settings,
+                        TaskSettings.CaptureSettings.HdrSettings.GameWindowPromotionMode,
+                        visibleMatches,
+                        reports));
+                }
+            }
+            catch (Exception e)
+            {
+                DebugHelper.WriteException(e);
+
+                if (!IsDisposed)
+                {
+                    MessageBox.Show(this, $"OBS Game Capture test failed safely:\r\n\r\n{e.Message}",
+                        "OBS Game Capture test", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+            finally
+            {
+                if (!button.IsDisposed)
+                {
+                    button.Enabled = true;
+                    button.Text = originalText;
+                }
+            }
+        }
+
+        private static string BuildObsGameCaptureTestReport(
+            ObsGameCaptureSettings settings,
+            HdrGameWindowPromotionMode gameWindowPromotionMode,
+            IReadOnlyDictionary<int,
+                (string Name, string Path, string Title, string ClassName, ObsBinaryArchitecture Architecture)> visibleMatches,
+            IReadOnlyDictionary<ObsBinaryArchitecture, ObsGameCaptureCompatibilityReport> reports)
+        {
+            var result = new StringBuilder();
+            result.AppendLine("OBS Game Capture configuration test");
+            result.AppendLine();
+            result.AppendLine($"Automatic game capture: {(settings.Enabled ? "Enabled" : "Disabled")}");
+            result.AppendLine($"Reuse existing hook: {(settings.ReuseExistingHook ? "Enabled" : "Disabled")}");
+            result.AppendLine($"Default alpha interpretation: {settings.AlphaMode.GetDescription()}");
+            result.AppendLine($"Default capture third-party overlays: {(settings.CaptureThirdPartyOverlays ? "Enabled" : "Disabled")}");
+            result.AppendLine($"Default RGB10A2 interpretation: {settings.Rgb10A2Interpretation.GetDescription()}");
+            result.AppendLine($"Default hook capture rate: {settings.CaptureFrameRate.GetDescription()}");
+            result.AppendLine($"Default cursor: {settings.CursorMode.GetDescription()}");
+            result.AppendLine($"Default owned-session idle timeout: {settings.SessionIdleTimeoutSeconds} seconds");
+            result.AppendLine($"Precise-mode game promotion: {gameWindowPromotionMode.GetDescription()}");
+            result.AppendLine($"Configured processes: {(settings.ProcessNames.Count > 0 ? string.Join(", ", settings.ProcessNames) : "None")}");
+            result.AppendLine($"OBS path: {(string.IsNullOrWhiteSpace(settings.ObsInstallationPath) ? "Automatic discovery" : settings.ObsInstallationPath)}");
+            result.AppendLine();
+
+            if (visibleMatches.Count == 0)
+            {
+                result.AppendLine("Visible configured games: None");
+                result.AppendLine("The OBS binary check below uses x64 because no configured running game architecture could be detected.");
+            }
+            else
+            {
+                result.AppendLine("Visible configured games:");
+
+                foreach (KeyValuePair<int,
+                    (string Name, string Path, string Title, string ClassName, ObsBinaryArchitecture Architecture)> match in visibleMatches)
+                {
+                    ObsGameCaptureEffectiveOptions options = settings.ResolveOptions(
+                        match.Value.Name,
+                        match.Value.Path);
+                    result.AppendLine(
+                        $"- {match.Value.Name} (PID {match.Key}, {match.Value.Architecture}); " +
+                        $"window=\"{match.Value.Title}\" class=\"{match.Value.ClassName}\"; " +
+                        $"alpha={options.AlphaMode}, overlays={(options.CaptureThirdPartyOverlays ? "on" : "off")}, " +
+                        $"RGB10A2={options.Rgb10A2Interpretation}, rate={options.CaptureFrameRate.GetDescription()}, " +
+                        $"reuse={(options.ReuseExistingHook ? "on" : "off")}, " +
+                        $"idle={options.SessionIdleTimeoutSeconds}s, cursor={options.CursorMode}");
+                }
+            }
+
+            foreach (KeyValuePair<ObsBinaryArchitecture, ObsGameCaptureCompatibilityReport> entry in reports)
+            {
+                ObsGameCaptureCompatibilityReport report = entry.Value;
+                result.AppendLine();
+                result.AppendLine($"{entry.Key} OBS hook: {report.Status}");
+                result.AppendLine(report.Message);
+
+                if (report.BinaryPaths != null)
+                {
+                    result.AppendLine($"Installation: {report.BinaryPaths.InstallationRoot}");
+                }
+
+                foreach (ObsGameCaptureBinaryIdentity binary in report.Binaries)
+                {
+                    result.AppendLine(
+                        $"- {binary.Kind}: {binary.Architecture}, version {binary.FileVersion}, " +
+                        $"signature {(binary.Trust.IsTrusted ? "trusted" : $"invalid ({binary.Trust.NativeStatusHex})")}");
+                }
+
+                if (report.OffsetHelper != null)
+                {
+                    result.AppendLine(
+                        $"Graphics offsets helper: exit {report.OffsetHelper.ExitCode}, " +
+                        $"{report.OffsetHelper.Duration.TotalMilliseconds:F0} ms");
+                }
+
+                foreach (string diagnostic in report.Diagnostics)
+                {
+                    result.AppendLine($"- {diagnostic}");
+                }
+            }
+
+            return result.ToString().TrimEnd();
+        }
+
+        private void ShowObsGameCaptureTestReport(string report)
+        {
+            using var dialog = new Form
+            {
+                Text = "OBS Game Capture test",
+                StartPosition = FormStartPosition.CenterParent,
+                ClientSize = new Size(720, 480),
+                MinimumSize = new Size(560, 360),
+                ShowIcon = false,
+                ShowInTaskbar = false
+            };
+            var output = new TextBox
+            {
+                Dock = DockStyle.Fill,
+                Multiline = true,
+                ReadOnly = true,
+                ScrollBars = ScrollBars.Both,
+                WordWrap = false,
+                Text = report
+            };
+            var close = new Button
+            {
+                AutoSize = true,
+                DialogResult = DialogResult.OK,
+                Text = "Close"
+            };
+            var buttons = new FlowLayoutPanel
+            {
+                AutoSize = true,
+                Dock = DockStyle.Bottom,
+                FlowDirection = FlowDirection.RightToLeft,
+                Padding = new Padding(8)
+            };
+            buttons.Controls.Add(close);
+            dialog.Controls.Add(output);
+            dialog.Controls.Add(buttons);
+            dialog.AcceptButton = close;
+            dialog.CancelButton = close;
+            ShareXResources.ApplyTheme(dialog, true);
+            dialog.ShowDialog(this);
         }
 
         private void cbUseHDRSupport_CheckedChanged(object sender, EventArgs e)
@@ -1698,11 +2465,10 @@ namespace ShareX
 
         private void cbHDRToneMappingMode_SelectedIndexChanged(object sender, EventArgs e)
         {
-            if (cbHDRToneMappingMode.SelectedIndex >= 0)
+            if (cbHDRToneMappingMode.SelectedItem is HdrToneMappingModeItem item)
             {
                 TaskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
-                TaskSettings.CaptureSettings.HdrSettings.ToneMappingMode =
-                    (HdrToneMappingMode)cbHDRToneMappingMode.SelectedIndex;
+                TaskSettings.CaptureSettings.HdrSettings.ToneMappingMode = item.Mode;
             }
         }
 

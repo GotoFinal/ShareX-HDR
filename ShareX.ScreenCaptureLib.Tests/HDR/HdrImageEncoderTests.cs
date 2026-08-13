@@ -1,5 +1,6 @@
 using ShareX.ScreenCaptureLib;
 using System.Buffers.Binary;
+using System.Drawing;
 using System.IO.Compression;
 using System.Text;
 
@@ -41,6 +42,41 @@ public class HdrImageEncoderTests
         AssertHalfSamples(samples.Slice(4, 4), 3f, 0.125f);    // B
         AssertHalfSamples(samples.Slice(8, 4), 2f, 4f);        // G
         AssertHalfSamples(samples.Slice(12, 4), 1f, -0.25f);   // R
+    }
+
+    [Fact]
+    public void OpenExr_DisplayReferencedModeMapsCapturedWhiteToOne()
+    {
+        const float referenceWhiteNits = 203f;
+        float capturedWhite = referenceWhiteNits / HdrRgba16FloatBuffer.ReferenceWhiteNits;
+        byte[] sourceBytes = new byte[8];
+        WritePixel(sourceBytes, 0, capturedWhite, capturedWhite, capturedWhite, 1f);
+
+        using HdrRgba16FloatBuffer source = HdrRgba16FloatBuffer.CopyFrom(sourceBytes, 8, 1, 1);
+        using var encoded = new MemoryStream();
+        HdrEncodedImageInfo info = new OpenExrHdrImageEncoder().Encode(
+            source,
+            encoded,
+            new HdrImageEncodingOptions
+            {
+                OpenExrExposureMode = OpenExrExposureMode.DisplayReferenced,
+                OpenExrReferenceWhiteNits = referenceWhiteNits
+            });
+        byte[] file = encoded.ToArray();
+
+        Assert.False(info.IsLossless);
+        int position = 8;
+        Dictionary<string, byte[]> attributes = ReadExrAttributes(file, ref position);
+        Assert.Equal(referenceWhiteNits, BitConverter.Int32BitsToSingle(
+            BinaryPrimitives.ReadInt32LittleEndian(attributes["whiteLuminance"])));
+        Assert.Equal(80f / referenceWhiteNits, BitConverter.Int32BitsToSingle(
+            BinaryPrimitives.ReadInt32LittleEndian(attributes["shareXScRgbScale"])));
+
+        int firstChunk = checked((int)BinaryPrimitives.ReadInt64LittleEndian(file.AsSpan(position)));
+        ReadOnlySpan<byte> samples = file.AsSpan(firstChunk + 8, 8);
+        Assert.Equal(1f, ReadHalf(samples, 2), 3); // B
+        Assert.Equal(1f, ReadHalf(samples, 4), 3); // G
+        Assert.Equal(1f, ReadHalf(samples, 6), 3); // R
     }
 
     [Fact]
@@ -151,15 +187,20 @@ public class HdrImageEncoderTests
         Assert.Equal(0xd9, jpeg[^1]);
         Assert.Equal(jpeg.Length, info.BytesWritten);
         Assert.True(UltraHdrJpegImageEncoder.IsUltraHdrImage(jpeg));
+
+        using var fallbackStream = new MemoryStream(jpeg);
+        using Image fallbackImage = Image.FromStream(fallbackStream, useEmbeddedColorManagement: true, validateImageData: true);
+        Assert.Equal(width, fallbackImage.Width);
+        Assert.Equal(height, fallbackImage.Height);
     }
 
     [Fact]
-    public void HdrOutputSettings_DefaultToExistingSdrBehaviorAndClampMetadata()
+    public void HdrOutputSettings_DefaultToSdrOutputWithPngPreselectedAndClampMetadata()
     {
         var settings = new HdrFileOutputSettings();
 
         Assert.Equal(HdrOutputMode.SdrOnly, settings.OutputMode);
-        Assert.Equal(HdrFileFormat.UltraHdrJpeg, settings.FileFormat);
+        Assert.Equal(HdrFileFormat.HdrPng, settings.FileFormat);
 
         settings.MasteringDisplayMaximumNits = 50000f;
         settings.MasteringDisplayMinimumNits = -1f;

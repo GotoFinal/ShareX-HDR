@@ -24,7 +24,8 @@ public sealed class HdrFileRoundTripStressTests
         {
             new OpenExrHdrImageEncoder(),
             new HdrPngImageEncoder(),
-            new UltraHdrJpegImageEncoder()
+            new UltraHdrJpegImageEncoder(),
+            new AvifHdrImageEncoder()
         };
 
         foreach (IHdrImageEncoder encoder in encoders)
@@ -68,6 +69,7 @@ public sealed class HdrFileRoundTripStressTests
             HdrFileFormat.OpenExr => new OpenExrHdrImageDecoder().Decode(encoded),
             HdrFileFormat.HdrPng => new HdrPngImageDecoder().Decode(encoded),
             HdrFileFormat.UltraHdrJpeg => new UltraHdrJpegImageDecoder().Decode(encoded),
+            HdrFileFormat.Avif => new AvifHdrImageDecoder().Decode(encoded),
             _ => throw new InvalidOperationException($"Unexpected HDR format {encoder.Format}.")
         };
 

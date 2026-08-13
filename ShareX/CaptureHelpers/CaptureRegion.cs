@@ -110,11 +110,11 @@ namespace ShareX
                         }
 
                         Rectangle selectedRectangle = form.GetSelectedRectangle();
-                        if (CanRetainHdrRegion(form, result, selectedRectangle, hdrCanvasDocument))
-                        {
-                            metadata.HdrImageDocument =
-                                hdrCanvasDocument.CropToScreenRectangle(selectedRectangle);
-                        }
+                        metadata.HdrImageDocument = CreateHdrRegionDocument(
+                            form,
+                            result,
+                            selectedRectangle,
+                            hdrCanvasDocument);
 
                         lastRegionCaptureType = RegionCaptureType.Default;
                         return metadata;
@@ -203,15 +203,51 @@ namespace ShareX
             return null;
         }
 
-        private static bool CanRetainHdrRegion(
+        private static HdrImageDocument CreateHdrRegionDocument(
             RegionCaptureForm form,
             Bitmap result,
             Rectangle selectedRectangle,
-            HdrImageDocument hdrCanvasDocument) =>
-            hdrCanvasDocument != null &&
-            !form.IsImageModified &&
-            !selectedRectangle.IsEmpty &&
-            selectedRectangle.Size == result.Size &&
-            !ImageHelpers.IsImageTransparent(result);
+            HdrImageDocument hdrCanvasDocument)
+        {
+            if (hdrCanvasDocument == null ||
+                selectedRectangle.IsEmpty ||
+                selectedRectangle.Size != result.Size ||
+                ImageHelpers.IsImageTransparent(result))
+            {
+                return null;
+            }
+
+            HdrImageDocument document = hdrCanvasDocument.CropToScreenRectangle(selectedRectangle);
+            if (!form.IsImageModified)
+            {
+                return document;
+            }
+
+            if (!form.CanExportHdrDrawingOverlay)
+            {
+                document.Dispose();
+                return null;
+            }
+
+            try
+            {
+                using Bitmap overlay = form.GetHdrDrawingOverlay();
+                if (overlay == null || overlay.Size != result.Size)
+                {
+                    document.Dispose();
+                    return null;
+                }
+
+                document.CompositeSdrAnnotationOverlay(
+                    overlay,
+                    TaskHelpers.GetHdrAnnotationWhiteNits(document));
+                return document;
+            }
+            catch
+            {
+                document.Dispose();
+                throw;
+            }
+        }
     }
 }

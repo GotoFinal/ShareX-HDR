@@ -67,6 +67,7 @@ namespace ShareX.ScreenCaptureLib
                     HdrFileFormat.UltraHdrJpeg => VerifyUltraHdr(stream, expectedWidth, expectedHeight),
                     HdrFileFormat.OpenExr => VerifyOpenExr(stream, expectedWidth, expectedHeight),
                     HdrFileFormat.HdrPng => VerifyHdrPng(stream, expectedWidth, expectedHeight),
+                    HdrFileFormat.Avif => VerifyAvif(stream, expectedWidth, expectedHeight),
                     _ => false
                 };
             }
@@ -99,6 +100,25 @@ namespace ShareX.ScreenCaptureLib
             byte[] encoded = new byte[checked((int)stream.Length)];
             stream.ReadExactly(encoded);
             return VerifyUltraHdrBytes(encoded, expectedWidth, expectedHeight);
+        }
+
+        private static bool VerifyAvif(Stream stream, int expectedWidth, int expectedHeight)
+        {
+            if (stream.Length <= 0 || stream.Length > int.MaxValue)
+            {
+                return false;
+            }
+
+            byte[] encoded = new byte[checked((int)stream.Length)];
+            stream.ReadExactly(encoded);
+            return AvifHdrImageEncoder.TryProbeHdr(
+                encoded,
+                out int width,
+                out int height,
+                out _,
+                out _,
+                out _) &&
+                width == expectedWidth && height == expectedHeight;
         }
 
         private static bool VerifyUltraHdrBytes(

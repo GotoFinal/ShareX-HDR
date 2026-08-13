@@ -65,8 +65,15 @@ namespace ShareX.ScreenCaptureLib
                 BindFlags.ShaderResource);
             context.CopyResource(shaderInput, sourceTexture);
 
-            using ID3D11Texture2D toneMapMask = settings.ToneMappingMode == HdrToneMappingMode.ContentAware
-                ? CreateToneMapMask(device, context, sourceTexture, width, height, parameters.PaperWhiteScRgb)
+            using ID3D11Texture2D toneMapMask = settings.ToneMappingMode != HdrToneMappingMode.Uniform
+                ? CreateToneMapMask(
+                    device,
+                    context,
+                    sourceTexture,
+                    width,
+                    height,
+                    parameters.PaperWhiteScRgb,
+                    settings.ToneMappingMode)
                 : null;
             using ID3D11Texture2D output = CreateTexture(
                 device,
@@ -125,7 +132,8 @@ namespace ShareX.ScreenCaptureLib
             ID3D11Texture2D sourceTexture,
             int width,
             int height,
-            float paperWhiteScRgb)
+            float paperWhiteScRgb,
+            HdrToneMappingMode toneMappingMode)
         {
             using ID3D11Texture2D stagingInput = CreateStagingTexture(
                 device,
@@ -147,7 +155,8 @@ namespace ShareX.ScreenCaptureLib
                     (int)mapped.RowPitch,
                     width,
                     height,
-                    paperWhiteScRgb);
+                    paperWhiteScRgb,
+                    toneMappingMode);
             }
             finally
             {

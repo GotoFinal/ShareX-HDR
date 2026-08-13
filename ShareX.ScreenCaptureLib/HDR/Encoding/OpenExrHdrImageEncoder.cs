@@ -21,7 +21,7 @@ namespace ShareX.ScreenCaptureLib
 {
     /// <summary>
     /// Writes a single-part, uncompressed OpenEXR scanline image. The HALF
-    /// samples are copied bit-for-bit from ShareX's linear scRGB master.
+    /// samples can remain raw scRGB or be display-referenced for conventional viewers.
     /// </summary>
     public sealed class OpenExrHdrImageEncoder : IHdrImageEncoder
     {
@@ -48,7 +48,13 @@ namespace ShareX.ScreenCaptureLib
                 throw new ArgumentException("The destination stream must be writable.", nameof(destination));
             }
 
-            using MemoryStream header = CreateHeader(source.Width, source.Height);
+            options ??= new HdrImageEncodingOptions();
+            bool displayReferenced = options.OpenExrExposureMode == OpenExrExposureMode.DisplayReferenced;
+            float whiteLuminance = displayReferenced
+                ? options.GetValidatedOpenExrReferenceWhiteNits()
+                : HdrRgba16FloatBuffer.ReferenceWhiteNits;
+            float rgbScale = HdrRgba16FloatBuffer.ReferenceWhiteNits / whiteLuminance;
+            using MemoryStream header = CreateHeader(source.Width, source.Height, whiteLuminance, rgbScale);
             int scanlineDataSize = checked(source.Width * ChannelCount * BytesPerSample);
             long firstChunkOffset = checked(header.Length + (long)source.Height * sizeof(long));
             long chunkSize = checked(sizeof(int) + sizeof(int) + scanlineDataSize);
@@ -66,18 +72,18 @@ namespace ShareX.ScreenCaptureLib
             {
                 WriteInt32(destination, y);
                 WriteInt32(destination, scanlineDataSize);
-                WriteScanline(destination, source.GetRowSpan(y), source.Width);
+                WriteScanline(destination, source.GetRowSpan(y), source.Width, rgbScale);
             }
 
             return new HdrEncodedImageInfo(
                 Format,
                 ".exr",
                 "image/x-exr",
-                true,
+                !displayReferenced,
                 bytesWritten);
         }
 
-        private static MemoryStream CreateHeader(int width, int height)
+        private static MemoryStream CreateHeader(int width, int height, float whiteLuminance, float rgbScale)
         {
             var stream = new MemoryStream(512);
             WriteInt32(stream, OpenExrMagic);
@@ -97,12 +103,19 @@ namespace ShareX.ScreenCaptureLib
             WriteAttribute(stream, "screenWindowWidth", "float", value => WriteFloat(value, 1f));
             WriteAttribute(stream, "chromaticities", "chromaticities", WriteRec709Chromaticities);
             WriteAttribute(stream, "whiteLuminance", "float", value =>
-                WriteFloat(value, HdrRgba16FloatBuffer.ReferenceWhiteNits));
+                WriteFloat(value, whiteLuminance));
+            if (rgbScale != 1f)
+            {
+                WriteAttribute(stream, "shareXScRgbScale", "float", value =>
+                    WriteFloat(value, rgbScale));
+            }
             WriteStringAttribute(stream, "software", "ShareX");
             WriteStringAttribute(
                 stream,
                 "comments",
-                "Linear scRGB (BT.709/D65), associated alpha; 1.0 = 80 cd/m^2");
+                rgbScale == 1f
+                    ? "Linear scRGB (BT.709/D65), associated alpha; 1.0 = 80 cd/m^2"
+                    : $"Display-referenced linear BT.709/D65, associated alpha; 1.0 = {whiteLuminance:0.###} cd/m^2; ShareX scale={rgbScale:R}");
 
             stream.WriteByte(0);
             stream.Position = 0;
@@ -130,13 +143,36 @@ namespace ShareX.ScreenCaptureLib
             WriteInt32(stream, 1);
         }
 
-        private static void WriteScanline(Stream destination, ReadOnlySpan<byte> sourceRow, int width)
+        private static void WriteScanline(
+            Stream destination,
+            ReadOnlySpan<byte> sourceRow,
+            int width,
+            float rgbScale)
         {
+            Span<byte> scaledSample = stackalloc byte[BytesPerSample];
             foreach (int channelOffset in ChannelSourceOffsets)
             {
                 for (int x = 0; x < width; x++)
                 {
-                    destination.Write(sourceRow.Slice(x * HdrRgba16FloatBuffer.BytesPerPixel + channelOffset, 2));
+                    ReadOnlySpan<byte> sample = sourceRow.Slice(
+                        x * HdrRgba16FloatBuffer.BytesPerPixel + channelOffset,
+                        BytesPerSample);
+                    if (channelOffset == 6 || rgbScale == 1f)
+                    {
+                        destination.Write(sample);
+                    }
+                    else
+                    {
+                        float value = (float)BitConverter.UInt16BitsToHalf(
+                            BinaryPrimitives.ReadUInt16LittleEndian(sample));
+                        value = float.IsNaN(value)
+                            ? 0f
+                            : Math.Clamp(value * rgbScale, -65504f, 65504f);
+                        BinaryPrimitives.WriteUInt16LittleEndian(
+                            scaledSample,
+                            BitConverter.HalfToUInt16Bits((Half)value));
+                        destination.Write(scaledSample);
+                    }
                 }
             }
         }

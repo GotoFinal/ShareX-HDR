@@ -86,8 +86,6 @@ float4 PixelMain(VertexOutput input) : SV_Target
         ? ToneMapMask.Load(int3(pixel, 0))
         : 1.0f;
 
-    if (maxRgb > 1.02f) toneMapAmount = 1.0f;
-
     if (toneMapAmount > 0.0f)
     {
         float gain = GetToneMapGain(maxRgb);

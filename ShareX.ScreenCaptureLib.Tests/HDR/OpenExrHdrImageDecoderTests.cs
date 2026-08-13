@@ -25,6 +25,39 @@ public sealed class OpenExrHdrImageDecoderTests
     }
 
     [Fact]
+    public void Decode_DisplayReferencedFileRestoresShareXScRgbScale()
+    {
+        const float referenceWhiteNits = 203f;
+        float capturedWhite = referenceWhiteNits / HdrRgba16FloatBuffer.ReferenceWhiteNits;
+        byte[] sourceBytes = new byte[8];
+        WriteHalf(sourceBytes, 0, capturedWhite);
+        WriteHalf(sourceBytes, 2, capturedWhite * 0.5f);
+        WriteHalf(sourceBytes, 4, capturedWhite * 2f);
+        WriteHalf(sourceBytes, 6, 1f);
+        using HdrRgba16FloatBuffer source = HdrRgba16FloatBuffer.CopyFrom(sourceBytes, 8, 1, 1);
+        using var encoded = new MemoryStream();
+        new OpenExrHdrImageEncoder().Encode(
+            source,
+            encoded,
+            new HdrImageEncodingOptions
+            {
+                OpenExrExposureMode = OpenExrExposureMode.DisplayReferenced,
+                OpenExrReferenceWhiteNits = referenceWhiteNits
+            });
+
+        var decoder = new OpenExrHdrImageDecoder();
+        Assert.True(decoder.IsSupported(encoded));
+        using HdrRgba16FloatBuffer decoded = decoder.Decode(encoded);
+
+        ReadOnlySpan<byte> expected = source.GetRowSpan(0);
+        ReadOnlySpan<byte> actual = decoded.GetRowSpan(0);
+        Assert.InRange(Math.Abs(ReadHalf(actual, 0) - ReadHalf(expected, 0)), 0f, 0.005f);
+        Assert.InRange(Math.Abs(ReadHalf(actual, 2) - ReadHalf(expected, 2)), 0f, 0.005f);
+        Assert.InRange(Math.Abs(ReadHalf(actual, 4) - ReadHalf(expected, 4)), 0f, 0.01f);
+        Assert.Equal(1f, ReadHalf(actual, 6));
+    }
+
+    [Fact]
     public void Decode_RejectsCompressionColorMetadataOffsetsAndTrailingData()
     {
         using HdrRgba16FloatBuffer source = CreateSource(2, 2);

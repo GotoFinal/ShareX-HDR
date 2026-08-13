@@ -42,7 +42,7 @@ namespace ShareX.ScreenCaptureLib
         public bool CaptureShadow { get; set; } = false;
         public int ShadowOffset { get; set; } = 20;
         public bool AutoHideTaskbar { get; set; } = false;
-        public bool UseHDRSupport { get; set; } = false;
+        public bool UseHDRSupport { get; set; } = true;
         public HdrCaptureSettings HdrSettings { get; set; } = new HdrCaptureSettings();
 
         public Bitmap CaptureRectangle(Rectangle rect)
@@ -62,8 +62,17 @@ namespace ShareX.ScreenCaptureLib
                 rect = Rectangle.Intersect(CaptureHelpers.GetScreenBounds(), rect);
             }
 
-            bool captured = TryCaptureObsGame(rect, IntPtr.Zero, out document) ||
-                WindowsGraphicsCapture.TryCaptureHdr(rect, null, out document);
+            if (TryCaptureObsGame(rect, IntPtr.Zero, out document, out ObsGameCaptureAttempt obsAttempt))
+            {
+                if (ShouldCaptureObsCursor(obsAttempt.CursorMode))
+                {
+                    CompositeCursor(document, rect);
+                }
+
+                return true;
+            }
+
+            bool captured = WindowsGraphicsCapture.TryCaptureHdr(rect, null, out document);
 
             if (captured && CaptureCursor)
             {
@@ -188,15 +197,23 @@ namespace ShareX.ScreenCaptureLib
                 rect = Rectangle.Intersect(bounds, rect);
             }
 
-            if (TryCaptureObsGame(rect, preferredWindow, out HdrImageDocument obsDocument))
+            if (TryCaptureObsGame(
+                rect,
+                preferredWindow,
+                out HdrImageDocument obsDocument,
+                out ObsGameCaptureAttempt obsAttempt))
             {
-                return CreateSdrPreviewAndRetain(obsDocument, rect, out document);
+                return CreateSdrPreviewAndRetain(
+                    obsDocument,
+                    rect,
+                    ShouldCaptureObsCursor(obsAttempt.CursorMode),
+                    out document);
             }
 
             if (UseHDRSupport &&
                 WindowsGraphicsCapture.TryCaptureHdr(rect, captureContext, out HdrImageDocument hdrDocument))
             {
-                return CreateSdrPreviewAndRetain(hdrDocument, rect, out document);
+                return CreateSdrPreviewAndRetain(hdrDocument, rect, CaptureCursor, out document);
             }
 
             return CaptureRectangleNative(rect, CaptureCursor);
@@ -205,13 +222,19 @@ namespace ShareX.ScreenCaptureLib
         private Bitmap CreateSdrPreviewAndRetain(
             HdrImageDocument capturedDocument,
             Rectangle captureRectangle,
+            bool captureCursor,
             out HdrImageDocument document)
         {
             document = null;
 
             try
             {
-                if (CaptureCursor)
+                if (HdrSettings.ToneMappingMode != HdrToneMappingMode.Uniform)
+                {
+                    capturedDocument.CaptureWindowRegions(HdrSettings);
+                }
+
+                if (captureCursor)
                 {
                     CompositeCursor(capturedDocument, captureRectangle);
                 }
@@ -230,9 +253,11 @@ namespace ShareX.ScreenCaptureLib
         private bool TryCaptureObsGame(
             Rectangle rect,
             IntPtr preferredWindow,
-            out HdrImageDocument document)
+            out HdrImageDocument document,
+            out ObsGameCaptureAttempt attempt)
         {
             document = null;
+            attempt = null;
 
             if (!UseHDRSupport || HdrSettings?.ObsGameCapture?.Enabled != true)
             {
@@ -245,13 +270,25 @@ namespace ShareX.ScreenCaptureLib
                 HdrSettings,
                 preferredWindow,
                 out document,
-                out ObsGameCaptureAttempt attempt);
+                out attempt);
             DebugHelper.WriteLine(
                 $"OBS Game Capture: success={attempt.Succeeded} process={attempt.ProcessName} " +
                 $"pid={attempt.ProcessId} source={attempt.SessionSource} format={attempt.DxgiFormat} " +
-                $"color={attempt.ColorInterpretation} elapsed={attempt.Duration.TotalMilliseconds:F1}ms " +
+                $"color={attempt.ColorInterpretation} alpha={attempt.AlphaMode} " +
+                $"overlays={attempt.CaptureThirdPartyOverlays} rate={attempt.CaptureFrameRate} " +
+                $"cursor={attempt.CursorMode} elapsed={attempt.Duration.TotalMilliseconds:F1}ms " +
                 $"message={attempt.Message}");
             return captured;
+        }
+
+        private bool ShouldCaptureObsCursor(ObsGameCaptureCursorMode cursorMode)
+        {
+            return cursorMode switch
+            {
+                ObsGameCaptureCursorMode.Include => true,
+                ObsGameCaptureCursorMode.Exclude => false,
+                _ => CaptureCursor
+            };
         }
 
         private static ObsGameCaptureService GetObsGameCaptureService()

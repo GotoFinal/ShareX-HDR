@@ -31,6 +31,8 @@ namespace ShareX.ScreenCaptureLib
         long ProcessStartTimeUtcTicks,
         string ProcessName,
         string ProcessPath,
+        string WindowTitle,
+        string WindowClass,
         ObsBinaryArchitecture Architecture,
         Rectangle WindowBounds,
         IntPtr Monitor,
@@ -176,8 +178,10 @@ namespace ShareX.ScreenCaptureLib
                 }
 
                 string processPath = TryGetProcessPath(process);
+                string windowTitle = NativeMethods.GetWindowText(window);
+                string windowClass = NativeMethods.GetClassName(window);
 
-                if (!settings.MatchesProcess(processName, processPath))
+                if (!settings.MatchesWindow(processName, processPath, windowTitle, windowClass))
                 {
                     return false;
                 }
@@ -197,6 +201,8 @@ namespace ShareX.ScreenCaptureLib
                     startTimeUtcTicks,
                     processName,
                     processPath,
+                    windowTitle,
+                    windowClass,
                     architecture,
                     windowBounds,
                     MonitorFromWindow(window, MonitorDefaultToNearest),

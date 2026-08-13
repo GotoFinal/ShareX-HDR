@@ -30,6 +30,48 @@ public class ObsGameCaptureRgb10A2ConverterTests
     }
 
     [Fact]
+    public void OpaqueMode_IgnoresFramebufferAlphaWithoutDiscardingRgb()
+    {
+        byte[] source = new byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(source, Pack(1023, 512, 256, 0));
+
+        using HdrRgba16FloatBuffer result =
+            ObsGameCaptureRgb10A2Converter.ConvertToRgba16Float(
+                source,
+                4,
+                1,
+                1,
+                ObsGameCaptureRgb10A2ColorSpace.Srgb,
+                allowTransparency: false);
+
+        Assert.Equal(1f, ReadHalf(result, 0));
+        Assert.InRange(ReadHalf(result, 2), 0.21f, 0.22f);
+        Assert.InRange(ReadHalf(result, 4), 0.05f, 0.052f);
+        Assert.Equal(1f, ReadHalf(result, 6));
+    }
+
+    [Fact]
+    public void PremultipliedMode_DoesNotMultiplyRgbAgain()
+    {
+        byte[] source = new byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(source, Pack(1023, 1023, 1023, 1));
+
+        using HdrRgba16FloatBuffer result =
+            ObsGameCaptureRgb10A2Converter.ConvertToRgba16Float(
+                source,
+                4,
+                1,
+                1,
+                ObsGameCaptureRgb10A2ColorSpace.Srgb,
+                ObsGameCaptureAlphaMode.Premultiplied);
+
+        Assert.Equal(1f, ReadHalf(result, 0));
+        Assert.Equal(1f, ReadHalf(result, 2));
+        Assert.Equal(1f, ReadHalf(result, 4));
+        Assert.InRange(ReadHalf(result, 6), 0.332f, 0.334f);
+    }
+
+    [Fact]
     public void PqNeutral80Nits_MapsToScRgbReferenceWhite()
     {
         uint code = EncodePqCode(80f);

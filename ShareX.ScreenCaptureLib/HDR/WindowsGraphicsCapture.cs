@@ -74,7 +74,7 @@ namespace ShareX.ScreenCaptureLib
                 metadataTimer.Stop();
 
                 Log(
-                    $"start bounds={FormatRectangle(captureRectangle)} backend={settings.ProcessingBackend} mode={settings.ToneMappingMode} peakMode={settings.PeakBrightnessMode} configuredPeak={settings.HdrBrightnessNits:F1}nits reusable={captureContext?.IsReusable == true}");
+                    $"start bounds={FormatRectangle(captureRectangle)} backend={settings.ProcessingBackend} mode={settings.ToneMappingMode} gamePromotion={settings.GameWindowPromotionMode} peakMode={settings.PeakBrightnessMode} configuredPeak={settings.HdrBrightnessNits:F1}nits reusable={captureContext?.IsReusable == true}");
 
                 foreach (MonitorCaptureTarget target in targets)
                 {

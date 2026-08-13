@@ -587,9 +587,15 @@ namespace ShareX
 
             HdrFileOutputSettings hdrOutputSettings = GetHdrFileOutputSettings();
 
-            if (hdrImageDocument != null && hdrOutputSettings.OutputMode == HdrOutputMode.SdrOnly)
+            bool copyImageToClipboard = Info.TaskSettings.AfterCaptureJob.HasFlag(
+                AfterCaptureTasks.CopyImageToClipboard);
+            bool retainHdrForClipboard = copyImageToClipboard &&
+                hdrOutputSettings.ClipboardOutputMode != HdrClipboardOutputMode.SdrOnly;
+            if (hdrImageDocument != null &&
+                hdrOutputSettings.OutputMode == HdrOutputMode.SdrOnly &&
+                !retainHdrForClipboard)
             {
-                DiscardHdrImageDocument("HDR file output is set to SDR only.");
+                DiscardHdrImageDocument("HDR file and clipboard output are both set to SDR only.");
             }
 
             if (hdrImageDocument != null &&
@@ -692,10 +698,9 @@ namespace ShareX
                 }
             }
 
-            if (Info.TaskSettings.AfterCaptureJob.HasFlag(AfterCaptureTasks.CopyImageToClipboard))
+            if (copyImageToClipboard)
             {
-                ClipboardHelpers.CopyImage(Image, Info.FileName);
-                DebugHelper.WriteLine("Image copied to clipboard.");
+                CopyCapturedImageToClipboard(hdrOutputSettings);
             }
 
             if (Info.TaskSettings.AfterCaptureJob.HasFlag(AfterCaptureTasks.PinToScreen))
@@ -839,6 +844,72 @@ namespace ShareX
             HdrCaptureSettings hdrSettings = Info.TaskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
             return hdrSettings.FileOutput ??= new HdrFileOutputSettings();
         }
+
+        private void CopyCapturedImageToClipboard(HdrFileOutputSettings settings)
+        {
+            if (hdrImageDocument == null ||
+                settings.ClipboardOutputMode == HdrClipboardOutputMode.SdrOnly)
+            {
+                if (ClipboardHelpers.CopyImage(Image, Info.FileName))
+                {
+                    DebugHelper.WriteLine("SDR image copied to clipboard.");
+                }
+
+                return;
+            }
+
+            bool includeSdrFallback =
+                settings.ClipboardOutputMode == HdrClipboardOutputMode.HdrAndSdr;
+
+            try
+            {
+                using ImageData hdrClipboardImage = HdrImageOutput.EncodeClipboard(
+                    hdrImageDocument,
+                    settings);
+                bool copied = ClipboardHelpers.CopyHdrImage(
+                    hdrClipboardImage.ImageStream,
+                    GetHdrClipboardFormatName(settings.ClipboardFileFormat),
+                    hdrClipboardImage.MediaType,
+                    hdrClipboardImage.FileExtension,
+                    includeSdrFallback ? Image : null,
+                    Info.FileName,
+                    settings.ClipboardFileFormat == HdrFileFormat.UltraHdrJpeg);
+
+                if (copied)
+                {
+                    DebugHelper.WriteLine(
+                        includeSdrFallback
+                            ? $"HDR {settings.ClipboardFileFormat} and SDR fallback copied to clipboard."
+                            : $"HDR {settings.ClipboardFileFormat} copied to clipboard without an SDR fallback.");
+                    return;
+                }
+            }
+            catch (Exception e)
+            {
+                DebugHelper.WriteException(
+                    e,
+                    $"HDR {settings.ClipboardFileFormat} clipboard encoding failed.");
+            }
+
+            if (includeSdrFallback && ClipboardHelpers.CopyImage(Image, Info.FileName))
+            {
+                DebugHelper.WriteLine(
+                    "HDR clipboard copy failed; SDR fallback copied to clipboard.");
+            }
+            else
+            {
+                DebugHelper.WriteLine("HDR clipboard copy failed.");
+            }
+        }
+
+        private static string GetHdrClipboardFormatName(HdrFileFormat format) => format switch
+        {
+            HdrFileFormat.UltraHdrJpeg => "JFIF",
+            HdrFileFormat.OpenExr => "OpenEXR",
+            HdrFileFormat.HdrPng => ClipboardHelpers.FORMAT_PNG,
+            HdrFileFormat.Avif => "AVIF",
+            _ => "ShareX HDR Image"
+        };
 
         private void DiscardHdrImageDocument(string reason)
         {

@@ -30,6 +30,18 @@ namespace ShareX.ScreenCaptureLib
         HdrAndSdr
     }
 
+    public enum HdrClipboardOutputMode
+    {
+        [Description("HDR + SDR fallback (recommended)")]
+        HdrAndSdr,
+
+        [Description("HDR only")]
+        HdrOnly,
+
+        [Description("SDR only (legacy)")]
+        SdrOnly
+    }
+
     public enum HdrFileFormat
     {
         [Description("Ultra HDR JPEG")]
@@ -39,7 +51,19 @@ namespace ShareX.ScreenCaptureLib
         OpenExr,
 
         [Description("HDR PNG (experimental)")]
-        HdrPng
+        HdrPng,
+
+        [Description("HDR AVIF (10-bit)")]
+        Avif
+    }
+
+    public enum OpenExrExposureMode
+    {
+        [Description("Match captured display (recommended)")]
+        DisplayReferenced,
+
+        [Description("Raw scRGB samples (lossless)")]
+        RawScRgb
     }
 
     public sealed class HdrFileOutputSettings
@@ -50,13 +74,26 @@ namespace ShareX.ScreenCaptureLib
         public const float DefaultMasteringDisplayMinimumNits = 0.0005f;
 
         private HdrOutputMode outputMode = HdrOutputMode.SdrOnly;
-        private HdrFileFormat fileFormat = HdrFileFormat.UltraHdrJpeg;
+        private HdrFileFormat fileFormat = HdrFileFormat.HdrPng;
         private float masteringDisplayMaximumNits = DefaultMasteringDisplayMaximumNits;
         private float masteringDisplayMinimumNits = DefaultMasteringDisplayMinimumNits;
         private int jpegQuality = 95;
         private int gainMapQuality = 90;
+        private int avifQuality = 90;
+        private int avifSpeed = 6;
+        private OpenExrExposureMode openExrExposureMode = OpenExrExposureMode.DisplayReferenced;
+        private HdrClipboardOutputMode clipboardOutputMode = HdrClipboardOutputMode.HdrAndSdr;
+        private HdrFileFormat clipboardFileFormat = HdrFileFormat.HdrPng;
 
         public bool UploadWithFileUploader { get; set; } = true;
+
+        public HdrClipboardOutputMode ClipboardOutputMode
+        {
+            get => clipboardOutputMode;
+            set => clipboardOutputMode = Enum.IsDefined(value)
+                ? value
+                : HdrClipboardOutputMode.HdrAndSdr;
+        }
 
         public HdrOutputMode OutputMode
         {
@@ -67,7 +104,7 @@ namespace ShareX.ScreenCaptureLib
         public HdrFileFormat FileFormat
         {
             get => fileFormat;
-            set => fileFormat = Enum.IsDefined(value) ? value : HdrFileFormat.UltraHdrJpeg;
+            set => fileFormat = Enum.IsDefined(value) ? value : HdrFileFormat.HdrPng;
         }
 
         public float MasteringDisplayMaximumNits
@@ -100,6 +137,30 @@ namespace ShareX.ScreenCaptureLib
             set => gainMapQuality = Math.Clamp(value, 1, 100);
         }
 
+        public HdrFileFormat ClipboardFileFormat
+        {
+            get => clipboardFileFormat;
+            set => clipboardFileFormat = Enum.IsDefined(value) ? value : HdrFileFormat.HdrPng;
+        }
+
+        public int AvifQuality
+        {
+            get => avifQuality;
+            set => avifQuality = Math.Clamp(value, 1, 100);
+        }
+
+        public int AvifSpeed
+        {
+            get => avifSpeed;
+            set => avifSpeed = Math.Clamp(value, 0, 10);
+        }
+
+        public OpenExrExposureMode OpenExrExposureMode
+        {
+            get => openExrExposureMode;
+            set => openExrExposureMode = Enum.IsDefined(value) ? value : OpenExrExposureMode.DisplayReferenced;
+        }
+
         /// <summary>
         /// JPEG has no alpha channel. When enabled, transparent FP16 pixels are
         /// composited over black before Ultra HDR encoding; otherwise encoding is rejected.
@@ -117,8 +178,16 @@ namespace ShareX.ScreenCaptureLib
 
         public int Quality { get; init; } = 95;
         public int GainMapQuality { get; init; } = 90;
+        public int AvifQuality { get; init; } = 90;
+        public int AvifSpeed { get; init; } = 6;
 
         public bool FlattenTransparencyForUltraHdr { get; init; }
+
+        public OpenExrExposureMode OpenExrExposureMode { get; init; } =
+            OpenExrExposureMode.RawScRgb;
+
+        public float OpenExrReferenceWhiteNits { get; init; } =
+            HdrCaptureSettings.DefaultBrightnessNits;
         internal float GetValidatedMasteringDisplayMaximumNits() => Math.Clamp(
             MasteringDisplayMaximumNits,
             HdrFileOutputSettings.MinimumMasteringDisplayNits,
@@ -128,6 +197,11 @@ namespace ShareX.ScreenCaptureLib
             MasteringDisplayMinimumNits,
             0f,
             Math.Min(1f, maximumNits));
+
+        internal float GetValidatedOpenExrReferenceWhiteNits() => Math.Clamp(
+            OpenExrReferenceWhiteNits,
+            HdrFileOutputSettings.MinimumMasteringDisplayNits,
+            HdrFileOutputSettings.MaximumMasteringDisplayNits);
     }
 
     public readonly record struct HdrEncodedImageInfo(

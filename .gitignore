@@ -332,3 +332,10 @@ ASALocalRun/
 Output/
 APIKeysLocal.cs
 ResXManager.config.xml
+
+# Local HDR planning and agent instructions
+/docs/hdr/
+AGENTS.md
+*CHECKLIST*.md
+/.agents/
+/.codex/

@@ -38,6 +38,8 @@ namespace ShareX.HelpersLib
     {
         public const string FORMAT_PNG = "PNG";
         public const string FORMAT_17 = "Format17";
+        public const string FORMAT_SHAREX_HDR_IMAGE = "ShareX HDR Image";
+        public const string FORMAT_SHAREX_HDR_FILE_EXTENSION = "ShareX HDR File Extension";
 
         private const int RetryTimes = 20;
         private const int RetryDelay = 100;
@@ -126,6 +128,162 @@ namespace ShareX.HelpersLib
                 {
                     DebugHelper.WriteException(e, "Clipboard copy image failed.");
                 }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Publishes an encoded HDR image without decoding it. HDR-only mode
+        /// exposes the conventional registered format name. Combined mode
+        /// reserves conventional bitmap/PNG formats for an SDR compatibility
+        /// rendition and exposes HDR bytes under explicit MIME/ShareX formats.
+        /// Ultra HDR JPEG can remain conventional because its base JPEG is SDR.
+        /// </summary>
+        public static bool CopyHdrImage(
+            Stream hdrImage,
+            string encodedClipboardFormat,
+            string mediaType,
+            string fileExtension,
+            Image sdrFallback = null,
+            string fileName = null,
+            bool encodedImageContainsSdrFallback = false)
+        {
+            if (hdrImage == null || !hdrImage.CanRead ||
+                string.IsNullOrWhiteSpace(encodedClipboardFormat))
+            {
+                return false;
+            }
+
+            try
+            {
+                byte[] encodedBytes;
+                long originalPosition = hdrImage.CanSeek ? hdrImage.Position : 0;
+
+                try
+                {
+                    if (hdrImage.CanSeek)
+                    {
+                        hdrImage.Position = 0;
+                    }
+
+                    using var copy = new MemoryStream();
+                    hdrImage.CopyTo(copy);
+                    encodedBytes = copy.ToArray();
+                }
+                finally
+                {
+                    if (hdrImage.CanSeek)
+                    {
+                        hdrImage.Position = originalPosition;
+                    }
+                }
+
+                if (encodedBytes.Length == 0)
+                {
+                    return false;
+                }
+
+                IDataObject dataObject = new DataObject();
+                Bitmap opaqueFallback = null;
+                MemoryStream dibStream = null;
+                MemoryStream sdrPngStream = null;
+                var encodedStreams = new System.Collections.Generic.List<MemoryStream>();
+
+                try
+                {
+                    Image bitmapFallback = sdrFallback;
+                    if (sdrFallback != null && HelpersOptions.DefaultCopyImageFillBackground)
+                    {
+                        opaqueFallback = sdrFallback.CreateEmptyBitmap(PixelFormat.Format24bppRgb);
+                        using Graphics graphics = Graphics.FromImage(opaqueFallback);
+                        graphics.Clear(Color.White);
+                        graphics.DrawImage(sdrFallback, 0, 0, sdrFallback.Width, sdrFallback.Height);
+                        bitmapFallback = opaqueFallback;
+                    }
+
+                    // Ultra HDR JPEG has a normal SDR JPEG base, so applications
+                    // that only understand JPEG can still consume these bytes.
+                    if (sdrFallback == null || encodedImageContainsSdrFallback)
+                    {
+                        AddEncodedFormat(encodedClipboardFormat);
+                    }
+
+                    if (bitmapFallback != null)
+                    {
+                        dataObject.SetData(DataFormats.Bitmap, true, bitmapFallback);
+                        dibStream = new MemoryStream(ClipboardHelpersEx.ConvertToDib(bitmapFallback));
+                        dataObject.SetData(DataFormats.Dib, false, dibStream);
+
+                        // Many applications prefer the registered PNG format to
+                        // Bitmap/DIB. Give it SDR bytes in compatibility mode so
+                        // recognizing PNG cannot lead to a failed HDR decode.
+                        sdrPngStream = new MemoryStream();
+                        bitmapFallback.Save(sdrPngStream, ImageFormat.Png);
+                        sdrPngStream.Position = 0;
+                        dataObject.SetData(FORMAT_PNG, false, sdrPngStream);
+
+                        if (HelpersOptions.UseAlternativeClipboardCopyImage &&
+                            !string.IsNullOrEmpty(fileName))
+                        {
+                            string htmlFragment = GenerateHTMLFragment($"<img src=\"{fileName}\"/>");
+                            dataObject.SetData(DataFormats.Html, htmlFragment);
+                        }
+                    }
+
+                    // Keep the selected format discoverable after the standard
+                    // SDR fallbacks. PNG is the one exception because the same
+                    // registered name already carries SDR PNG in combined mode;
+                    // its HDR bytes remain available through image/png and the
+                    // explicit ShareX HDR format below.
+                    if (!(bitmapFallback != null &&
+                        string.Equals(encodedClipboardFormat, FORMAT_PNG, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        AddEncodedFormat(encodedClipboardFormat);
+                    }
+
+                    AddEncodedFormat(FORMAT_SHAREX_HDR_IMAGE);
+                    if (!string.IsNullOrWhiteSpace(mediaType) &&
+                        !string.Equals(mediaType, encodedClipboardFormat, StringComparison.OrdinalIgnoreCase))
+                    {
+                        AddEncodedFormat(mediaType);
+                    }
+
+                    var extensionStream = new MemoryStream(
+                        Encoding.UTF8.GetBytes((fileExtension ?? string.Empty).TrimStart('.')),
+                        writable: false);
+                    encodedStreams.Add(extensionStream);
+                    dataObject.SetData(FORMAT_SHAREX_HDR_FILE_EXTENSION, false, extensionStream);
+
+                    return CopyData(dataObject);
+
+                    void AddEncodedFormat(string format)
+                    {
+                        if (string.IsNullOrWhiteSpace(format) || dataObject.GetDataPresent(format, false))
+                        {
+                            return;
+                        }
+
+                        var stream = new MemoryStream(encodedBytes, writable: false);
+                        encodedStreams.Add(stream);
+                        dataObject.SetData(format, false, stream);
+                    }
+                }
+                finally
+                {
+                    foreach (MemoryStream encodedStream in encodedStreams)
+                    {
+                        encodedStream.Dispose();
+                    }
+
+                    sdrPngStream?.Dispose();
+                    dibStream?.Dispose();
+                    opaqueFallback?.Dispose();
+                }
+            }
+            catch (Exception e)
+            {
+                DebugHelper.WriteException(e, "HDR image clipboard copy failed.");
             }
 
             return false;

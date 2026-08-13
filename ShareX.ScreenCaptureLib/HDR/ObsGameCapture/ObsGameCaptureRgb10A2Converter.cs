@@ -39,9 +39,43 @@ namespace ShareX.ScreenCaptureLib
             int height,
             ObsGameCaptureRgb10A2ColorSpace colorSpace)
         {
+            return ConvertToRgba16Float(
+                source, sourceRowBytes, width, height, colorSpace, ObsGameCaptureAlphaMode.Straight);
+        }
+
+        public static HdrRgba16FloatBuffer ConvertToRgba16Float(
+            ReadOnlySpan<byte> source,
+            int sourceRowBytes,
+            int width,
+            int height,
+            ObsGameCaptureRgb10A2ColorSpace colorSpace,
+            bool allowTransparency)
+        {
+            return ConvertToRgba16Float(
+                source,
+                sourceRowBytes,
+                width,
+                height,
+                colorSpace,
+                allowTransparency ? ObsGameCaptureAlphaMode.Straight : ObsGameCaptureAlphaMode.Opaque);
+        }
+
+        public static HdrRgba16FloatBuffer ConvertToRgba16Float(
+            ReadOnlySpan<byte> source,
+            int sourceRowBytes,
+            int width,
+            int height,
+            ObsGameCaptureRgb10A2ColorSpace colorSpace,
+            ObsGameCaptureAlphaMode alphaMode)
+        {
             if (!Enum.IsDefined(colorSpace))
             {
                 throw new ArgumentOutOfRangeException(nameof(colorSpace));
+            }
+
+            if (!Enum.IsDefined(alphaMode))
+            {
+                throw new ArgumentOutOfRangeException(nameof(alphaMode));
             }
 
             if (width <= 0) throw new ArgumentOutOfRangeException(nameof(width));
@@ -73,7 +107,7 @@ namespace ShareX.ScreenCaptureLib
                 {
                     uint packed = BinaryPrimitives.ReadUInt32LittleEndian(
                         sourceRow.Slice(x * SourceBytesPerPixel, SourceBytesPerPixel));
-                    ConvertPixel(packed, colorSpace, destinationRow.Slice(
+                    ConvertPixel(packed, colorSpace, alphaMode, destinationRow.Slice(
                         x * HdrRgba16FloatBuffer.BytesPerPixel,
                         HdrRgba16FloatBuffer.BytesPerPixel));
                 }
@@ -89,6 +123,35 @@ namespace ShareX.ScreenCaptureLib
             int height,
             ObsGameCaptureRgb10A2ColorSpace colorSpace)
         {
+            return ConvertToRgba16Float(
+                source, sourceRowBytes, width, height, colorSpace, ObsGameCaptureAlphaMode.Straight);
+        }
+
+        internal static unsafe HdrRgba16FloatBuffer ConvertToRgba16Float(
+            IntPtr source,
+            int sourceRowBytes,
+            int width,
+            int height,
+            ObsGameCaptureRgb10A2ColorSpace colorSpace,
+            bool allowTransparency)
+        {
+            return ConvertToRgba16Float(
+                source,
+                sourceRowBytes,
+                width,
+                height,
+                colorSpace,
+                allowTransparency ? ObsGameCaptureAlphaMode.Straight : ObsGameCaptureAlphaMode.Opaque);
+        }
+
+        internal static unsafe HdrRgba16FloatBuffer ConvertToRgba16Float(
+            IntPtr source,
+            int sourceRowBytes,
+            int width,
+            int height,
+            ObsGameCaptureRgb10A2ColorSpace colorSpace,
+            ObsGameCaptureAlphaMode alphaMode)
+        {
             if (source == IntPtr.Zero)
             {
                 throw new ArgumentNullException(nameof(source));
@@ -100,12 +163,14 @@ namespace ShareX.ScreenCaptureLib
                 sourceRowBytes,
                 width,
                 height,
-                colorSpace);
+                colorSpace,
+                alphaMode);
         }
 
         private static void ConvertPixel(
             uint packed,
             ObsGameCaptureRgb10A2ColorSpace colorSpace,
+            ObsGameCaptureAlphaMode alphaMode,
             Span<byte> destination)
         {
             float red = (packed & 0x3ff) / 1023f;
@@ -130,10 +195,12 @@ namespace ShareX.ScreenCaptureLib
                 blue = DecodeSrgb(blue);
             }
 
-            WriteHalf(destination, 0, red * alpha);
-            WriteHalf(destination, 2, green * alpha);
-            WriteHalf(destination, 4, blue * alpha);
-            WriteHalf(destination, 6, alpha);
+            float outputAlpha = alphaMode == ObsGameCaptureAlphaMode.Opaque ? 1f : alpha;
+            float alphaMultiplier = alphaMode == ObsGameCaptureAlphaMode.Straight ? alpha : 1f;
+            WriteHalf(destination, 0, red * alphaMultiplier);
+            WriteHalf(destination, 2, green * alphaMultiplier);
+            WriteHalf(destination, 4, blue * alphaMultiplier);
+            WriteHalf(destination, 6, outputAlpha);
         }
 
         private static float DecodeSrgb(float encoded)

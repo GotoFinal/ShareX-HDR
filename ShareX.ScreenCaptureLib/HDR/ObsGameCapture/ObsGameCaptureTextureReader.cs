@@ -14,6 +14,7 @@
 
 using SharpGen.Runtime;
 using System;
+using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
@@ -37,11 +38,67 @@ namespace ShareX.ScreenCaptureLib
             return CopyRgba16FloatToOwnedBuffer(publication, (ObsGameCaptureRgb10A2ColorSpace?)rgb10A2ColorSpace);
         }
 
+        public static HdrRgba16FloatBuffer CopyRgba16FloatToOwnedBuffer(
+            ObsGameCapturePublication publication,
+            bool allowTransparency)
+        {
+            return CopyRgba16FloatToOwnedBuffer(publication, null, allowTransparency);
+        }
+
+        public static HdrRgba16FloatBuffer CopyRgba16FloatToOwnedBuffer(
+            ObsGameCapturePublication publication,
+            ObsGameCaptureAlphaMode alphaMode)
+        {
+            return CopyRgba16FloatToOwnedBuffer(publication, null, alphaMode);
+        }
+
+        public static HdrRgba16FloatBuffer CopyRgba16FloatToOwnedBuffer(
+            ObsGameCapturePublication publication,
+            ObsGameCaptureRgb10A2ColorSpace rgb10A2ColorSpace,
+            bool allowTransparency)
+        {
+            return CopyRgba16FloatToOwnedBuffer(
+                publication, (ObsGameCaptureRgb10A2ColorSpace?)rgb10A2ColorSpace, allowTransparency);
+        }
+
+        public static HdrRgba16FloatBuffer CopyRgba16FloatToOwnedBuffer(
+            ObsGameCapturePublication publication,
+            ObsGameCaptureRgb10A2ColorSpace rgb10A2ColorSpace,
+            ObsGameCaptureAlphaMode alphaMode)
+        {
+            return CopyRgba16FloatToOwnedBuffer(
+                publication, (ObsGameCaptureRgb10A2ColorSpace?)rgb10A2ColorSpace, alphaMode);
+        }
+
         private static HdrRgba16FloatBuffer CopyRgba16FloatToOwnedBuffer(
             ObsGameCapturePublication publication,
             ObsGameCaptureRgb10A2ColorSpace? rgb10A2ColorSpace)
         {
+            return CopyRgba16FloatToOwnedBuffer(publication, rgb10A2ColorSpace, allowTransparency: true);
+        }
+
+        private static HdrRgba16FloatBuffer CopyRgba16FloatToOwnedBuffer(
+            ObsGameCapturePublication publication,
+            ObsGameCaptureRgb10A2ColorSpace? rgb10A2ColorSpace,
+            bool allowTransparency)
+        {
+            return CopyRgba16FloatToOwnedBuffer(
+                publication,
+                rgb10A2ColorSpace,
+                allowTransparency ? ObsGameCaptureAlphaMode.Straight : ObsGameCaptureAlphaMode.Opaque);
+        }
+
+        private static HdrRgba16FloatBuffer CopyRgba16FloatToOwnedBuffer(
+            ObsGameCapturePublication publication,
+            ObsGameCaptureRgb10A2ColorSpace? rgb10A2ColorSpace,
+            ObsGameCaptureAlphaMode alphaMode)
+        {
             ArgumentNullException.ThrowIfNull(publication);
+
+            if (!Enum.IsDefined(alphaMode))
+            {
+                throw new ArgumentOutOfRangeException(nameof(alphaMode));
+            }
 
             ObsHookInfo info = publication.HookInfo;
 
@@ -80,7 +137,8 @@ namespace ShareX.ScreenCaptureLib
                         using (ID3D11Texture2D source = device.OpenSharedResource<ID3D11Texture2D>(
                             new IntPtr(publication.SharedTextureHandle)))
                         {
-                            return CopyToOwnedBuffer(device, context, source, info, rgb10A2ColorSpace);
+                            return CopyToOwnedBuffer(
+                                device, context, source, info, rgb10A2ColorSpace, alphaMode);
                         }
                     }
                     catch (Exception ex) when (ex is SharpGenException or COMException)
@@ -114,7 +172,8 @@ namespace ShareX.ScreenCaptureLib
             ID3D11DeviceContext context,
             ID3D11Texture2D source,
             ObsHookInfo info,
-            ObsGameCaptureRgb10A2ColorSpace? rgb10A2ColorSpace)
+            ObsGameCaptureRgb10A2ColorSpace? rgb10A2ColorSpace,
+            ObsGameCaptureAlphaMode alphaMode)
         {
             Texture2DDescription sourceDescription = source.Description;
 
@@ -151,18 +210,90 @@ namespace ShareX.ScreenCaptureLib
                 int width = checked((int)info.Width);
                 int height = checked((int)info.Height);
 
-                return sourceDescription.Format == Format.R16G16B16A16_Float
-                    ? HdrRgba16FloatBuffer.CopyFrom(mapped.DataPointer, rowPitch, width, height)
-                    : ObsGameCaptureRgb10A2Converter.ConvertToRgba16Float(
+                if (sourceDescription.Format == Format.R10G10B10A2_UNorm)
+                {
+                    return ObsGameCaptureRgb10A2Converter.ConvertToRgba16Float(
                         mapped.DataPointer,
                         rowPitch,
                         width,
                         height,
-                        rgb10A2ColorSpace.Value);
+                        rgb10A2ColorSpace.Value,
+                        alphaMode);
+                }
+
+                HdrRgba16FloatBuffer result = HdrRgba16FloatBuffer.CopyFrom(
+                    mapped.DataPointer, rowPitch, width, height);
+                NormalizeAlpha(result, alphaMode);
+                return result;
             }
             finally
             {
                 context.Unmap(staging, 0);
+            }
+        }
+
+        internal static void NormalizeStraightAlpha(
+            HdrRgba16FloatBuffer buffer,
+            bool allowTransparency)
+        {
+            NormalizeAlpha(
+                buffer,
+                allowTransparency ? ObsGameCaptureAlphaMode.Straight : ObsGameCaptureAlphaMode.Opaque);
+        }
+
+        internal static void NormalizeAlpha(
+            HdrRgba16FloatBuffer buffer,
+            ObsGameCaptureAlphaMode alphaMode)
+        {
+            ArgumentNullException.ThrowIfNull(buffer);
+
+            if (!Enum.IsDefined(alphaMode))
+            {
+                throw new ArgumentOutOfRangeException(nameof(alphaMode));
+            }
+
+            ushort opaque = BitConverter.HalfToUInt16Bits((Half)1f);
+
+            for (int y = 0; y < buffer.Height; y++)
+            {
+                Span<byte> row = buffer.GetWritableRowSpan(y);
+
+                for (int offset = 0; offset < row.Length; offset += HdrRgba16FloatBuffer.BytesPerPixel)
+                {
+                    float alpha = (float)BitConverter.UInt16BitsToHalf(
+                        BinaryPrimitives.ReadUInt16LittleEndian(row.Slice(offset + 6, 2)));
+
+                    if (alphaMode != ObsGameCaptureAlphaMode.Opaque)
+                    {
+                        alpha = Math.Clamp(alpha, 0f, 1f);
+
+                        if (alphaMode == ObsGameCaptureAlphaMode.Straight)
+                        {
+                            Premultiply(row, offset, alpha);
+                        }
+
+                        BinaryPrimitives.WriteUInt16LittleEndian(
+                            row.Slice(offset + 6, 2),
+                            BitConverter.HalfToUInt16Bits((Half)alpha));
+                    }
+                    else
+                    {
+                        BinaryPrimitives.WriteUInt16LittleEndian(row.Slice(offset + 6, 2), opaque);
+                    }
+                }
+            }
+        }
+
+        private static void Premultiply(Span<byte> row, int pixelOffset, float alpha)
+        {
+            for (int channel = 0; channel < 6; channel += 2)
+            {
+                float value = (float)BitConverter.UInt16BitsToHalf(
+                    BinaryPrimitives.ReadUInt16LittleEndian(row.Slice(pixelOffset + channel, 2)));
+                value = Math.Clamp(value * alpha, (float)Half.MinValue, (float)Half.MaxValue);
+                BinaryPrimitives.WriteUInt16LittleEndian(
+                    row.Slice(pixelOffset + channel, 2),
+                    BitConverter.HalfToUInt16Bits((Half)value));
             }
         }
     }

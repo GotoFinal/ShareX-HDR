@@ -1262,6 +1262,11 @@ namespace ShareX
                 return new HdrPngImageDecoder().IsSupportedFile(filePath);
             }
 
+            if (extension.Equals(".avif", StringComparison.OrdinalIgnoreCase))
+            {
+                return new AvifHdrImageDecoder().IsSupportedFile(filePath);
+            }
+
             return (extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
                     extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase)) &&
                 new UltraHdrJpegImageDecoder().IsSupportedFile(filePath);
@@ -1375,6 +1380,11 @@ namespace ShareX
                 return new HdrPngImageDecoder().DecodeDocumentFile(filePath);
             }
 
+            if (extension.Equals(".avif", StringComparison.OrdinalIgnoreCase))
+            {
+                return new AvifHdrImageDecoder().DecodeDocumentFile(filePath);
+            }
+
             if (extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
                 extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase))
             {
@@ -1426,7 +1436,7 @@ namespace ShareX
                 out editedDocument);
         }
 
-        private static float GetHdrAnnotationWhiteNits(HdrImageDocument document)
+        internal static float GetHdrAnnotationWhiteNits(HdrImageDocument document)
         {
             float selectedWhiteNits = 0f;
 
@@ -1501,7 +1511,7 @@ namespace ShareX
                 if (!TryGetHdrFileFormat(destinationPath, out HdrFileFormat format))
                 {
                     ShowUnsupportedHdrEditorOperation(
-                        "HDR editor output must use OpenEXR (.exr), HDR PNG (.png), or Ultra HDR JPEG (.jpg/.jpeg).");
+                        "HDR editor output must use OpenEXR (.exr), HDR PNG (.png), HDR AVIF (.avif), or Ultra HDR JPEG (.jpg/.jpeg).");
                     return null;
                 }
 
@@ -1540,7 +1550,7 @@ namespace ShareX
                 Title = "ShareX - Save HDR image as",
                 AddExtension = true,
                 OverwritePrompt = true,
-                Filter = "OpenEXR (lossless) (*.exr)|*.exr|HDR PNG (experimental) (*.png)|*.png|Ultra HDR JPEG (*.jpg;*.jpeg)|*.jpg;*.jpeg|All files (*.*)|*.*",
+                Filter = "OpenEXR (lossless) (*.exr)|*.exr|HDR PNG (experimental) (*.png)|*.png|Ultra HDR JPEG (*.jpg;*.jpeg)|*.jpg;*.jpeg|HDR AVIF (10-bit) (*.avif)|*.avif|All files (*.*)|*.*",
                 FilterIndex = GetHdrSaveFilterIndex(filePath, configuredFormat)
             };
 
@@ -1569,6 +1579,7 @@ namespace ShareX
                 HdrFileFormat.OpenExr => 1,
                 HdrFileFormat.HdrPng => 2,
                 HdrFileFormat.UltraHdrJpeg => 3,
+                HdrFileFormat.Avif => 4,
                 _ => 1
             };
         }
@@ -1587,6 +1598,9 @@ namespace ShareX
                 case ".jpeg":
                     format = HdrFileFormat.UltraHdrJpeg;
                     return true;
+                case ".avif":
+                    format = HdrFileFormat.Avif;
+                    return true;
                 default:
                     format = default;
                     return false;
@@ -1603,8 +1617,13 @@ namespace ShareX
             MasteringDisplayMinimumNits = source.MasteringDisplayMinimumNits,
             JpegQuality = source.JpegQuality,
             GainMapQuality = source.GainMapQuality,
+            AvifQuality = source.AvifQuality,
+            AvifSpeed = source.AvifSpeed,
+            OpenExrExposureMode = source.OpenExrExposureMode,
             FlattenTransparencyForUltraHdr = source.FlattenTransparencyForUltraHdr,
-            UploadWithFileUploader = source.UploadWithFileUploader
+            UploadWithFileUploader = source.UploadWithFileUploader,
+            ClipboardOutputMode = source.ClipboardOutputMode,
+            ClipboardFileFormat = source.ClipboardFileFormat
         };
 
         private static void ShowUnsupportedHdrEditorOperation(string message) =>

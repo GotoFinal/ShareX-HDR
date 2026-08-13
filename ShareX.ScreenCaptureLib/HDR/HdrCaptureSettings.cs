@@ -19,11 +19,14 @@ namespace ShareX.ScreenCaptureLib
 {
     public enum HdrToneMappingMode
     {
-        [Description("Content-aware (recommended)")]
-        ContentAware,
+        [Description("Content-aware - precise (recommended)")]
+        ContentAware = 0,
 
         [Description("Uniform (entire HDR monitor)")]
-        Uniform
+        Uniform = 1,
+
+        [Description("Content-aware - per window")]
+        PerWindow = 2
     }
 
     public enum HdrProcessingBackend
@@ -44,6 +47,17 @@ namespace ShareX.ScreenCaptureLib
         Custom
     }
 
+    public enum HdrGameWindowPromotionMode
+    {
+        [Description("Known/hooked games only")]
+        KnownGamesOnly = 0,
+
+        [Description("Automatically promote fullscreen HDR windows (recommended)")]
+        AutomaticFullscreenHdr = 1,
+
+        Disabled = 2
+    }
+
     public sealed class HdrCaptureSettings
     {
         public const float MinimumBrightnessNits = 80f;
@@ -52,8 +66,9 @@ namespace ShareX.ScreenCaptureLib
 
         private float hdrBrightnessNits = DefaultBrightnessNits;
         private HdrToneMappingMode toneMappingMode = HdrToneMappingMode.ContentAware;
-        private HdrProcessingBackend processingBackend = HdrProcessingBackend.Cpu;
+        private HdrProcessingBackend processingBackend = HdrProcessingBackend.Gpu;
         private HdrPeakBrightnessMode? peakBrightnessMode;
+        private HdrGameWindowPromotionMode gameWindowPromotionMode = HdrGameWindowPromotionMode.AutomaticFullscreenHdr;
         private ObsGameCaptureSettings obsGameCapture = new ObsGameCaptureSettings();
         private HdrFileOutputSettings fileOutput = new HdrFileOutputSettings();
 
@@ -84,13 +99,21 @@ namespace ShareX.ScreenCaptureLib
         public HdrProcessingBackend ProcessingBackend
         {
             get => processingBackend;
-            set => processingBackend = Enum.IsDefined(value) ? value : HdrProcessingBackend.Cpu;
+            set => processingBackend = Enum.IsDefined(value) ? value : HdrProcessingBackend.Gpu;
         }
 
         public HdrToneMappingMode ToneMappingMode
         {
             get => toneMappingMode;
             set => toneMappingMode = Enum.IsDefined(value) ? value : HdrToneMappingMode.ContentAware;
+        }
+
+        public HdrGameWindowPromotionMode GameWindowPromotionMode
+        {
+            get => gameWindowPromotionMode;
+            set => gameWindowPromotionMode = Enum.IsDefined(value)
+                ? value
+                : HdrGameWindowPromotionMode.AutomaticFullscreenHdr;
         }
 
         public float HdrBrightnessNits

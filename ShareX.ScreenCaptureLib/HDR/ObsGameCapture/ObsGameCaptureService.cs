@@ -42,6 +42,10 @@ namespace ShareX.ScreenCaptureLib
         string ProcessName,
         uint DxgiFormat,
         string ColorInterpretation,
+        ObsGameCaptureAlphaMode AlphaMode,
+        bool CaptureThirdPartyOverlays,
+        ObsGameCaptureFrameRate CaptureFrameRate,
+        ObsGameCaptureCursorMode CursorMode,
         TimeSpan Duration,
         string Message);
 
@@ -93,6 +97,10 @@ namespace ShareX.ScreenCaptureLib
                 return false;
             }
 
+            ObsGameCaptureEffectiveOptions effectiveOptions = settings.ResolveOptions(
+                target.ProcessName,
+                target.ProcessPath);
+
             gate.Wait();
 
             try
@@ -103,7 +111,7 @@ namespace ShareX.ScreenCaptureLib
                 if (TryCaptureOwnedSession(
                     target,
                     requestedBounds,
-                    settings,
+                    effectiveOptions,
                     stopwatch,
                     out document,
                     out attempt))
@@ -115,7 +123,7 @@ namespace ShareX.ScreenCaptureLib
 
                 if (existingHost)
                 {
-                    if (!settings.ReuseExistingHook)
+                    if (!effectiveOptions.ReuseExistingHook)
                     {
                         attempt = Failure(stopwatch,
                             "An OBS-compatible host already owns this game's hook and read-only reuse is disabled.",
@@ -141,7 +149,7 @@ namespace ShareX.ScreenCaptureLib
                             passiveSession.Publication,
                             target,
                             requestedBounds,
-                            settings,
+                            effectiveOptions,
                             out string colorInterpretation);
                         attempt = Success(
                             stopwatch,
@@ -149,6 +157,7 @@ namespace ShareX.ScreenCaptureLib
                             passiveSession.Publication,
                             ObsGameCaptureSessionSource.ReusedExistingHostReadOnly,
                             colorInterpretation,
+                            effectiveOptions,
                             "Copied an existing OBS-compatible publication read-only.");
                         return true;
                     }
@@ -166,6 +175,8 @@ namespace ShareX.ScreenCaptureLib
 
                 var options = new ObsGameCaptureBootstrapOptions
                 {
+                    CaptureOverlay = effectiveOptions.CaptureThirdPartyOverlays,
+                    FrameIntervalNanoseconds = 1_000_000_000UL / (ulong)(int)effectiveOptions.CaptureFrameRate,
                     FirstFrameTimeout = TimeSpan.FromSeconds(10),
                     HookInitializationTimeout = TimeSpan.FromSeconds(10),
                     InjectionTimeout = TimeSpan.FromSeconds(10)
@@ -185,13 +196,15 @@ namespace ShareX.ScreenCaptureLib
                         session,
                         publication,
                         DateTimeOffset.UtcNow,
-                        TimeSpan.FromSeconds(settings.SessionIdleTimeoutSeconds));
+                        TimeSpan.FromSeconds(effectiveOptions.SessionIdleTimeoutSeconds),
+                        effectiveOptions.CaptureThirdPartyOverlays,
+                        effectiveOptions.CaptureFrameRate);
                     ownedSessions[target.ProcessId] = cached;
                     document = CopyPublicationToRequestedDocument(
                         publication,
                         target,
                         requestedBounds,
-                        settings,
+                        effectiveOptions,
                         out string colorInterpretation);
                     cached.LastUsedUtc = DateTimeOffset.UtcNow;
                     attempt = Success(
@@ -202,6 +215,7 @@ namespace ShareX.ScreenCaptureLib
                             ? ObsGameCaptureSessionSource.RestartedOwnedHook
                             : ObsGameCaptureSessionSource.StartedOwnedHook,
                         colorInterpretation,
+                        effectiveOptions,
                         session.UsedExistingHook
                             ? "Restarted an inactive exact OBS hook and retained the owned session."
                             : "Started the exact installed OBS hook and retained the owned session.");
@@ -233,7 +247,7 @@ namespace ShareX.ScreenCaptureLib
         private bool TryCaptureOwnedSession(
             ObsGameCaptureTarget target,
             Rectangle requestedBounds,
-            ObsGameCaptureSettings settings,
+            ObsGameCaptureEffectiveOptions effectiveOptions,
             Stopwatch stopwatch,
             out HdrImageDocument document,
             out ObsGameCaptureAttempt attempt)
@@ -246,7 +260,10 @@ namespace ShareX.ScreenCaptureLib
                 return false;
             }
 
-            if (!cached.Matches(target))
+            if (!cached.Matches(
+                target,
+                effectiveOptions.CaptureThirdPartyOverlays,
+                effectiveOptions.CaptureFrameRate))
             {
                 RemoveOwnedSession(target.ProcessId);
                 return false;
@@ -258,16 +275,17 @@ namespace ShareX.ScreenCaptureLib
                     cached.Publication,
                     target,
                     requestedBounds,
-                    settings,
+                    effectiveOptions,
                     out string colorInterpretation);
                 cached.LastUsedUtc = DateTimeOffset.UtcNow;
-                cached.IdleTimeout = TimeSpan.FromSeconds(settings.SessionIdleTimeoutSeconds);
+                cached.IdleTimeout = TimeSpan.FromSeconds(effectiveOptions.SessionIdleTimeoutSeconds);
                 attempt = Success(
                     stopwatch,
                     target,
                     cached.Publication,
                     ObsGameCaptureSessionSource.ReusedOwnedHook,
                     colorInterpretation,
+                    effectiveOptions,
                     "Reused the ShareX-owned OBS hook publication without reinjection.");
                 return true;
             }
@@ -303,13 +321,13 @@ namespace ShareX.ScreenCaptureLib
             ObsGameCapturePublication publication,
             ObsGameCaptureTarget target,
             Rectangle requestedBounds,
-            ObsGameCaptureSettings settings,
+            ObsGameCaptureEffectiveOptions effectiveOptions,
             out string colorInterpretation)
         {
             HdrDisplayMetadata displayMetadata = GetDisplayMetadata(target.Monitor);
             ObsGameCaptureRgb10A2ColorSpace? colorSpace = ResolveColorSpace(
                 publication,
-                settings,
+                effectiveOptions.Rgb10A2Interpretation,
                 displayMetadata,
                 out colorInterpretation);
             string displayName = System.Windows.Forms.Screen.FromHandle(target.Window).DeviceName;
@@ -323,13 +341,16 @@ namespace ShareX.ScreenCaptureLib
                 displayMetadata?.MaxLuminanceNits ?? 1000f,
                 colorSpace);
 
-            using HdrImageDocument source = ObsGameCaptureDocumentFactory.CopyToOwnedDocument(publication, metadata);
+            using HdrImageDocument source = ObsGameCaptureDocumentFactory.CopyToOwnedDocument(
+                publication,
+                metadata,
+                effectiveOptions.AlphaMode);
             return ComposeToRequestedBounds(source, target.WindowBounds, requestedBounds);
         }
 
         private static ObsGameCaptureRgb10A2ColorSpace? ResolveColorSpace(
             ObsGameCapturePublication publication,
-            ObsGameCaptureSettings settings,
+            ObsGameCaptureRgb10A2Interpretation rgb10A2Interpretation,
             HdrDisplayMetadata displayMetadata,
             out string interpretation)
         {
@@ -341,7 +362,7 @@ namespace ShareX.ScreenCaptureLib
                 return null;
             }
 
-            ObsGameCaptureRgb10A2ColorSpace colorSpace = settings.Rgb10A2Interpretation switch
+            ObsGameCaptureRgb10A2ColorSpace colorSpace = rgb10A2Interpretation switch
             {
                 ObsGameCaptureRgb10A2Interpretation.Rec2100Pq => ObsGameCaptureRgb10A2ColorSpace.Rec2100Pq,
                 ObsGameCaptureRgb10A2Interpretation.Srgb => ObsGameCaptureRgb10A2ColorSpace.Srgb,
@@ -349,7 +370,7 @@ namespace ShareX.ScreenCaptureLib
                     ? ObsGameCaptureRgb10A2ColorSpace.Rec2100Pq
                     : ObsGameCaptureRgb10A2ColorSpace.Srgb
             };
-            interpretation = settings.Rgb10A2Interpretation == ObsGameCaptureRgb10A2Interpretation.Automatic
+            interpretation = rgb10A2Interpretation == ObsGameCaptureRgb10A2Interpretation.Automatic
                 ? $"Automatic -> {colorSpace} (display HDR={displayMetadata?.IsHdrActive == true})"
                 : colorSpace.ToString();
             return colorSpace;
@@ -579,6 +600,7 @@ namespace ShareX.ScreenCaptureLib
             ObsGameCapturePublication publication,
             ObsGameCaptureSessionSource source,
             string colorInterpretation,
+            ObsGameCaptureEffectiveOptions effectiveOptions,
             string message)
         {
             return new ObsGameCaptureAttempt(
@@ -588,6 +610,10 @@ namespace ShareX.ScreenCaptureLib
                 target.ProcessName,
                 publication.HookInfo.Format,
                 colorInterpretation,
+                effectiveOptions.AlphaMode,
+                effectiveOptions.CaptureThirdPartyOverlays,
+                effectiveOptions.CaptureFrameRate,
+                effectiveOptions.CursorMode,
                 stopwatch.Elapsed,
                 message);
         }
@@ -604,6 +630,10 @@ namespace ShareX.ScreenCaptureLib
                 target?.ProcessName ?? string.Empty,
                 0,
                 string.Empty,
+                ObsGameCaptureAlphaMode.Opaque,
+                false,
+                ObsGameCaptureFrameRate.Fps60,
+                ObsGameCaptureCursorMode.UseShareXSetting,
                 stopwatch.Elapsed,
                 message);
         }
@@ -648,27 +678,38 @@ namespace ShareX.ScreenCaptureLib
             public ObsGameCapturePublication Publication { get; }
             public DateTimeOffset LastUsedUtc { get; set; }
             public TimeSpan IdleTimeout { get; set; }
+            public bool CaptureThirdPartyOverlays { get; }
+            public ObsGameCaptureFrameRate CaptureFrameRate { get; }
 
             public CachedOwnedSession(
                 ObsGameCaptureTarget target,
                 ObsGameCaptureBootstrapSession session,
                 ObsGameCapturePublication publication,
                 DateTimeOffset lastUsedUtc,
-                TimeSpan idleTimeout)
+                TimeSpan idleTimeout,
+                bool captureThirdPartyOverlays,
+                ObsGameCaptureFrameRate captureFrameRate)
             {
                 Target = target;
                 Session = session;
                 Publication = publication;
                 LastUsedUtc = lastUsedUtc;
                 IdleTimeout = idleTimeout;
+                CaptureThirdPartyOverlays = captureThirdPartyOverlays;
+                CaptureFrameRate = captureFrameRate;
             }
 
-            public bool Matches(ObsGameCaptureTarget target)
+            public bool Matches(
+                ObsGameCaptureTarget target,
+                bool captureThirdPartyOverlays,
+                ObsGameCaptureFrameRate captureFrameRate)
             {
                 return Target.ProcessId == target.ProcessId &&
                     Target.ProcessStartTimeUtcTicks == target.ProcessStartTimeUtcTicks &&
                     Target.Window == target.Window &&
-                    Target.WindowBounds == target.WindowBounds;
+                    Target.WindowBounds == target.WindowBounds &&
+                    CaptureThirdPartyOverlays == captureThirdPartyOverlays &&
+                    CaptureFrameRate == captureFrameRate;
             }
 
             public bool IsTargetAlive()

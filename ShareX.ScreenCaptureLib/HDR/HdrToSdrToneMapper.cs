@@ -12,10 +12,13 @@
 
 #endregion License Information (GPL v3)
 
+using ShareX.HelpersLib;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace ShareX.ScreenCaptureLib
@@ -30,16 +33,18 @@ namespace ShareX.ScreenCaptureLib
         private const float ReferenceHdrWhiteNits = 203f;
         private const int TileSize = 16;
         private const int TileLinkRadius = 6;
-        private const int TileInfluenceFullRadius = TileLinkRadius - 2;
-        private const float TileTraversalBoundaryStrength = 0.06f;
-        private const float TileBarrierStrengthRatio = 3f;
         private const int MinimumRegionSeedTiles = 4;
         private const int BoundarySearchDistance = TileSize * 4;
         private const int UncertainBoundaryFeather = TileSize * 2;
         private const float MinimumBoundaryStrength = 0.015f;
         private const float BoundaryStrengthRatio = 4f;
         private const int SrgbLutMaximum = 65535;
+        private const int AutomaticPromotionTileSize = 16;
+        private const int AutomaticPromotionMinimumPixelsPerTile = 8;
+        private const int MaximumPromotedWindowCacheEntries = 256;
         private static readonly byte[] SrgbEncodingLut = CreateSrgbEncodingLut();
+        private static readonly ConcurrentDictionary<PromotedWindowIdentity, byte> promotedWindows =
+            new ConcurrentDictionary<PromotedWindowIdentity, byte>();
 
         public static Bitmap ToneMapRgba16Float(
             IntPtr source,
@@ -49,7 +54,8 @@ namespace ShareX.ScreenCaptureLib
             HdrCaptureSettings settings,
             float sdrWhiteNits,
             float displayMaxLuminanceNits,
-            bool preserveAlpha = false)
+            bool preserveAlpha = false,
+            IReadOnlyList<HdrWindowRegion> windowRegions = null)
         {
             ArgumentNullException.ThrowIfNull(settings);
 
@@ -91,7 +97,8 @@ namespace ShareX.ScreenCaptureLib
                         settings.ToneMappingMode,
                         sdrWhiteNits,
                         displayMaxLuminanceNits,
-                        preserveAlpha);
+                        preserveAlpha,
+                        windowRegions);
                 }
                 finally
                 {
@@ -135,7 +142,31 @@ namespace ShareX.ScreenCaptureLib
             int sourceRowPitch,
             int width,
             int height,
-            float paperWhiteScRgb)
+            float paperWhiteScRgb,
+            HdrToneMappingMode toneMappingMode = HdrToneMappingMode.ContentAware,
+            IReadOnlyList<Rectangle> windowRectangles = null)
+        {
+            IReadOnlyList<HdrWindowRegion> windowRegions = windowRectangles?
+                .Select(x => new HdrWindowRegion(x))
+                .ToArray();
+            return CreateToneMapMaskR8WithWindowRegions(
+                source,
+                sourceRowPitch,
+                width,
+                height,
+                paperWhiteScRgb,
+                toneMappingMode,
+                windowRegions);
+        }
+
+        internal static byte[] CreateToneMapMaskR8WithWindowRegions(
+            IntPtr source,
+            int sourceRowPitch,
+            int width,
+            int height,
+            float paperWhiteScRgb,
+            HdrToneMappingMode toneMappingMode,
+            IReadOnlyList<HdrWindowRegion> windowRegions)
         {
             if (source == IntPtr.Zero)
             {
@@ -147,24 +178,48 @@ namespace ShareX.ScreenCaptureLib
                 throw new ArgumentOutOfRangeException(nameof(sourceRowPitch));
             }
 
+            byte[] mask = new byte[checked(width * height)];
+            if (toneMappingMode == HdrToneMappingMode.Uniform)
+            {
+                Array.Fill(mask, byte.MaxValue);
+                return mask;
+            }
+
             HdrFrameAnalysis analysis = AnalyzeFrame(
                 (byte*)source,
                 sourceRowPitch,
                 width,
                 height,
                 paperWhiteScRgb);
-            byte[] mask = new byte[checked(width * height)];
+            nint sourceAddress = source;
+            float headroomThreshold = paperWhiteScRgb * HdrDetectionMargin;
 
             Parallel.For(0, height, y =>
             {
                 int rowOffset = y * width;
+                ushort* sourcePixel = (ushort*)((byte*)sourceAddress + y * sourceRowPitch);
 
                 for (int x = 0; x < width; x++)
                 {
-                    mask[rowOffset + x] = ToByte(analysis.GetToneMapAmount(x, y));
+                    float red = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[0]));
+                    float green = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[1]));
+                    float blue = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[2]));
+                    mask[rowOffset + x] = GetRec2020Max(red, green, blue) > headroomThreshold
+                        ? byte.MaxValue
+                        : ToByte(analysis.GetToneMapAmount(x, y));
+                    sourcePixel += 4;
                 }
             });
 
+            ApplyWindowBoundaries(
+                (byte*)source,
+                sourceRowPitch,
+                width,
+                height,
+                paperWhiteScRgb,
+                toneMappingMode,
+                windowRegions,
+                mask);
             return mask;
         }
 
@@ -180,7 +235,8 @@ namespace ShareX.ScreenCaptureLib
             HdrToneMappingMode toneMappingMode,
             float sdrWhiteNits,
             float displayMaxLuminanceNits,
-            bool preserveAlpha)
+            bool preserveAlpha,
+            IReadOnlyList<HdrWindowRegion> windowRegions)
         {
             ToneMapParameters parameters = CreateToneMapParameters(
                 configuredPeakNits,
@@ -189,15 +245,17 @@ namespace ShareX.ScreenCaptureLib
                 sdrWhiteNits,
                 displayMaxLuminanceNits);
             float paperWhiteScRgb = parameters.PaperWhiteScRgb;
-            bool useContentDetection = toneMappingMode == HdrToneMappingMode.ContentAware;
-            HdrFrameAnalysis analysis = useContentDetection
-                ? AnalyzeFrame(
-                    source,
+            bool useContentDetection = toneMappingMode != HdrToneMappingMode.Uniform;
+            byte[] toneMapMask = useContentDetection
+                ? CreateToneMapMaskR8WithWindowRegions(
+                    (IntPtr)source,
                     sourceRowPitch,
                     width,
                     height,
-                    paperWhiteScRgb)
-                : HdrFrameAnalysis.Empty;
+                    paperWhiteScRgb,
+                    toneMappingMode,
+                    windowRegions)
+                : null;
             ReferenceWhiteToneMapper toneMapper = new ReferenceWhiteToneMapper(parameters.InputMaximum);
 
             nint sourceAddress = (nint)source;
@@ -238,7 +296,9 @@ namespace ShareX.ScreenCaptureLib
                         ref blue,
                         paperWhiteScRgb,
                         toneMapper,
-                        useContentDetection ? analysis.GetToneMapAmount(x, y) : 1f);
+                        useContentDetection
+                            ? toneMapMask[y * width + x] / 255f
+                            : 1f);
 
                     destinationPixel[0] = ToSrgbByte(blue);
                     destinationPixel[1] = ToSrgbByte(green);
@@ -287,13 +347,6 @@ namespace ShareX.ScreenCaptureLib
             green /= paperWhiteScRgb;
             blue /= paperWhiteScRgb;
             float maxRgb = GetRec2020Max(red, green, blue);
-
-            // Isolated specular highlights still need roll-off, but mapping
-            // only those pixels avoids producing a visible tile-shaped patch.
-            if (maxRgb > HdrDetectionMargin)
-            {
-                toneMapAmount = 1f;
-            }
 
             if (toneMapAmount > 0f)
             {
@@ -359,7 +412,7 @@ namespace ShareX.ScreenCaptureLib
                 }
             });
 
-            List<ToneMapRegion> regions = BuildToneMapRegions(
+            return new HdrFrameAnalysis(BuildToneMapRegions(
                 source,
                 sourceRowPitch,
                 width,
@@ -367,176 +420,308 @@ namespace ShareX.ScreenCaptureLib
                 paperWhiteScRgb,
                 seedTiles,
                 tilesX,
-                tilesY);
-            if (regions.Count == 0)
-            {
-                return HdrFrameAnalysis.Empty;
-            }
-
-            float[] tileSupport = BuildToneMapTileSupport(
-                source,
-                sourceRowPitch,
-                width,
-                height,
-                paperWhiteScRgb,
-                seedTiles,
-                tilesX,
-                tilesY);
-            return new HdrFrameAnalysis(regions, tileSupport, tilesX, tilesY);
+                tilesY));
         }
 
-        private static float[] BuildToneMapTileSupport(
+        private static void ApplyWindowBoundaries(
             byte* source,
             int sourceRowPitch,
             int width,
             int height,
             float paperWhiteScRgb,
-            bool[] seedTiles,
-            int tilesX,
-            int tilesY)
+            HdrToneMappingMode toneMappingMode,
+            IReadOnlyList<HdrWindowRegion> windowRegions,
+            byte[] mask)
         {
-            bool[] barrierTiles = new bool[seedTiles.Length];
-            nint sourceAddress = (nint)source;
-
-            Parallel.For(0, tilesY, tileY =>
+            if (windowRegions == null || windowRegions.Count == 0)
             {
-                int top = tileY * TileSize;
-                int bottom = Math.Min(height, top + TileSize);
+                return;
+            }
 
-                for (int tileX = 0; tileX < tilesX; tileX++)
+            List<VisibleWindowRegion> visibleWindows = BuildVisibleWindowRegions(
+                width,
+                height,
+                windowRegions);
+            float headroomThreshold = paperWhiteScRgb * HdrDetectionMargin;
+
+            foreach (VisibleWindowRegion window in visibleWindows)
+            {
+                bool forceHdr = window.Region.PromotionKind == HdrWindowPromotionKind.ForceHdr;
+
+                if (window.Region.PromotionKind == HdrWindowPromotionKind.DetectFullscreenHdr)
                 {
-                    int left = tileX * TileSize;
-                    int right = Math.Min(width, left + TileSize);
-                    barrierTiles[tileY * tilesX + tileX] = HasStrongInternalTileBoundary(
-                        (byte*)sourceAddress,
+                    forceHdr = IsPromoted(window.Region) || HasCoherentHdrContent(
+                        source,
                         sourceRowPitch,
-                        paperWhiteScRgb,
-                        left,
-                        top,
-                        right,
-                        bottom);
+                        window.ContentRectangles,
+                        headroomThreshold);
+
+                    if (forceHdr)
+                    {
+                        RememberPromotion(window.Region);
+                    }
                 }
-            });
 
-            int[] distances = new int[seedTiles.Length];
-            Array.Fill(distances, -1);
-            Queue<int> pending = new Queue<int>();
+                if (forceHdr)
+                {
+                    // Keep title bars/non-client pixels SDR while promoting the
+                    // complete visible game client. Higher z-order windows were
+                    // already subtracted from both rectangle collections.
+                    FillMaskRectangles(mask, width, window.Rectangles, 0);
+                    FillMaskRectangles(mask, width, window.ContentRectangles, byte.MaxValue);
+                    continue;
+                }
 
-            for (int tileIndex = 0; tileIndex < seedTiles.Length; tileIndex++)
-            {
-                if (!seedTiles[tileIndex])
+                bool isHdr = HasHdrContent(
+                    source,
+                    sourceRowPitch,
+                    window.Rectangles,
+                    headroomThreshold,
+                    toneMappingMode == HdrToneMappingMode.PerWindow);
+
+                if (toneMappingMode == HdrToneMappingMode.ContentAware && isHdr)
                 {
                     continue;
                 }
 
-                distances[tileIndex] = 0;
-                if (!barrierTiles[tileIndex])
-                {
-                    pending.Enqueue(tileIndex);
-                }
+                byte value = isHdr && toneMappingMode == HdrToneMappingMode.PerWindow
+                    ? byte.MaxValue
+                    : (byte)0;
+                FillMaskRectangles(mask, width, window.Rectangles, value);
             }
-
-            while (pending.Count > 0)
-            {
-                int current = pending.Dequeue();
-                int currentDistance = distances[current];
-                if (currentDistance >= TileLinkRadius)
-                {
-                    continue;
-                }
-
-                int currentX = current % tilesX;
-                int currentY = current / tilesX;
-                TryExpand(currentX - 1, currentY);
-                TryExpand(currentX + 1, currentY);
-                TryExpand(currentX, currentY - 1);
-                TryExpand(currentX, currentY + 1);
-
-                void TryExpand(int tileX, int tileY)
-                {
-                    if (tileX < 0 || tileX >= tilesX || tileY < 0 || tileY >= tilesY)
-                    {
-                        return;
-                    }
-
-                    int neighbor = tileY * tilesX + tileX;
-                    int nextDistance = currentDistance + 1;
-                    if ((distances[neighbor] >= 0 && distances[neighbor] <= nextDistance) ||
-                        !CanTraverseTileBoundary(
-                            source,
-                            sourceRowPitch,
-                            width,
-                            height,
-                            paperWhiteScRgb,
-                            currentX,
-                            currentY,
-                            tileX,
-                            tileY))
-                    {
-                        return;
-                    }
-
-                    distances[neighbor] = nextDistance;
-
-                    // A straight, high-contrast edge inside a tile is commonly an
-                    // image/window boundary. Give that tile feathered influence,
-                    // but do not let HDR support flood through it into an SDR gap
-                    // or an occluding window whose edge is not tile-aligned.
-                    if (!barrierTiles[neighbor])
-                    {
-                        pending.Enqueue(neighbor);
-                    }
-                }
-            }
-
-            float[] support = new float[distances.Length];
-            int featherSteps = TileLinkRadius - TileInfluenceFullRadius + 1;
-            for (int index = 0; index < distances.Length; index++)
-            {
-                int distance = distances[index];
-                if (distance < 0)
-                {
-                    continue;
-                }
-
-                support[index] = distance <= TileInfluenceFullRadius
-                    ? 1f
-                    : (float)(TileLinkRadius + 1 - distance) / featherSteps;
-            }
-
-            return support;
         }
 
-        private static bool CanTraverseTileBoundary(
-            byte* source,
-            int sourceRowPitch,
+        private static List<VisibleWindowRegion> BuildVisibleWindowRegions(
             int width,
             int height,
-            float paperWhiteScRgb,
-            int firstX,
-            int firstY,
-            int secondX,
-            int secondY)
+            IReadOnlyList<HdrWindowRegion> windowRegions)
         {
-            float strength;
-            if (firstY != secondY)
+            var result = new List<VisibleWindowRegion>();
+            var uncovered = new List<Rectangle>
             {
-                int boundaryY = Math.Max(firstY, secondY) * TileSize;
-                int left = firstX * TileSize;
-                int right = Math.Min(width, left + TileSize);
-                strength = GetHorizontalTileBoundaryStrength(
-                    source, sourceRowPitch, paperWhiteScRgb, left, right, boundaryY);
-            }
-            else
+                new Rectangle(0, 0, width, height)
+            };
+            var frame = new Rectangle(0, 0, width, height);
+
+            foreach (HdrWindowRegion windowRegion in windowRegions)
             {
-                int boundaryX = Math.Max(firstX, secondX) * TileSize;
-                int top = firstY * TileSize;
-                int bottom = Math.Min(height, top + TileSize);
-                strength = GetVerticalTileBoundaryStrength(
-                    source, sourceRowPitch, paperWhiteScRgb, top, bottom, boundaryX);
+                Rectangle clippedWindow = Rectangle.Intersect(frame, windowRegion.Bounds);
+                if (clippedWindow.Width <= 0 || clippedWindow.Height <= 0)
+                {
+                    continue;
+                }
+
+                var visible = new List<Rectangle>();
+                var nextUncovered = new List<Rectangle>();
+
+                foreach (Rectangle available in uncovered)
+                {
+                    Rectangle intersection = Rectangle.Intersect(available, clippedWindow);
+                    if (intersection.Width <= 0 || intersection.Height <= 0)
+                    {
+                        nextUncovered.Add(available);
+                        continue;
+                    }
+
+                    visible.Add(intersection);
+                    SubtractRectangle(available, intersection, nextUncovered);
+                }
+
+                if (visible.Count > 0)
+                {
+                    List<Rectangle> visibleContent = visible
+                        .Select(x => Rectangle.Intersect(x, windowRegion.ContentBounds))
+                        .Where(x => x.Width > 0 && x.Height > 0)
+                        .ToList();
+                    result.Add(new VisibleWindowRegion(visible, visibleContent, windowRegion));
+                }
+
+                uncovered = nextUncovered;
+                if (uncovered.Count == 0)
+                {
+                    break;
+                }
             }
 
-            return strength < TileTraversalBoundaryStrength;
+            return result;
+        }
+
+        private static bool HasCoherentHdrContent(
+            byte* source,
+            int sourceRowPitch,
+            IReadOnlyList<Rectangle> rectangles,
+            float headroomThreshold)
+        {
+            foreach (Rectangle rectangle in rectangles)
+            {
+                for (int tileTop = rectangle.Top;
+                    tileTop < rectangle.Bottom;
+                    tileTop += AutomaticPromotionTileSize)
+                {
+                    int tileBottom = Math.Min(rectangle.Bottom, tileTop + AutomaticPromotionTileSize);
+
+                    for (int tileLeft = rectangle.Left;
+                        tileLeft < rectangle.Right;
+                        tileLeft += AutomaticPromotionTileSize)
+                    {
+                        int tileRight = Math.Min(rectangle.Right, tileLeft + AutomaticPromotionTileSize);
+                        int headroomPixels = 0;
+
+                        for (int y = tileTop; y < tileBottom; y++)
+                        {
+                            ushort* sourcePixel = (ushort*)(source + y * sourceRowPitch) + tileLeft * 4;
+
+                            for (int x = tileLeft; x < tileRight; x++)
+                            {
+                                float red = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[0]));
+                                float green = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[1]));
+                                float blue = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[2]));
+                                if (GetRec2020Max(red, green, blue) > headroomThreshold &&
+                                    ++headroomPixels >= AutomaticPromotionMinimumPixelsPerTile)
+                                {
+                                    return true;
+                                }
+
+                                sourcePixel += 4;
+                            }
+                        }
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsPromoted(HdrWindowRegion region)
+        {
+            return region.HasStableIdentity && promotedWindows.ContainsKey(
+                new PromotedWindowIdentity(
+                    region.WindowHandle,
+                    region.ProcessId,
+                    region.ProcessStartTimeUtcTicks));
+        }
+
+        private static void RememberPromotion(HdrWindowRegion region)
+        {
+            if (!region.HasStableIdentity)
+            {
+                return;
+            }
+
+            if (promotedWindows.Count >= MaximumPromotedWindowCacheEntries)
+            {
+                promotedWindows.Clear();
+            }
+
+            if (promotedWindows.TryAdd(
+                new PromotedWindowIdentity(
+                    region.WindowHandle,
+                    region.ProcessId,
+                    region.ProcessStartTimeUtcTicks),
+                0))
+            {
+                DebugHelper.WriteLine(
+                    $"HDR tone mapping | automatically promoted fullscreen window " +
+                    $"pid={region.ProcessId} hwnd=0x{region.WindowHandle:X}");
+            }
+        }
+
+        internal static void ClearWindowPromotionCacheForTests()
+        {
+            promotedWindows.Clear();
+        }
+
+        private static void SubtractRectangle(
+            Rectangle source,
+            Rectangle intersection,
+            ICollection<Rectangle> result)
+        {
+            AddIfVisible(new Rectangle(
+                source.Left,
+                source.Top,
+                source.Width,
+                intersection.Top - source.Top));
+            AddIfVisible(new Rectangle(
+                source.Left,
+                intersection.Bottom,
+                source.Width,
+                source.Bottom - intersection.Bottom));
+            AddIfVisible(new Rectangle(
+                source.Left,
+                intersection.Top,
+                intersection.Left - source.Left,
+                intersection.Height));
+            AddIfVisible(new Rectangle(
+                intersection.Right,
+                intersection.Top,
+                source.Right - intersection.Right,
+                intersection.Height));
+
+            void AddIfVisible(Rectangle rectangle)
+            {
+                if (rectangle.Width > 0 && rectangle.Height > 0)
+                {
+                    result.Add(rectangle);
+                }
+            }
+        }
+
+        private static bool HasHdrContent(
+            byte* source,
+            int sourceRowPitch,
+            IReadOnlyList<Rectangle> rectangles,
+            float headroomThreshold,
+            bool requireWindowCoverage)
+        {
+            long pixelCount = 0;
+            foreach (Rectangle rectangle in rectangles)
+            {
+                pixelCount += (long)rectangle.Width * rectangle.Height;
+            }
+
+            int requiredPixels = requireWindowCoverage
+                ? (int)Math.Min(int.MaxValue, Math.Max(2L, (pixelCount + 99L) / 100L))
+                : 2;
+            int headroomPixels = 0;
+
+            foreach (Rectangle rectangle in rectangles)
+            {
+                for (int y = rectangle.Top; y < rectangle.Bottom; y++)
+                {
+                    ushort* sourcePixel = (ushort*)(source + y * sourceRowPitch) + rectangle.Left * 4;
+
+                    for (int x = rectangle.Left; x < rectangle.Right; x++)
+                    {
+                        float red = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[0]));
+                        float green = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[1]));
+                        float blue = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[2]));
+                        if (GetRec2020Max(red, green, blue) > headroomThreshold &&
+                            ++headroomPixels >= requiredPixels)
+                        {
+                            return true;
+                        }
+
+                        sourcePixel += 4;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static void FillMaskRectangles(
+            byte[] mask,
+            int width,
+            IReadOnlyList<Rectangle> rectangles,
+            byte value)
+        {
+            foreach (Rectangle rectangle in rectangles)
+            {
+                for (int y = rectangle.Top; y < rectangle.Bottom; y++)
+                {
+                    mask.AsSpan(y * width + rectangle.Left, rectangle.Width).Fill(value);
+                }
+            }
         }
 
         private static List<ToneMapRegion> BuildToneMapRegions(
@@ -812,91 +997,6 @@ namespace ShareX.ScreenCaptureLib
             return GetMedian(differences);
         }
 
-        private static bool HasStrongInternalTileBoundary(
-            byte* source,
-            int sourceRowPitch,
-            float paperWhiteScRgb,
-            int left,
-            int top,
-            int right,
-            int bottom)
-        {
-            Span<float> strengths = stackalloc float[(TileSize - 1) * 2];
-            int count = 0;
-
-            for (int y = top + 1; y < bottom; y++)
-            {
-                strengths[count++] = GetHorizontalTileBoundaryStrength(
-                    source, sourceRowPitch, paperWhiteScRgb, left, right, y);
-            }
-
-            for (int x = left + 1; x < right; x++)
-            {
-                strengths[count++] = GetVerticalTileBoundaryStrength(
-                    source, sourceRowPitch, paperWhiteScRgb, top, bottom, x);
-            }
-
-            if (count == 0)
-            {
-                return false;
-            }
-
-            Span<float> populated = strengths.Slice(0, count);
-            populated.Sort();
-            float strongest = populated[^1];
-            float median = populated[count / 2];
-            return strongest >= TileTraversalBoundaryStrength &&
-                strongest >= Math.Max(
-                    median * TileBarrierStrengthRatio,
-                    TileTraversalBoundaryStrength);
-        }
-
-        private static float GetHorizontalTileBoundaryStrength(
-            byte* source,
-            int sourceRowPitch,
-            float paperWhiteScRgb,
-            int left,
-            int right,
-            int y)
-        {
-            ushort* previous = (ushort*)(source + (y - 1) * sourceRowPitch) + left * 4;
-            ushort* current = (ushort*)(source + y * sourceRowPitch) + left * 4;
-            float total = 0f;
-            int count = 0;
-
-            for (int x = left; x < right; x += 2)
-            {
-                total += GetPixelDifference(previous, current) / paperWhiteScRgb;
-                count++;
-                previous += 8;
-                current += 8;
-            }
-
-            return count > 0 ? total / count : 0f;
-        }
-
-        private static float GetVerticalTileBoundaryStrength(
-            byte* source,
-            int sourceRowPitch,
-            float paperWhiteScRgb,
-            int top,
-            int bottom,
-            int x)
-        {
-            float total = 0f;
-            int count = 0;
-
-            for (int y = top; y < bottom; y += 2)
-            {
-                ushort* previous = (ushort*)(source + y * sourceRowPitch) + (x - 1) * 4;
-                ushort* current = previous + 4;
-                total += GetPixelDifference(previous, current) / paperWhiteScRgb;
-                count++;
-            }
-
-            return count > 0 ? total / count : 0f;
-        }
-
         private static float GetMedian(List<float> values)
         {
             if (values.Count == 0)
@@ -994,20 +1094,10 @@ namespace ShareX.ScreenCaptureLib
             public static HdrFrameAnalysis Empty { get; } = new HdrFrameAnalysis(new List<ToneMapRegion>());
 
             private readonly List<ToneMapRegion> regions;
-            private readonly float[] tileSupport;
-            private readonly int tilesX;
-            private readonly int tilesY;
 
-            public HdrFrameAnalysis(
-                List<ToneMapRegion> regions,
-                float[] tileSupport = null,
-                int tilesX = 0,
-                int tilesY = 0)
+            public HdrFrameAnalysis(List<ToneMapRegion> regions)
             {
                 this.regions = regions;
-                this.tileSupport = tileSupport;
-                this.tilesX = tilesX;
-                this.tilesY = tilesY;
             }
 
             public float GetToneMapAmount(int x, int y)
@@ -1024,38 +1114,31 @@ namespace ShareX.ScreenCaptureLib
                     }
                 }
 
-                return amount > 0f ? amount * GetTileSupport(x, y) : 0f;
-            }
-
-            private float GetTileSupport(int x, int y)
-            {
-                if (tileSupport == null || tileSupport.Length == 0 || tilesX <= 0 || tilesY <= 0)
-                {
-                    return 1f;
-                }
-
-                float gridX = (x + 0.5f) / TileSize - 0.5f;
-                float gridY = (y + 0.5f) / TileSize - 0.5f;
-                int left = (int)MathF.Floor(gridX);
-                int top = (int)MathF.Floor(gridY);
-                float horizontal = gridX - left;
-                float vertical = gridY - top;
-                float topLeft = SampleTileSupport(left, top);
-                float topRight = SampleTileSupport(left + 1, top);
-                float bottomLeft = SampleTileSupport(left, top + 1);
-                float bottomRight = SampleTileSupport(left + 1, top + 1);
-                float topValue = topLeft + (topRight - topLeft) * horizontal;
-                float bottomValue = bottomLeft + (bottomRight - bottomLeft) * horizontal;
-                return Math.Clamp(topValue + (bottomValue - topValue) * vertical, 0f, 1f);
-            }
-
-            private float SampleTileSupport(int x, int y)
-            {
-                x = Math.Clamp(x, 0, tilesX - 1);
-                y = Math.Clamp(y, 0, tilesY - 1);
-                return tileSupport[y * tilesX + x];
+                return amount;
             }
         }
+
+        private sealed class VisibleWindowRegion
+        {
+            public IReadOnlyList<Rectangle> Rectangles { get; }
+            public IReadOnlyList<Rectangle> ContentRectangles { get; }
+            public HdrWindowRegion Region { get; }
+
+            public VisibleWindowRegion(
+                IReadOnlyList<Rectangle> rectangles,
+                IReadOnlyList<Rectangle> contentRectangles,
+                HdrWindowRegion region)
+            {
+                Rectangles = rectangles;
+                ContentRectangles = contentRectangles;
+                Region = region;
+            }
+        }
+
+        private readonly record struct PromotedWindowIdentity(
+            long WindowHandle,
+            int ProcessId,
+            long ProcessStartTimeUtcTicks);
 
         private readonly struct BoundaryResult
         {

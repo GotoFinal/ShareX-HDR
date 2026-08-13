@@ -34,6 +34,25 @@ public class HdrEncoderCapabilitiesTests
     }
 
     [Fact]
+    public void AvifAvailability_MatchesPackagedProcessArchitecture()
+    {
+        bool available = HdrEncoderCapabilities.TryGetAvailability(
+            HdrFileFormat.Avif,
+            out string? reason);
+
+        if (OperatingSystem.IsWindows() && RuntimeInformation.ProcessArchitecture == Architecture.X64)
+        {
+            Assert.True(available, reason);
+            Assert.Null(reason);
+        }
+        else
+        {
+            Assert.False(available);
+            Assert.False(string.IsNullOrWhiteSpace(reason));
+        }
+    }
+
+    [Fact]
     public void UnknownEncoder_IsUnavailableWithReason()
     {
         Assert.False(HdrEncoderCapabilities.TryGetAvailability((HdrFileFormat)int.MaxValue, out string? reason));

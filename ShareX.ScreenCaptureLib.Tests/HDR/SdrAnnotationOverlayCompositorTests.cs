@@ -1,5 +1,7 @@
 using ShareX.ScreenCaptureLib;
 using System.Buffers.Binary;
+using System.Drawing;
+using System.Drawing.Imaging;
 
 namespace ShareX.ScreenCaptureLib.Tests.HDR;
 
@@ -87,6 +89,42 @@ public class SdrAnnotationOverlayCompositorTests
         Assert.Equal(0f, ReadHalf(destination, 8));
     }
 
+    [Fact]
+    public void BitmapOverlay_PreservesHdrOutsideRegionDrawingAndPngEncoding()
+    {
+        byte[] pixels = new byte[16];
+        WriteOpaquePixel(pixels, 0, 8f, 4f, 2f);
+        WriteOpaquePixel(pixels, 8, 8f, 4f, 2f);
+
+        using var document = new HdrImageDocument(
+            new Rectangle(0, 0, 2, 1),
+            HdrRgba16FloatBuffer.CopyFrom(pixels, 16, 2, 1),
+            Array.Empty<HdrCaptureSourceSegment>());
+        using var overlay = new Bitmap(2, 1, PixelFormat.Format32bppPArgb);
+        overlay.SetPixel(1, 0, Color.White);
+
+        document.CompositeSdrAnnotationOverlay(overlay, 203f);
+
+        ReadOnlySpan<byte> result = document.MasterPixels.GetRowSpan(0);
+        Assert.Equal(8f, ReadHalf(result, 0));
+        Assert.Equal(4f, ReadHalf(result, 2));
+        Assert.Equal(2f, ReadHalf(result, 4));
+
+        float annotationWhite = 203f / 80f;
+        AssertClose(ReadHalf(result, 8), annotationWhite, 0.002f);
+        AssertClose(ReadHalf(result, 10), annotationWhite, 0.002f);
+        AssertClose(ReadHalf(result, 12), annotationWhite, 0.002f);
+
+        using var encoded = new MemoryStream();
+        new HdrPngImageEncoder().Encode(document.MasterPixels, encoded);
+        Assert.True(HdrEncodedImageVerifier.Verify(encoded, HdrFileFormat.HdrPng, 2, 1));
+
+        using HdrRgba16FloatBuffer decoded = new HdrPngImageDecoder().Decode(encoded);
+        ReadOnlySpan<byte> decodedResult = decoded.GetRowSpan(0);
+        Assert.InRange(ReadHalf(decodedResult, 0), 7.9f, 8.1f);
+        Assert.InRange(ReadHalf(decodedResult, 8), annotationWhite - 0.01f, annotationWhite + 0.01f);
+    }
+
     private static byte[] CreateOpaqueGrayDestination(float value)
     {
         byte[] destination = new byte[8];
@@ -102,6 +140,19 @@ public class SdrAnnotationOverlayCompositorTests
         BinaryPrimitives.WriteUInt16LittleEndian(
             bytes.Slice(offset, 2),
             BitConverter.HalfToUInt16Bits((Half)value));
+    }
+
+    private static void WriteOpaquePixel(
+        Span<byte> bytes,
+        int offset,
+        float red,
+        float green,
+        float blue)
+    {
+        WriteHalf(bytes, offset, red);
+        WriteHalf(bytes, offset + 2, green);
+        WriteHalf(bytes, offset + 4, blue);
+        WriteHalf(bytes, offset + 6, 1f);
     }
 
     private static float ReadHalf(ReadOnlySpan<byte> bytes, int offset)

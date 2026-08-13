@@ -109,7 +109,8 @@ namespace ShareX.ScreenCaptureLib
                 bool validScreenWindowCenter = false;
                 bool validScreenWindowWidth = false;
                 bool validChromaticities = false;
-                bool validWhiteLuminance = false;
+                float whiteLuminance = 0f;
+                float? encodedRgbScale = null;
                 bool foundDataWindow = false;
                 bool foundDisplayWindow = false;
                 bool headerTerminated = false;
@@ -167,7 +168,8 @@ namespace ShareX.ScreenCaptureLib
                             break;
                         case "screenWindowWidth" when type == "float": validScreenWindowWidth = HasSingleFloatBits(value, 1f); break;
                         case "chromaticities" when type == "chromaticities": validChromaticities = ValidateRec709Chromaticities(value); break;
-                        case "whiteLuminance" when type == "float": validWhiteLuminance = HasSingleFloatBits(value, HdrRgba16FloatBuffer.ReferenceWhiteNits); break;
+                        case "whiteLuminance" when type == "float": TryReadSingleFloat(value, out whiteLuminance); break;
+                        case "shareXScRgbScale" when type == "float" && TryReadSingleFloat(value, out float scale): encodedRgbScale = scale; break;
                     }
                 }
 
@@ -175,7 +177,8 @@ namespace ShareX.ScreenCaptureLib
                 long offsetTableBytes = checked((long)height * sizeof(long));
                 return headerTerminated && validChannels && validCompression && validLineOrder &&
                     validPixelAspectRatio && validScreenWindowCenter && validScreenWindowWidth &&
-                    validChromaticities && validWhiteLuminance && foundDataWindow && foundDisplayWindow &&
+                    validChromaticities &&
+                    TryGetScRgbDecodeScale(whiteLuminance, encodedRgbScale, out _) && foundDataWindow && foundDisplayWindow &&
                     width == displayWidth && height == displayHeight &&
                     pixelBytes > 0 && pixelBytes <= MaximumDecodedPixelBytes && pixelBytes <= int.MaxValue &&
                     offsetTableBytes <= source.Length - source.Position;
@@ -296,7 +299,8 @@ namespace ShareX.ScreenCaptureLib
             bool validScreenWindowCenter = false;
             bool validScreenWindowWidth = false;
             bool validChromaticities = false;
-            bool validWhiteLuminance = false;
+            float whiteLuminance = 0f;
+            float? encodedRgbScale = null;
             bool foundDataWindow = false;
             bool foundDisplayWindow = false;
             int width = 0;
@@ -374,14 +378,18 @@ namespace ShareX.ScreenCaptureLib
                         validChromaticities = ValidateRec709Chromaticities(value);
                         break;
                     case "whiteLuminance" when type == "float":
-                        validWhiteLuminance = HasSingleFloatBits(value, HdrRgba16FloatBuffer.ReferenceWhiteNits);
+                        TryReadSingleFloat(value, out whiteLuminance);
+                        break;
+                    case "shareXScRgbScale" when type == "float" && TryReadSingleFloat(value, out float scale):
+                        encodedRgbScale = scale;
                         break;
                 }
             }
 
             if (!validChannels || !validCompression || !validLineOrder ||
                 !validPixelAspectRatio || !validScreenWindowCenter || !validScreenWindowWidth ||
-                !validChromaticities || !validWhiteLuminance ||
+                !validChromaticities ||
+                !TryGetScRgbDecodeScale(whiteLuminance, encodedRgbScale, out float rgbDecodeScale) ||
                 !foundDataWindow || !foundDisplayWindow ||
                 width != displayWidth || height != displayHeight)
             {
@@ -429,6 +437,11 @@ namespace ShareX.ScreenCaptureLib
                         for (int x = 0; x < width; x++)
                         {
                             ushort sample = SanitizeHalfBits(reader.ReadUInt16());
+                            if (destinationChannelOffset != 6 && rgbDecodeScale != 1f)
+                            {
+                                sample = ScaleHalfBits(sample, rgbDecodeScale);
+                            }
+
                             BinaryPrimitives.WriteUInt16LittleEndian(
                                 destinationRow.Slice(
                                     x * HdrRgba16FloatBuffer.BytesPerPixel + destinationChannelOffset,
@@ -523,6 +536,46 @@ namespace ShareX.ScreenCaptureLib
         private static bool HasSingleFloatBits(ReadOnlySpan<byte> value, float expected) =>
             value.Length == sizeof(float) &&
             BinaryPrimitives.ReadInt32LittleEndian(value) == BitConverter.SingleToInt32Bits(expected);
+
+        private static bool TryReadSingleFloat(ReadOnlySpan<byte> value, out float result)
+        {
+            result = value.Length == sizeof(float)
+                ? BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(value))
+                : 0f;
+            return value.Length == sizeof(float) && float.IsFinite(result);
+        }
+
+        private static bool TryGetScRgbDecodeScale(
+            float whiteLuminance,
+            float? encodedRgbScale,
+            out float decodeScale)
+        {
+            decodeScale = 0f;
+            if (whiteLuminance == HdrRgba16FloatBuffer.ReferenceWhiteNits && encodedRgbScale == null)
+            {
+                decodeScale = 1f;
+                return true;
+            }
+
+            if (!float.IsFinite(whiteLuminance) ||
+                whiteLuminance < HdrFileOutputSettings.MinimumMasteringDisplayNits ||
+                whiteLuminance > HdrFileOutputSettings.MaximumMasteringDisplayNits ||
+                encodedRgbScale is not float scale || !float.IsFinite(scale) || scale <= 0f ||
+                Math.Abs(whiteLuminance * scale - HdrRgba16FloatBuffer.ReferenceWhiteNits) > 0.01f)
+            {
+                return false;
+            }
+
+            decodeScale = 1f / scale;
+            return float.IsFinite(decodeScale);
+        }
+
+        private static ushort ScaleHalfBits(ushort bits, float scale)
+        {
+            float value = (float)BitConverter.UInt16BitsToHalf(bits) * scale;
+            value = Math.Clamp(value, -65504f, 65504f);
+            return BitConverter.HalfToUInt16Bits((Half)value);
+        }
 
         private static ushort SanitizeHalfBits(ushort bits)
         {

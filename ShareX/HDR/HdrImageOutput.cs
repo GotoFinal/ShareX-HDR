@@ -27,25 +27,45 @@ namespace ShareX
             ArgumentNullException.ThrowIfNull(document);
             settings ??= new HdrFileOutputSettings();
             HdrEncoderCapabilities.EnsureAvailable(settings.FileFormat);
+            return Encode(document, settings, CreateEncoder(settings.FileFormat));
+        }
 
-            IHdrImageEncoder encoder = settings.FileFormat switch
+        public static ImageData EncodeClipboard(
+            HdrImageDocument document,
+            HdrFileOutputSettings settings)
+        {
+            ArgumentNullException.ThrowIfNull(document);
+            settings ??= new HdrFileOutputSettings();
+            HdrEncoderCapabilities.EnsureAvailable(settings.ClipboardFileFormat);
+            return Encode(document, settings, CreateEncoder(settings.ClipboardFileFormat));
+        }
+
+        private static IHdrImageEncoder CreateEncoder(HdrFileFormat format) =>
+            format switch
             {
                 HdrFileFormat.UltraHdrJpeg => new UltraHdrJpegImageEncoder(),
                 HdrFileFormat.OpenExr => new OpenExrHdrImageEncoder(),
                 HdrFileFormat.HdrPng => new HdrPngImageEncoder(),
-                _ => throw new ArgumentOutOfRangeException(
-                    nameof(settings),
-                    settings.FileFormat,
-                    "Unsupported HDR image format.")
+                HdrFileFormat.Avif => new AvifHdrImageEncoder(),
+                _ => throw new ArgumentOutOfRangeException(nameof(format), format, "Unsupported HDR image format.")
             };
 
+        private static ImageData Encode(
+            HdrImageDocument document,
+            HdrFileOutputSettings settings,
+            IHdrImageEncoder encoder)
+        {
             HdrImageEncodingOptions options = new HdrImageEncodingOptions
             {
                 MasteringDisplayMaximumNits = settings.MasteringDisplayMaximumNits,
                 MasteringDisplayMinimumNits = settings.MasteringDisplayMinimumNits,
                 Quality = settings.JpegQuality,
                 GainMapQuality = settings.GainMapQuality,
-                FlattenTransparencyForUltraHdr = settings.FlattenTransparencyForUltraHdr
+                AvifQuality = settings.AvifQuality,
+                AvifSpeed = settings.AvifSpeed,
+                FlattenTransparencyForUltraHdr = settings.FlattenTransparencyForUltraHdr,
+                OpenExrExposureMode = settings.OpenExrExposureMode,
+                OpenExrReferenceWhiteNits = TaskHelpers.GetHdrAnnotationWhiteNits(document)
             };
 
             MemoryStream stream = new MemoryStream();
@@ -82,6 +102,7 @@ namespace ShareX
             {
                 HdrFileFormat.UltraHdrJpeg => HelpersLib.EImageFormat.JPEG,
                 HdrFileFormat.HdrPng => HelpersLib.EImageFormat.PNG,
+                HdrFileFormat.Avif => HelpersLib.EImageFormat.PNG,
                 _ => HelpersLib.EImageFormat.PNG
             };
     }

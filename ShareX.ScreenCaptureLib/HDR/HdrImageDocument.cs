@@ -300,6 +300,7 @@ namespace ShareX.ScreenCaptureLib
 
         private HdrRgba16FloatBuffer masterPixels;
         private readonly List<HdrCaptureSourceSegment> sourceSegments;
+        private readonly List<HdrWindowRegion> windowRegions;
 
         private enum OrthogonalTransform
         {
@@ -317,25 +318,40 @@ namespace ShareX.ScreenCaptureLib
         public HdrRgba16FloatBuffer MasterPixels => masterPixels ??
             throw new ObjectDisposedException(nameof(HdrImageDocument));
         public IReadOnlyList<HdrCaptureSourceSegment> SourceSegments => sourceSegments;
+        internal IReadOnlyList<HdrWindowRegion> WindowRegions => windowRegions;
 
         internal HdrImageDocument(
             Rectangle requestedBounds,
             HdrRgba16FloatBuffer masterPixels,
-            IEnumerable<HdrCaptureSourceSegment> sourceSegments)
+            IEnumerable<HdrCaptureSourceSegment> sourceSegments,
+            IEnumerable<HdrWindowRegion> windowRegions = null)
         {
             RequestedBounds = requestedBounds;
             this.masterPixels = masterPixels ?? throw new ArgumentNullException(nameof(masterPixels));
             this.sourceSegments = new List<HdrCaptureSourceSegment>(
                 sourceSegments ?? throw new ArgumentNullException(nameof(sourceSegments)));
+            this.windowRegions = windowRegions != null
+                ? new List<HdrWindowRegion>(windowRegions)
+                : new List<HdrWindowRegion>();
             CaptureTimestamp = DateTimeOffset.UtcNow;
         }
 
         public HdrImageDocument Clone()
         {
-            var clone = new HdrImageDocument(RequestedBounds, MasterPixels.Clone(), sourceSegments);
+            var clone = new HdrImageDocument(
+                RequestedBounds,
+                MasterPixels.Clone(),
+                sourceSegments,
+                windowRegions);
             clone.CaptureTimestamp = CaptureTimestamp;
             clone.Revision = Revision;
             return clone;
+        }
+
+        internal void CaptureWindowRegions(HdrCaptureSettings settings = null)
+        {
+            windowRegions.Clear();
+            windowRegions.AddRange(HdrWindowRegion.Capture(RequestedBounds, settings));
         }
 
         public HdrImageDocument CropToScreenRectangle(Rectangle screenRectangle)
@@ -383,10 +399,12 @@ namespace ShareX.ScreenCaptureLib
                     }
                 }
 
+                List<HdrWindowRegion> croppedWindowRegions = CropWindowRegions(sourceRectangle);
                 var croppedDocument = new HdrImageDocument(
                     croppedBounds,
                     croppedPixels,
-                    croppedSegments);
+                    croppedSegments,
+                    croppedWindowRegions);
                 croppedDocument.CaptureTimestamp = CaptureTimestamp;
                 croppedDocument.Revision = checked(Revision + 1);
                 return croppedDocument;
@@ -396,6 +414,38 @@ namespace ShareX.ScreenCaptureLib
                 croppedPixels.Dispose();
                 throw;
             }
+        }
+
+        private List<HdrWindowRegion> CropWindowRegions(Rectangle sourceRectangle)
+        {
+            var result = new List<HdrWindowRegion>();
+
+            foreach (HdrWindowRegion windowRegion in windowRegions)
+            {
+                Rectangle intersection = Rectangle.Intersect(
+                    windowRegion.Bounds,
+                    sourceRectangle);
+                if (intersection.Width <= 0 || intersection.Height <= 0)
+                {
+                    continue;
+                }
+
+                intersection.Offset(-sourceRectangle.X, -sourceRectangle.Y);
+                Rectangle contentIntersection = Rectangle.Intersect(
+                    windowRegion.ContentBounds,
+                    sourceRectangle);
+                if (contentIntersection.Width > 0 && contentIntersection.Height > 0)
+                {
+                    contentIntersection.Offset(-sourceRectangle.X, -sourceRectangle.Y);
+                }
+                else
+                {
+                    contentIntersection = Rectangle.Empty;
+                }
+                result.Add(windowRegion.WithBounds(intersection, contentIntersection));
+            }
+
+            return result;
         }
 
         public HdrImageDocument CropToLocalRectangle(Rectangle localRectangle)
@@ -1842,7 +1892,7 @@ namespace ShareX.ScreenCaptureLib
             }
         }
 
-        private static unsafe void RenderSdrSegment(
+        private unsafe void RenderSdrSegment(
             Graphics graphics,
             byte* sourceBase,
             HdrRgba16FloatBuffer pixels,
@@ -1853,6 +1903,7 @@ namespace ShareX.ScreenCaptureLib
             IntPtr segmentSource = (IntPtr)(sourceBase +
                 rectangle.Y * pixels.RowBytes +
                 rectangle.X * HdrRgba16FloatBuffer.BytesPerPixel);
+            IReadOnlyList<HdrWindowRegion> segmentWindowRegions = GetSegmentWindowRegions(rectangle);
 
             using Bitmap segmentPreview = HdrToSdrToneMapper.ToneMapRgba16Float(
                 segmentSource,
@@ -1862,8 +1913,41 @@ namespace ShareX.ScreenCaptureLib
                 settings,
                 segment.SdrWhiteNits,
                 segment.DisplayPeakNits,
-                preserveAlpha: true);
+                preserveAlpha: true,
+                windowRegions: segmentWindowRegions);
             graphics.DrawImageUnscaled(segmentPreview, rectangle.Location);
+        }
+
+        private IReadOnlyList<HdrWindowRegion> GetSegmentWindowRegions(Rectangle segmentRectangle)
+        {
+            var result = new List<HdrWindowRegion>();
+
+            foreach (HdrWindowRegion windowRegion in windowRegions)
+            {
+                Rectangle intersection = Rectangle.Intersect(
+                    windowRegion.Bounds,
+                    segmentRectangle);
+                if (intersection.Width <= 0 || intersection.Height <= 0)
+                {
+                    continue;
+                }
+
+                Rectangle contentIntersection = Rectangle.Intersect(
+                    windowRegion.ContentBounds,
+                    segmentRectangle);
+                intersection.Offset(-segmentRectangle.X, -segmentRectangle.Y);
+                if (contentIntersection.Width > 0 && contentIntersection.Height > 0)
+                {
+                    contentIntersection.Offset(-segmentRectangle.X, -segmentRectangle.Y);
+                }
+                else
+                {
+                    contentIntersection = Rectangle.Empty;
+                }
+                result.Add(windowRegion.WithBounds(intersection, contentIntersection));
+            }
+
+            return result;
         }
 
         /// <summary>
@@ -1983,6 +2067,63 @@ namespace ShareX.ScreenCaptureLib
                 pixels.Height,
                 annotationWhiteNits);
             Revision++;
+        }
+
+        public unsafe void CompositeSdrAnnotationOverlay(
+            Bitmap overlay,
+            float annotationWhiteNits)
+        {
+            ArgumentNullException.ThrowIfNull(overlay);
+
+            if (overlay.Width != MasterPixels.Width || overlay.Height != MasterPixels.Height)
+            {
+                throw new ArgumentException(
+                    "The annotation overlay dimensions must match the HDR document.",
+                    nameof(overlay));
+            }
+
+            Bitmap convertedOverlay = null;
+            Bitmap readableOverlay = overlay;
+            if (overlay.PixelFormat != PixelFormat.Format32bppPArgb)
+            {
+                convertedOverlay = new Bitmap(overlay.Width, overlay.Height, PixelFormat.Format32bppPArgb);
+                using (Graphics graphics = Graphics.FromImage(convertedOverlay))
+                {
+                    graphics.DrawImageUnscaled(overlay, Point.Empty);
+                }
+
+                readableOverlay = convertedOverlay;
+            }
+
+            BitmapData bitmapData = null;
+            try
+            {
+                bitmapData = readableOverlay.LockBits(
+                    new Rectangle(0, 0, readableOverlay.Width, readableOverlay.Height),
+                    ImageLockMode.ReadOnly,
+                    PixelFormat.Format32bppPArgb);
+
+                if (bitmapData.Stride <= 0)
+                {
+                    throw new InvalidOperationException("The annotation overlay has an unsupported row layout.");
+                }
+
+                int byteLength = checked(
+                    (readableOverlay.Height - 1) * bitmapData.Stride + readableOverlay.Width * 4);
+                CompositeSdrAnnotationOverlay(
+                    new ReadOnlySpan<byte>(bitmapData.Scan0.ToPointer(), byteLength),
+                    bitmapData.Stride,
+                    annotationWhiteNits);
+            }
+            finally
+            {
+                if (bitmapData != null)
+                {
+                    readableOverlay.UnlockBits(bitmapData);
+                }
+
+                convertedOverlay?.Dispose();
+            }
         }
 
         public void CompositeSdrAsset(

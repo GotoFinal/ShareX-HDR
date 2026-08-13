@@ -21,6 +21,7 @@ namespace ShareX.ScreenCaptureLib
     public static class HdrEncoderCapabilities
     {
         private const string UltraHdrLibraryFileName = "ShareX.UltraHdr.dll";
+        private const string AvifLibraryFileName = "ShareX.Avif.dll";
 
         private static readonly string[] UltraHdrRequiredExports =
         [
@@ -28,6 +29,14 @@ namespace ShareX.ScreenCaptureLib
             "sharex_uhdr_decode_rgba16f",
             "sharex_uhdr_is_image",
             "sharex_uhdr_free"
+        ];
+
+        private static readonly string[] AvifRequiredExports =
+        [
+            "sharex_avif_encode_rgba10",
+            "sharex_avif_decode_rgba10",
+            "sharex_avif_probe_hdr",
+            "sharex_avif_free"
         ];
 
         public static bool TryGetAvailability(HdrFileFormat format, out string unavailableReason)
@@ -41,6 +50,8 @@ namespace ShareX.ScreenCaptureLib
                     return true;
                 case HdrFileFormat.UltraHdrJpeg:
                     return TryGetUltraHdrAvailability(out unavailableReason);
+                case HdrFileFormat.Avif:
+                    return TryGetAvifAvailability(out unavailableReason);
                 default:
                     unavailableReason = $"Unknown HDR file format: {format}.";
                     return false;
@@ -57,25 +68,50 @@ namespace ShareX.ScreenCaptureLib
 
         private static bool TryGetUltraHdrAvailability(out string unavailableReason)
         {
+            return TryGetNativeAvailability(
+                "Ultra HDR JPEG",
+                UltraHdrLibraryFileName,
+                UltraHdrRequiredExports,
+                "Use OpenEXR or HDR PNG on this architecture.",
+                out unavailableReason);
+        }
+
+        private static bool TryGetAvifAvailability(out string unavailableReason)
+        {
+            return TryGetNativeAvailability(
+                "HDR AVIF",
+                AvifLibraryFileName,
+                AvifRequiredExports,
+                "Use OpenEXR or HDR PNG on this architecture.",
+                out unavailableReason);
+        }
+
+        private static bool TryGetNativeAvailability(
+            string featureName,
+            string libraryFileName,
+            string[] requiredExports,
+            string architectureAlternative,
+            out string unavailableReason)
+        {
             if (!OperatingSystem.IsWindows())
             {
-                unavailableReason = "Ultra HDR JPEG support is currently available only on Windows x64.";
+                unavailableReason = $"{featureName} support is currently available only on Windows x64.";
                 return false;
             }
 
             if (RuntimeInformation.ProcessArchitecture != Architecture.X64)
             {
                 unavailableReason =
-                    $"Ultra HDR JPEG support requires an x64 process; ShareX is running as " +
-                    $"{RuntimeInformation.ProcessArchitecture}. Use OpenEXR or HDR PNG on this architecture.";
+                    $"{featureName} support requires an x64 process; ShareX is running as " +
+                    $"{RuntimeInformation.ProcessArchitecture}. {architectureAlternative}";
                 return false;
             }
 
-            string libraryPath = Path.Combine(AppContext.BaseDirectory, UltraHdrLibraryFileName);
+            string libraryPath = Path.Combine(AppContext.BaseDirectory, libraryFileName);
             if (!File.Exists(libraryPath))
             {
                 unavailableReason =
-                    $"Ultra HDR JPEG support is unavailable because {UltraHdrLibraryFileName} is missing " +
+                    $"{featureName} support is unavailable because {libraryFileName} is missing " +
                     "from the ShareX application directory.";
                 return false;
             }
@@ -87,17 +123,17 @@ namespace ShareX.ScreenCaptureLib
                 if (!NativeLibrary.TryLoad(libraryPath, out libraryHandle) || libraryHandle == IntPtr.Zero)
                 {
                     unavailableReason =
-                        $"Ultra HDR JPEG support is unavailable because {UltraHdrLibraryFileName} " +
+                        $"{featureName} support is unavailable because {libraryFileName} " +
                         "or one of its dependencies could not be loaded.";
                     return false;
                 }
 
-                foreach (string exportName in UltraHdrRequiredExports)
+                foreach (string exportName in requiredExports)
                 {
                     if (!NativeLibrary.TryGetExport(libraryHandle, exportName, out _))
                     {
                         unavailableReason =
-                            $"Ultra HDR JPEG support is unavailable because {UltraHdrLibraryFileName} " +
+                            $"{featureName} support is unavailable because {libraryFileName} " +
                             $"does not provide the required {exportName} entry point.";
                         return false;
                     }
@@ -109,7 +145,7 @@ namespace ShareX.ScreenCaptureLib
             catch (Exception e) when (e is DllNotFoundException or BadImageFormatException or FileLoadException)
             {
                 unavailableReason =
-                    $"Ultra HDR JPEG support is unavailable because {UltraHdrLibraryFileName} " +
+                    $"{featureName} support is unavailable because {libraryFileName} " +
                     $"could not be loaded: {e.Message}";
                 return false;
             }

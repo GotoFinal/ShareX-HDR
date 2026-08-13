@@ -93,6 +93,28 @@ public class HdrEncodedImageVerifierTests
     }
 
     [Fact]
+    public void AvifVerifier_AcceptsEncoderOutputAndRejectsWrongDimensions()
+    {
+        using HdrRgba16FloatBuffer source = CreateSource(9, 11);
+        using var encoded = new MemoryStream();
+        new AvifHdrImageEncoder().Encode(
+            source,
+            encoded,
+            new HdrImageEncodingOptions { AvifQuality = 100, AvifSpeed = 10 });
+
+        Assert.True(HdrEncodedImageVerifier.Verify(encoded, HdrFileFormat.Avif, 9, 11));
+        Assert.False(HdrEncodedImageVerifier.Verify(encoded, HdrFileFormat.Avif, 11, 9));
+
+        byte[] corrupted = encoded.ToArray();
+        corrupted[4] ^= 0xff;
+        Assert.False(HdrEncodedImageVerifier.Verify(
+            new MemoryStream(corrupted),
+            HdrFileFormat.Avif,
+            9,
+            11));
+    }
+
+    [Fact]
     public void UltraHdrEncoder_RejectsDimensionsBelowCodecMinimumBeforeNativeCall()
     {
         using HdrRgba16FloatBuffer source = CreateSource(7, 8);

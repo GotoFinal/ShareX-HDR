@@ -28,7 +28,19 @@ namespace ShareX.ScreenCaptureLib
     {
         public static HdrImageDocument CopyToOwnedDocument(
             ObsGameCapturePublication publication,
-            ObsGameCaptureFrameMetadata metadata)
+            ObsGameCaptureFrameMetadata metadata,
+            bool allowTransparency = true)
+        {
+            return CopyToOwnedDocument(
+                publication,
+                metadata,
+                allowTransparency ? ObsGameCaptureAlphaMode.Straight : ObsGameCaptureAlphaMode.Opaque);
+        }
+
+        public static HdrImageDocument CopyToOwnedDocument(
+            ObsGameCapturePublication publication,
+            ObsGameCaptureFrameMetadata metadata,
+            ObsGameCaptureAlphaMode alphaMode)
         {
             ArgumentNullException.ThrowIfNull(publication);
             ArgumentNullException.ThrowIfNull(metadata);
@@ -45,8 +57,10 @@ namespace ShareX.ScreenCaptureLib
             }
 
             HdrRgba16FloatBuffer pixels = metadata.Rgb10A2ColorSpace is { } rgb10A2ColorSpace
-                ? ObsGameCaptureTextureReader.CopyRgba16FloatToOwnedBuffer(publication, rgb10A2ColorSpace)
-                : ObsGameCaptureTextureReader.CopyRgba16FloatToOwnedBuffer(publication);
+                ? ObsGameCaptureTextureReader.CopyRgba16FloatToOwnedBuffer(
+                    publication, rgb10A2ColorSpace, alphaMode)
+                : ObsGameCaptureTextureReader.CopyRgba16FloatToOwnedBuffer(
+                    publication, alphaMode);
 
             try
             {

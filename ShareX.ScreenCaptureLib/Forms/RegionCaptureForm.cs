@@ -61,6 +61,7 @@ namespace ShareX.ScreenCaptureLib
         public bool IsEditorMode => Mode == RegionCaptureMode.Editor || Mode == RegionCaptureMode.TaskEditor;
         public bool IsAnnotationMode => Mode == RegionCaptureMode.Annotation || IsEditorMode;
         public bool IsImageModified => ShapeManager != null && ShapeManager.IsImageModified;
+        public bool CanExportHdrDrawingOverlay => ShapeManager != null && ShapeManager.EffectShapes.Length == 0;
 
         public Point CurrentPosition { get; private set; }
         public SimpleWindowInfo SelectedWindow { get; private set; }
@@ -1582,6 +1583,27 @@ namespace ShareX.ScreenCaptureLib
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Renders ordinary region-capture drawings without the SDR screenshot below them.
+        /// Source-dependent effects are intentionally excluded because they need native HDR replay.
+        /// </summary>
+        public Bitmap GetHdrDrawingOverlay()
+        {
+            if (!CanExportHdrDrawingOverlay)
+            {
+                return null;
+            }
+
+            Rectangle selectedRectangle = GetSelectedRectangle();
+            if (selectedRectangle.IsEmpty)
+            {
+                return null;
+            }
+
+            Rectangle localRectangle = RectangleToClient(selectedRectangle);
+            return ShapeManager.RenderDrawingOverlay(localRectangle.Size, localRectangle.Location);
         }
 
         private Bitmap ReceiveImageForTask()

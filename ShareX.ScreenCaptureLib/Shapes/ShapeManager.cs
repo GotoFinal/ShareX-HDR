@@ -29,6 +29,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Linq;
 using System.Threading;
 using System.Windows.Forms;
@@ -1426,6 +1427,50 @@ namespace ShareX.ScreenCaptureLib
             }
 
             return bmpOutput;
+        }
+
+        public Bitmap RenderDrawingOverlay(Size size, PointF offset)
+        {
+            if (size.Width <= 0 || size.Height <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(size));
+            }
+
+            Bitmap overlay = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppPArgb);
+            overlay.SetResolution(CurrentDPI.X, CurrentDPI.Y);
+
+            if (DrawingShapes.Length == 0)
+            {
+                return overlay;
+            }
+
+            IsRenderingOutput = true;
+            RenderOffset = offset;
+            MoveAll(-offset.X, -offset.Y);
+
+            try
+            {
+                using Graphics graphics = Graphics.FromImage(overlay);
+                graphics.Clear(Color.Transparent);
+
+                foreach (BaseDrawingShape shape in DrawingShapes)
+                {
+                    shape?.OnDraw(graphics);
+                }
+
+                return overlay;
+            }
+            catch
+            {
+                overlay.Dispose();
+                throw;
+            }
+            finally
+            {
+                MoveAll(offset);
+                RenderOffset = Point.Empty;
+                IsRenderingOutput = false;
+            }
         }
 
         private void SelectShape(BaseShape shape)
