@@ -27,11 +27,15 @@ using ShareX.HelpersLib;
 using System;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 
 namespace ShareX.ScreenCaptureLib
 {
     public partial class Screenshot
     {
+        private static readonly object obsGameCaptureServiceSync = new object();
+        private static ObsGameCaptureService obsGameCaptureService;
+
         public bool CaptureCursor { get; set; } = false;
         public bool CaptureClientArea { get; set; } = false;
         public bool RemoveOutsideScreenArea { get; set; } = true;
@@ -46,37 +50,230 @@ namespace ShareX.ScreenCaptureLib
             return CaptureRectangle(rect, null);
         }
 
-        private Bitmap CaptureRectangle(Rectangle rect, WindowsGraphicsCapture.CaptureContext captureContext)
+        public Bitmap CaptureRectangle(Rectangle rect, out HdrImageDocument document)
         {
+            return CaptureRectangle(rect, null, default, out document);
+        }
+
+        public bool TryCaptureHdr(Rectangle rect, out HdrImageDocument document)
+        {
+            if (RemoveOutsideScreenArea)
+            {
+                rect = Rectangle.Intersect(CaptureHelpers.GetScreenBounds(), rect);
+            }
+
+            bool captured = TryCaptureObsGame(rect, IntPtr.Zero, out document) ||
+                WindowsGraphicsCapture.TryCaptureHdr(rect, null, out document);
+
+            if (captured && CaptureCursor)
+            {
+                CompositeCursor(document, rect);
+            }
+
+            return captured;
+        }
+
+        private static void CompositeCursor(HdrImageDocument document, Rectangle captureRectangle)
+        {
+            try
+            {
+                CompositeCursorCore(document, captureRectangle);
+            }
+            catch (Exception e)
+            {
+                DebugHelper.WriteException(e);
+            }
+        }
+
+        private static void CompositeCursorCore(HdrImageDocument document, Rectangle captureRectangle)
+        {
+            var cursor = new CursorData();
+            if (!cursor.IsVisible)
+            {
+                return;
+            }
+
+            using Bitmap cursorBitmap = cursor.ToBitmap();
+            Rectangle bitmapBounds = new Rectangle(Point.Empty, cursorBitmap.Size);
+            BitmapData bitmapData = cursorBitmap.LockBits(
+                bitmapBounds,
+                ImageLockMode.ReadOnly,
+                PixelFormat.Format32bppArgb);
+
+            try
+            {
+                CompositeCursorPixels(document, captureRectangle, cursor, cursorBitmap, bitmapData);
+            }
+            finally
+            {
+                cursorBitmap.UnlockBits(bitmapData);
+            }
+        }
+
+        private static void CompositeCursorPixels(
+            HdrImageDocument document,
+            Rectangle captureRectangle,
+            CursorData cursor,
+            Bitmap cursorBitmap,
+            BitmapData bitmapData)
+        {
+            int destinationX = cursor.DrawPosition.X - captureRectangle.X;
+            int destinationY = cursor.DrawPosition.Y - captureRectangle.Y;
+            var cursorBounds = new Rectangle(destinationX, destinationY, cursorBitmap.Width, cursorBitmap.Height);
+            var documentBounds = new Rectangle(
+                0,
+                0,
+                document.MasterPixels.Width,
+                document.MasterPixels.Height);
+
+            if (!cursorBounds.IntersectsWith(documentBounds))
+            {
+                return;
+            }
+
+            int packedRowBytes = checked(cursorBitmap.Width * 4);
+            byte[] pixels = new byte[checked(packedRowBytes * cursorBitmap.Height)];
+
+            for (int y = 0; y < cursorBitmap.Height; y++)
+            {
+                IntPtr sourceRow = IntPtr.Add(bitmapData.Scan0, y * bitmapData.Stride);
+                Marshal.Copy(sourceRow, pixels, y * packedRowBytes, packedRowBytes);
+            }
+
+            Point hotspotInDocument = new Point(
+                cursor.Position.X - captureRectangle.X,
+                cursor.Position.Y - captureRectangle.Y);
+            float cursorWhiteNits = 203f;
+
+            foreach (HdrCaptureSourceSegment segment in document.SourceSegments)
+            {
+                if (segment.DestinationRectangle.Contains(hotspotInDocument))
+                {
+                    cursorWhiteNits = segment.SdrWhiteNits;
+                    break;
+                }
+            }
+
+            document.CompositeSdrAsset(
+                pixels,
+                packedRowBytes,
+                cursorBitmap.Width,
+                cursorBitmap.Height,
+                destinationX,
+                destinationY,
+                cursorWhiteNits);
+        }
+
+        private Bitmap CaptureRectangle(
+            Rectangle rect,
+            WindowsGraphicsCapture.CaptureContext captureContext,
+            IntPtr preferredWindow = default)
+        {
+            Bitmap bitmap = CaptureRectangle(rect, captureContext, preferredWindow, out HdrImageDocument document);
+            document?.Dispose();
+            return bitmap;
+        }
+
+        private Bitmap CaptureRectangle(
+            Rectangle rect,
+            WindowsGraphicsCapture.CaptureContext captureContext,
+            IntPtr preferredWindow,
+            out HdrImageDocument document)
+        {
+            document = null;
+
             if (RemoveOutsideScreenArea)
             {
                 Rectangle bounds = CaptureHelpers.GetScreenBounds();
                 rect = Rectangle.Intersect(bounds, rect);
             }
 
-            if (UseHDRSupport && WindowsGraphicsCapture.TryCapture(rect, HdrSettings, captureContext, out Bitmap hdrBitmap))
+            if (TryCaptureObsGame(rect, preferredWindow, out HdrImageDocument obsDocument))
             {
-                if (CaptureCursor)
-                {
-                    using Graphics graphics = Graphics.FromImage(hdrBitmap);
-                    IntPtr hdc = graphics.GetHdc();
+                return CreateSdrPreviewAndRetain(obsDocument, rect, out document);
+            }
 
-                    try
-                    {
-                        DrawCursor(hdc, rect.Location);
-                    }
-                    finally
-                    {
-                        graphics.ReleaseHdc(hdc);
-                    }
-                }
-
-                return hdrBitmap;
+            if (UseHDRSupport &&
+                WindowsGraphicsCapture.TryCaptureHdr(rect, captureContext, out HdrImageDocument hdrDocument))
+            {
+                return CreateSdrPreviewAndRetain(hdrDocument, rect, out document);
             }
 
             return CaptureRectangleNative(rect, CaptureCursor);
         }
 
+        private Bitmap CreateSdrPreviewAndRetain(
+            HdrImageDocument capturedDocument,
+            Rectangle captureRectangle,
+            out HdrImageDocument document)
+        {
+            document = null;
+
+            try
+            {
+                if (CaptureCursor)
+                {
+                    CompositeCursor(capturedDocument, captureRectangle);
+                }
+
+                Bitmap preview = capturedDocument.CreateSdrPreview(HdrSettings);
+                document = capturedDocument;
+                return preview;
+            }
+            catch
+            {
+                capturedDocument.Dispose();
+                throw;
+            }
+        }
+
+        private bool TryCaptureObsGame(
+            Rectangle rect,
+            IntPtr preferredWindow,
+            out HdrImageDocument document)
+        {
+            document = null;
+
+            if (!UseHDRSupport || HdrSettings?.ObsGameCapture?.Enabled != true)
+            {
+                return false;
+            }
+
+            ObsGameCaptureService service = GetObsGameCaptureService();
+            bool captured = service.TryCapture(
+                rect,
+                HdrSettings,
+                preferredWindow,
+                out document,
+                out ObsGameCaptureAttempt attempt);
+            DebugHelper.WriteLine(
+                $"OBS Game Capture: success={attempt.Succeeded} process={attempt.ProcessName} " +
+                $"pid={attempt.ProcessId} source={attempt.SessionSource} format={attempt.DxgiFormat} " +
+                $"color={attempt.ColorInterpretation} elapsed={attempt.Duration.TotalMilliseconds:F1}ms " +
+                $"message={attempt.Message}");
+            return captured;
+        }
+
+        private static ObsGameCaptureService GetObsGameCaptureService()
+        {
+            lock (obsGameCaptureServiceSync)
+            {
+                return obsGameCaptureService ??= new ObsGameCaptureService();
+            }
+        }
+
+        public static void ShutdownObsGameCapture()
+        {
+            ObsGameCaptureService service;
+
+            lock (obsGameCaptureServiceSync)
+            {
+                service = obsGameCaptureService;
+                obsGameCaptureService = null;
+            }
+
+            service?.Dispose();
+        }
         internal CaptureSession CreateCaptureSession()
         {
             return new CaptureSession(this);
@@ -114,8 +311,24 @@ namespace ShareX.ScreenCaptureLib
             return CaptureRectangle(bounds);
         }
 
+        public Bitmap CaptureFullscreen(out HdrImageDocument document)
+        {
+            Rectangle bounds = CaptureHelpers.GetScreenBounds();
+
+            return CaptureRectangle(bounds, out document);
+        }
+
         public Bitmap CaptureWindow(IntPtr handle)
         {
+            Bitmap bitmap = CaptureWindow(handle, out HdrImageDocument document);
+            document?.Dispose();
+            return bitmap;
+        }
+
+        public Bitmap CaptureWindow(IntPtr handle, out HdrImageDocument document)
+        {
+            document = null;
+
             if (handle.ToInt32() > 0)
             {
                 Rectangle rect;
@@ -138,7 +351,7 @@ namespace ShareX.ScreenCaptureLib
                         isTaskbarHide = NativeMethods.SetTaskbarVisibilityIfIntersect(false, rect);
                     }
 
-                    return CaptureRectangle(rect);
+                    return CaptureRectangle(rect, null, handle, out document);
                 }
                 finally
                 {
@@ -159,11 +372,25 @@ namespace ShareX.ScreenCaptureLib
             return CaptureWindow(handle);
         }
 
+        public Bitmap CaptureActiveWindow(out HdrImageDocument document)
+        {
+            IntPtr handle = NativeMethods.GetForegroundWindow();
+
+            return CaptureWindow(handle, out document);
+        }
+
         public Bitmap CaptureActiveMonitor()
         {
             Rectangle bounds = CaptureHelpers.GetActiveScreenBounds();
 
             return CaptureRectangle(bounds);
+        }
+
+        public Bitmap CaptureActiveMonitor(out HdrImageDocument document)
+        {
+            Rectangle bounds = CaptureHelpers.GetActiveScreenBounds();
+
+            return CaptureRectangle(bounds, out document);
         }
 
         internal static Bitmap CaptureRectangleNative(Rectangle rect, bool captureCursor = false)

@@ -145,7 +145,12 @@ internal class EditorHistory : IDisposable
         List<Annotation> annotations = _editorCore.GetAnnotationsSnapshot();
         SKBitmap? canvas = _editorCore.SourceImage?.Copy();
         Guid? selectedId = _editorCore.SelectedAnnotation?.Id;
-        return new EditorMemento(annotations, _editorCore.CanvasSize, canvas, selectedId);
+        return new EditorMemento(
+            annotations,
+            _editorCore.CanvasSize,
+            canvas,
+            selectedId,
+            _editorCore.GetSourceOperationsSnapshot());
     }
 
     /// <summary>
@@ -156,7 +161,12 @@ internal class EditorHistory : IDisposable
     {
         List<Annotation> annotations = _editorCore.GetAnnotationsSnapshot(excludeAnnotation);
         Guid? selectedId = _editorCore.SelectedAnnotation?.Id;
-        return new EditorMemento(annotations, _editorCore.CanvasSize, null, selectedId);
+        return new EditorMemento(
+            annotations,
+            _editorCore.CanvasSize,
+            null,
+            selectedId,
+            _editorCore.GetSourceOperationsSnapshot());
     }
 
     /// <summary>

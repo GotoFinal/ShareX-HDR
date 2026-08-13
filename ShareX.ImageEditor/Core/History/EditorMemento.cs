@@ -24,6 +24,7 @@
 #endregion License Information (GPL v3)
 
 using ShareX.ImageEditor.Core.Annotations;
+using ShareX.ImageEditor.Hosting;
 using SkiaSharp;
 
 namespace ShareX.ImageEditor.Core.History;
@@ -54,6 +55,8 @@ internal class EditorMemento : IDisposable
     /// </summary>
     public Guid? SelectedAnnotationId { get; private set; }
 
+    public IReadOnlyList<EditorSourceOperation> SourceOperations { get; private set; }
+
     /// <summary>
     /// Create a new memento
     /// </summary>
@@ -61,12 +64,19 @@ internal class EditorMemento : IDisposable
     /// <param name="canvasSize">Canvas size</param>
     /// <param name="canvas">Optional canvas bitmap for destructive operations</param>
     /// <param name="selectedAnnotationId">Optional selected annotation ID for selection restoration</param>
-    public EditorMemento(List<Annotation> annotations, SKSize canvasSize, SKBitmap? canvas = null, Guid? selectedAnnotationId = null)
+    /// <param name="sourceOperations">Semantic source operations at this history state</param>
+    public EditorMemento(
+        List<Annotation> annotations,
+        SKSize canvasSize,
+        SKBitmap? canvas = null,
+        Guid? selectedAnnotationId = null,
+        IReadOnlyList<EditorSourceOperation>? sourceOperations = null)
     {
         Annotations = annotations;
         CanvasSize = canvasSize;
         Canvas = canvas;
         SelectedAnnotationId = selectedAnnotationId;
+        SourceOperations = sourceOperations?.ToArray() ?? Array.Empty<EditorSourceOperation>();
     }
 
     public void Dispose()

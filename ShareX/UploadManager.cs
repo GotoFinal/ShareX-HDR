@@ -389,6 +389,7 @@ namespace ShareX
                         }
                     };
 
+                    quickTaskMenu.Cancelled += metadata.Dispose;
                     quickTaskMenu.ShowMenu();
 
                     return;
@@ -398,6 +399,7 @@ namespace ShareX
 
                 if (!skipAfterCaptureWindow && !TaskHelpers.ShowAfterCaptureForm(taskSettings, out customFileName, metadata))
                 {
+                    metadata.Dispose();
                     return;
                 }
 

@@ -130,6 +130,7 @@ namespace ShareX.ImageEditor.Presentation.ViewModels
         public event EventHandler? LoadFromClipboardRequested;
         public event EventHandler<string>? LoadFromUrlRequested;
         public event EventHandler<string>? LoadRecentFileRequested;
+        public event Func<string, bool>? HostOpenImageRequested;
 
         [ObservableProperty]
         private bool _useContinueWorkflow;
@@ -1330,6 +1331,26 @@ namespace ShareX.ImageEditor.Presentation.ViewModels
         public void RequestLoadRecentFile(string filePath)
         {
             LoadRecentFileRequested?.Invoke(this, filePath);
+        }
+
+        public bool TryOpenImageWithHost(string filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath) || HostOpenImageRequested == null)
+            {
+                return false;
+            }
+
+            foreach (Func<string, bool> handler in HostOpenImageRequested.GetInvocationList())
+            {
+                if (handler(filePath))
+                {
+                    TaskResult = EditorTaskResult.Cancel;
+                    CloseRequested?.Invoke(this, EventArgs.Empty);
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         [RelayCommand]

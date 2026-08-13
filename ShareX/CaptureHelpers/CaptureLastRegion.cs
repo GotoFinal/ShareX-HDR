@@ -51,8 +51,11 @@ namespace ShareX
                 case RegionCaptureType.Light:
                     if (!RegionCaptureLightForm.LastScreenSelectionRectangle.IsEmpty)
                     {
-                        Bitmap bmp = TaskHelpers.GetScreenshot(taskSettings).CaptureRectangle(RegionCaptureLightForm.LastScreenSelectionRectangle);
-                        return new TaskMetadata(bmp);
+                        Screenshot screenshot = TaskHelpers.GetScreenshot(taskSettings);
+                        Bitmap bmp = screenshot.CaptureRectangle(
+                            RegionCaptureLightForm.LastScreenSelectionRectangle,
+                            out HdrImageDocument hdrImageDocument);
+                        return new TaskMetadata(bmp, hdrImageDocument);
                     }
                     else
                     {
@@ -61,8 +64,11 @@ namespace ShareX
                 case RegionCaptureType.Transparent:
                     if (!RegionCaptureLightForm.LastScreenSelectionRectangle.IsEmpty)
                     {
-                        Bitmap bmp = TaskHelpers.GetScreenshot(taskSettings).CaptureRectangle(RegionCaptureLightForm.LastScreenSelectionRectangle);
-                        return new TaskMetadata(bmp);
+                        Screenshot screenshot = TaskHelpers.GetScreenshot(taskSettings);
+                        Bitmap bmp = screenshot.CaptureRectangle(
+                            RegionCaptureLightForm.LastScreenSelectionRectangle,
+                            out HdrImageDocument hdrImageDocument);
+                        return new TaskMetadata(bmp, hdrImageDocument);
                     }
                     else
                     {

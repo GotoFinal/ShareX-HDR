@@ -120,6 +120,55 @@ namespace ShareX.HelpersLib
             return false;
         }
 
+        public static bool WriteToFileAtomic(
+            this Stream stream,
+            string filePath,
+            Func<string, bool> verifier = null)
+        {
+            if (stream == null || stream.Length <= 0 || string.IsNullOrEmpty(filePath))
+            {
+                return false;
+            }
+
+            string destinationPath = Path.GetFullPath(filePath);
+            FileHelpers.CreateDirectoryFromFilePath(destinationPath);
+            string destinationDirectory = Path.GetDirectoryName(destinationPath) ??
+                throw new InvalidOperationException("The destination file has no directory.");
+            string temporaryPath = Path.Combine(
+                destinationDirectory,
+                $".{Path.GetFileName(destinationPath)}.{Guid.NewGuid():N}.tmp");
+
+            try
+            {
+                using (var temporaryFile = new FileStream(
+                    temporaryPath,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None,
+                    81920,
+                    FileOptions.WriteThrough))
+                {
+                    stream.CopyStreamTo(temporaryFile);
+                    temporaryFile.Flush(flushToDisk: true);
+                }
+
+                if (verifier != null && !verifier(temporaryPath))
+                {
+                    throw new InvalidDataException("The encoded file failed post-write verification.");
+                }
+
+                File.Move(temporaryPath, destinationPath, overwrite: true);
+                return true;
+            }
+            finally
+            {
+                if (File.Exists(temporaryPath))
+                {
+                    File.Delete(temporaryPath);
+                }
+            }
+        }
+
         public static byte[] GetBytes(this Stream stream)
         {
             using (MemoryStream ms = new MemoryStream())

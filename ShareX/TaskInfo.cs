@@ -30,6 +30,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Globalization;
 
 namespace ShareX
 {
@@ -91,10 +92,22 @@ namespace ShareX
         public EDataType DataType { get; set; }
         public TaskMetadata Metadata { get; set; }
 
+        public string HdrFormat { get; set; }
+        public string HdrOutputMode { get; set; }
+        public string HdrMediaType { get; set; }
+        public float? HdrMasteringPeakNits { get; set; }
+        public string CompanionFilePath { get; set; }
+        public bool PreserveUploadFileBytes { get; set; }
+
         public EDataType UploadDestination
         {
             get
             {
+                if (DataType == EDataType.Image && PreserveUploadFileBytes)
+                {
+                    return EDataType.File;
+                }
+
                 if ((DataType == EDataType.Image && TaskSettings.ImageDestination == ImageDestination.FileUploader) ||
                     (DataType == EDataType.Text && TaskSettings.TextDestination == TextDestination.FileUploader))
                 {
@@ -165,10 +178,10 @@ namespace ShareX
 
         public Dictionary<string, string> GetTags()
         {
+            Dictionary<string, string> tags = new Dictionary<string, string>();
+
             if (Metadata != null)
             {
-                Dictionary<string, string> tags = new Dictionary<string, string>();
-
                 if (!string.IsNullOrEmpty(Metadata.WindowTitle))
                 {
                     tags.Add("WindowTitle", Metadata.WindowTitle);
@@ -178,14 +191,86 @@ namespace ShareX
                 {
                     tags.Add("ProcessName", Metadata.ProcessName);
                 }
-
-                if (tags.Count > 0)
-                {
-                    return tags;
-                }
             }
 
-            return null;
+            if (!string.IsNullOrWhiteSpace(HdrFormat))
+            {
+                tags[HistoryArtifactMetadata.HdrFormatTag] = HdrFormat;
+            }
+
+            if (!string.IsNullOrWhiteSpace(HdrOutputMode))
+            {
+                tags[HistoryArtifactMetadata.HdrOutputModeTag] = HdrOutputMode;
+            }
+
+            if (!string.IsNullOrWhiteSpace(HdrMediaType))
+            {
+                tags[HistoryArtifactMetadata.HdrMediaTypeTag] = HdrMediaType;
+            }
+
+            if (HdrMasteringPeakNits.HasValue)
+            {
+                tags[HistoryArtifactMetadata.HdrMasteringPeakNitsTag] =
+                    HdrMasteringPeakNits.Value.ToString("0.###", CultureInfo.InvariantCulture);
+            }
+
+            if (!string.IsNullOrWhiteSpace(CompanionFilePath))
+            {
+                tags[HistoryArtifactMetadata.CompanionFilePathTag] = CompanionFilePath;
+            }
+
+            return tags.Count > 0 ? tags : null;
+        }
+
+        public void ApplyTags(IReadOnlyDictionary<string, string> tags)
+        {
+            if (tags == null)
+            {
+                return;
+            }
+
+            Metadata ??= new TaskMetadata();
+
+            if (tags.TryGetValue("WindowTitle", out string windowTitle))
+            {
+                Metadata.WindowTitle = windowTitle;
+            }
+
+            if (tags.TryGetValue("ProcessName", out string processName))
+            {
+                Metadata.ProcessName = processName;
+            }
+
+            if (tags.TryGetValue(HistoryArtifactMetadata.HdrFormatTag, out string hdrFormat))
+            {
+                HdrFormat = hdrFormat;
+            }
+
+            if (tags.TryGetValue(HistoryArtifactMetadata.HdrOutputModeTag, out string hdrOutputMode))
+            {
+                HdrOutputMode = hdrOutputMode;
+            }
+
+            if (tags.TryGetValue(HistoryArtifactMetadata.HdrMediaTypeTag, out string hdrMediaType))
+            {
+                HdrMediaType = hdrMediaType;
+            }
+
+            if (tags.TryGetValue(HistoryArtifactMetadata.HdrMasteringPeakNitsTag, out string peakText) &&
+                float.TryParse(
+                    peakText,
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out float peakNits) &&
+                float.IsFinite(peakNits) && peakNits > 0f)
+            {
+                HdrMasteringPeakNits = peakNits;
+            }
+
+            if (tags.TryGetValue(HistoryArtifactMetadata.CompanionFilePathTag, out string companionFilePath))
+            {
+                CompanionFilePath = companionFilePath;
+            }
         }
 
         public override string ToString()

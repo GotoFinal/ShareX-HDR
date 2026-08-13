@@ -74,55 +74,56 @@ namespace ShareX
 
             Bitmap canvas;
             Screenshot screenshot = TaskHelpers.GetScreenshot(taskSettings);
-            screenshot.CaptureCursor = false;
+            HdrImageDocument hdrCanvasDocument;
 
             if (taskSettings.CaptureSettings.SurfaceOptions.ActiveMonitorMode)
             {
-                canvas = screenshot.CaptureActiveMonitor();
+                canvas = screenshot.CaptureActiveMonitor(out hdrCanvasDocument);
             }
             else
             {
-                canvas = screenshot.CaptureFullscreen();
+                canvas = screenshot.CaptureFullscreen(out hdrCanvasDocument);
             }
 
-            CursorData cursorData = null;
-
-            if (taskSettings.CaptureSettings.ShowCursor)
+            try
             {
-                cursorData = new CursorData();
+                using (RegionCaptureForm form = new RegionCaptureForm(mode,
+                    taskSettings.CaptureSettingsReference.SurfaceOptions, canvas, screenshot))
+                {
+                    form.ShowDialog();
+
+                    Bitmap result = form.GetResultImage();
+
+                    if (result != null)
+                    {
+                        TaskMetadata metadata = new TaskMetadata(result);
+
+                        if (form.IsImageModified)
+                        {
+                            AllowAnnotation = false;
+                        }
+
+                        if (form.Result == RegionResult.Region)
+                        {
+                            WindowInfo windowInfo = form.GetWindowInfo();
+                            metadata.UpdateInfo(windowInfo);
+                        }
+
+                        Rectangle selectedRectangle = form.GetSelectedRectangle();
+                        if (CanRetainHdrRegion(form, result, selectedRectangle, hdrCanvasDocument))
+                        {
+                            metadata.HdrImageDocument =
+                                hdrCanvasDocument.CropToScreenRectangle(selectedRectangle);
+                        }
+
+                        lastRegionCaptureType = RegionCaptureType.Default;
+                        return metadata;
+                    }
+                }
             }
-
-            using (RegionCaptureForm form = new RegionCaptureForm(mode,
-                taskSettings.CaptureSettingsReference.SurfaceOptions, canvas, screenshot))
+            finally
             {
-                if (cursorData != null && cursorData.IsVisible)
-                {
-                    form.AddCursor(cursorData.ToBitmap(), form.PointToClient(cursorData.DrawPosition));
-                }
-
-                form.ShowDialog();
-
-                Bitmap result = form.GetResultImage();
-
-                if (result != null)
-                {
-                    TaskMetadata metadata = new TaskMetadata(result);
-
-                    if (form.IsImageModified)
-                    {
-                        AllowAnnotation = false;
-                    }
-
-                    if (form.Result == RegionResult.Region)
-                    {
-                        WindowInfo windowInfo = form.GetWindowInfo();
-                        metadata.UpdateInfo(windowInfo);
-                    }
-
-                    lastRegionCaptureType = RegionCaptureType.Default;
-
-                    return metadata;
-                }
+                hdrCanvasDocument?.Dispose();
             }
 
             return null;
@@ -131,32 +132,47 @@ namespace ShareX
         protected TaskMetadata ExecuteRegionCaptureLight(TaskSettings taskSettings)
         {
             Bitmap canvas;
+            HdrImageDocument hdrCanvasDocument;
             Screenshot screenshot = TaskHelpers.GetScreenshot(taskSettings);
 
             if (taskSettings.CaptureSettings.SurfaceOptions.ActiveMonitorMode)
             {
-                canvas = screenshot.CaptureActiveMonitor();
+                canvas = screenshot.CaptureActiveMonitor(out hdrCanvasDocument);
             }
             else
             {
-                canvas = screenshot.CaptureFullscreen();
+                canvas = screenshot.CaptureFullscreen(out hdrCanvasDocument);
             }
 
             bool activeMonitorMode = taskSettings.CaptureSettings.SurfaceOptions.ActiveMonitorMode;
 
-            using (RegionCaptureLightForm rectangleLight = new RegionCaptureLightForm(canvas, activeMonitorMode))
+            try
             {
-                if (rectangleLight.ShowDialog() == DialogResult.OK)
+                using (RegionCaptureLightForm rectangleLight = new RegionCaptureLightForm(canvas, activeMonitorMode))
                 {
-                    Bitmap result = rectangleLight.GetAreaImage();
-
-                    if (result != null)
+                    if (rectangleLight.ShowDialog() == DialogResult.OK)
                     {
-                        lastRegionCaptureType = RegionCaptureType.Light;
+                        Bitmap result = rectangleLight.GetAreaImage();
 
-                        return new TaskMetadata(result);
+                        if (result != null)
+                        {
+                            lastRegionCaptureType = RegionCaptureType.Light;
+                            TaskMetadata metadata = new TaskMetadata(result);
+
+                            if (hdrCanvasDocument != null)
+                            {
+                                metadata.HdrImageDocument = hdrCanvasDocument.CropToScreenRectangle(
+                                    rectangleLight.ScreenSelectionRectangle);
+                            }
+
+                            return metadata;
+                        }
                     }
                 }
+            }
+            finally
+            {
+                hdrCanvasDocument?.Dispose();
             }
 
             return null;
@@ -171,18 +187,31 @@ namespace ShareX
                 if (rectangleTransparent.ShowDialog() == DialogResult.OK)
                 {
                     Screenshot screenshot = TaskHelpers.GetScreenshot(taskSettings);
-                    Bitmap result = rectangleTransparent.GetAreaImage(screenshot);
+                    Bitmap result = screenshot.CaptureRectangle(
+                        rectangleTransparent.ScreenSelectionRectangle,
+                        out HdrImageDocument hdrImageDocument);
 
                     if (result != null)
                     {
                         lastRegionCaptureType = RegionCaptureType.Transparent;
 
-                        return new TaskMetadata(result);
+                        return new TaskMetadata(result, hdrImageDocument);
                     }
                 }
             }
 
             return null;
         }
+
+        private static bool CanRetainHdrRegion(
+            RegionCaptureForm form,
+            Bitmap result,
+            Rectangle selectedRectangle,
+            HdrImageDocument hdrCanvasDocument) =>
+            hdrCanvasDocument != null &&
+            !form.IsImageModified &&
+            !selectedRectangle.IsEmpty &&
+            selectedRectangle.Size == result.Size &&
+            !ImageHelpers.IsImageTransparent(result);
     }
 }

@@ -23,6 +23,7 @@
 
 #endregion License Information (GPL v3)
 
+using ShareX.ScreenCaptureLib;
 using System.Drawing;
 
 namespace ShareX
@@ -33,7 +34,9 @@ namespace ShareX
         {
             Rectangle rect = taskSettings.CaptureSettings.CaptureCustomRegion;
             TaskMetadata metadata = CreateMetadata(rect);
-            metadata.Image = TaskHelpers.GetScreenshot(taskSettings).CaptureRectangle(rect);
+            Screenshot screenshot = TaskHelpers.GetScreenshot(taskSettings);
+            metadata.Image = screenshot.CaptureRectangle(rect, out HdrImageDocument hdrImageDocument);
+            metadata.HdrImageDocument = hdrImageDocument;
             return metadata;
         }
     }

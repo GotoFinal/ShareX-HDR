@@ -2127,6 +2127,11 @@ namespace ShareX.ImageEditor.Presentation.Views
             {
                 string filePath = files[0].Path.LocalPath;
 
+                if (vm.TryOpenImageWithHost(filePath))
+                {
+                    return;
+                }
+
                 using var stream = await files[0].OpenReadAsync();
                 using var memStream = new MemoryStream();
                 await stream.CopyToAsync(memStream);
@@ -2368,6 +2373,11 @@ namespace ShareX.ImageEditor.Presentation.Views
 
             try
             {
+                if (vm.TryOpenImageWithHost(filePath))
+                {
+                    return;
+                }
+
                 using var stream = File.OpenRead(filePath);
                 var skBitmap = SKBitmap.Decode(stream);
                 if (skBitmap == null)

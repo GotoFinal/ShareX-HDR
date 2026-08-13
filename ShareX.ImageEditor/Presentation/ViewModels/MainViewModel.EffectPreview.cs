@@ -25,6 +25,7 @@
 
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using ShareX.ImageEditor.Core.ImageEffects;
 using ShareX.ImageEditor.Core.ImageEffects.Adjustments;
 using ShareX.ImageEditor.Core.ImageEffects.Filters;
 using ShareX.ImageEditor.Core.ImageEffects.Manipulations;
@@ -136,59 +137,63 @@ namespace ShareX.ImageEditor.Presentation.ViewModels
         [RelayCommand]
         private void InvertColors()
         {
-            ApplyOneShotEffect(img => new InvertImageEffect().Apply(img), "Inverted colors");
+            ApplyOneShotEffect(new InvertImageEffect(), "Inverted colors");
         }
 
         [RelayCommand]
         private void BlackAndWhite()
         {
-            ApplyOneShotEffect(img => new BlackAndWhiteImageEffect().Apply(img), "Applied Black & White filter");
+            ApplyOneShotEffect(new BlackAndWhiteImageEffect(), "Applied Black & White filter");
         }
 
         [RelayCommand]
         private void Sepia()
         {
-            ApplyOneShotEffect(img => new SepiaImageEffect().Apply(img), "Applied Sepia filter");
+            ApplyOneShotEffect(new SepiaImageEffect(), "Applied Sepia filter");
         }
 
         [RelayCommand]
         private void Polaroid()
         {
-            ApplyOneShotEffect(img => new PolaroidImageEffect().Apply(img), "Applied Polaroid filter");
+            ApplyOneShotEffect(new PolaroidImageEffect(), "Applied Polaroid filter");
         }
 
         [RelayCommand]
         private void EdgeDetect()
         {
-            ApplyOneShotEffect(img => new EdgeDetectImageEffect().Apply(img), "Applied Edge detect filter");
+            ApplyOneShotEffect(new EdgeDetectImageEffect(), "Applied Edge detect filter");
         }
 
         [RelayCommand]
         private void Emboss()
         {
-            ApplyOneShotEffect(img => new EmbossImageEffect().Apply(img), "Applied Emboss filter");
+            ApplyOneShotEffect(new EmbossImageEffect(), "Applied Emboss filter");
         }
 
         [RelayCommand]
         private void MeanRemoval()
         {
-            ApplyOneShotEffect(img => new MeanRemovalImageEffect().Apply(img), "Applied Mean removal filter");
+            ApplyOneShotEffect(new MeanRemovalImageEffect(), "Applied Mean removal filter");
         }
 
         [RelayCommand]
         private void Smooth()
         {
-            ApplyOneShotEffect(img => new SmoothImageEffect().Apply(img), "Applied Smooth filter");
+            ApplyOneShotEffect(new SmoothImageEffect(), "Applied Smooth filter");
         }
 
-        private void ApplyOneShotEffect(Func<SkiaSharp.SKBitmap, SkiaSharp.SKBitmap> effect, string statusMessage)
+        private void ApplyOneShotEffect(ImageEffectBase effect, string statusMessage)
         {
             if (_editorCore == null)
             {
                 return;
             }
 
-            if (_editorCore.ApplyImageEffect(effect))
+            if (_editorCore.ApplyImageEffect(
+                effect.Apply,
+                new EditorImageEffectDescriptor(
+                    effect.Id,
+                    [])))
             {
                 ShowEffectAppliedNotification(statusMessage);
             }
@@ -285,7 +290,10 @@ namespace ShareX.ImageEditor.Presentation.ViewModels
         /// <summary>
         /// ISSUE-028 fix: Common logic for committing effects and cleaning up preview state.
         /// </summary>
-        private bool CommitEffectAndCleanup(SkiaSharp.SKBitmap result, string statusMessage)
+        private bool CommitEffectAndCleanup(
+            SkiaSharp.SKBitmap result,
+            string statusMessage,
+            EditorImageEffectDescriptor? imageEffectDescriptor = null)
         {
             SkiaSharp.SKBitmap? preEffectImage = _preEffectImage;
             SkiaSharp.SKBitmap? latestPreviewImage = _latestEffectPreviewImage;
@@ -314,7 +322,11 @@ namespace ShareX.ImageEditor.Presentation.ViewModels
                     }
                 }
 
-                applied = _editorCore.ApplyImageOperation(_ => result, clearAnnotations: false);
+                applied = _editorCore.ApplyImageOperation(
+                    _ => result,
+                    clearAnnotations: false,
+                    sourceOperation: imageEffectDescriptor == null ? null :
+                        EditorSourceOperation.ImageEffect(imageEffectDescriptor));
                 resultTransferred = applied;
 
                 // SIP-FIX: Ensure ViewModel state (_currentSourceImage) matches Core state after apply.
@@ -370,10 +382,13 @@ namespace ShareX.ImageEditor.Presentation.ViewModels
         /// <summary>
         /// Commits the effect to the undo stack and updates the source image.
         /// </summary>
-        public bool ApplyEffect(SkiaSharp.SKBitmap result, string statusMessage)
+        public bool ApplyEffect(
+            SkiaSharp.SKBitmap result,
+            string statusMessage,
+            EditorImageEffectDescriptor? imageEffectDescriptor = null)
         {
             if (_preEffectImage == null) return false; // Should have been started
-            return CommitEffectAndCleanup(result, statusMessage);
+            return CommitEffectAndCleanup(result, statusMessage, imageEffectDescriptor);
         }
 
         /// <summary>
@@ -514,7 +529,10 @@ namespace ShareX.ImageEditor.Presentation.ViewModels
         /// <summary>
         /// Applies the effect to the source image and commits to undo stack.
         /// </summary>
-        public bool ApplyEffect(Func<SkiaSharp.SKBitmap, SkiaSharp.SKBitmap> effect, string statusMessage)
+        public bool ApplyEffect(
+            Func<SkiaSharp.SKBitmap, SkiaSharp.SKBitmap> effect,
+            string statusMessage,
+            EditorImageEffectDescriptor? imageEffectDescriptor = null)
         {
             if (_preEffectImage == null)
             {
@@ -529,7 +547,7 @@ namespace ShareX.ImageEditor.Presentation.ViewModels
                     nameof(MainViewModel),
                     $"ApplyEffect(Func): committing latest preview bitmap {previewResult.Width}x{previewResult.Height} status={statusMessage}");
                 _latestEffectPreviewImage = null;
-                return CommitEffectAndCleanup(previewResult, statusMessage);
+                return CommitEffectAndCleanup(previewResult, statusMessage, imageEffectDescriptor);
             }
 
             _latestEffectPreviewImage?.Dispose();
@@ -544,7 +562,7 @@ namespace ShareX.ImageEditor.Presentation.ViewModels
                 return false;
             }
 
-            return CommitEffectAndCleanup(result!, statusMessage);
+            return CommitEffectAndCleanup(result!, statusMessage, imageEffectDescriptor);
         }
 
         // --- Rotate Custom Angle Feature ---

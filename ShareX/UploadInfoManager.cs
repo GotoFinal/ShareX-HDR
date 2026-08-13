@@ -24,6 +24,7 @@
 #endregion License Information (GPL v3)
 
 using ShareX.HelpersLib;
+using ShareX.HistoryLib;
 using ShareX.UploadersLib;
 using System.Collections.Generic;
 using System.Drawing;
@@ -398,9 +399,12 @@ namespace ShareX
         {
             if (IsItemSelected)
             {
-                foreach (string filePath in SelectedItems.Select(x => x.Info.FilePath))
+                foreach (TaskInfo info in SelectedItems.Select(x => x.Info))
                 {
-                    FileHelpers.DeleteFile(filePath, true);
+                    foreach (string filePath in HistoryArtifactMetadata.GetOwnedFilePaths(info.GetHistoryItem()).ToArray())
+                    {
+                        FileHelpers.DeleteFile(filePath, true);
+                    }
                 }
             }
         }

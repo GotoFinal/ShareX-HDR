@@ -24,7 +24,9 @@
 #endregion License Information (GPL v3)
 
 using ShareX.HelpersLib;
+using ShareX.HistoryLib;
 using ShareX.Properties;
+using ShareX.ScreenCaptureLib;
 using ShareX.UploadersLib;
 using System;
 using System.Collections.Generic;
@@ -64,6 +66,7 @@ namespace ShareX
         private ThreadWorker threadWorker;
         private GenericUploader uploader;
         private TaskReferenceHelper taskReferenceHelper;
+        private HdrImageDocument hdrImageDocument;
 
         #region Constructors
 
@@ -84,6 +87,7 @@ namespace ShareX
             task.Info.Result.DeletionURL = recentTask.DeletionURL;
             task.Info.Result.ShortenedURL = recentTask.ShortenedURL;
             task.Info.TaskEndTime = recentTask.Time;
+            task.Info.ApplyTags(recentTask.Tags);
 
             return task;
         }
@@ -145,6 +149,8 @@ namespace ShareX
 
             task.Info.Metadata = metadata;
             task.Image = metadata.Image;
+            task.hdrImageDocument = metadata.HdrImageDocument;
+            metadata.HdrImageDocument = null;
             return task;
         }
 
@@ -337,7 +343,10 @@ namespace ShareX
                 if ((Info.Job == TaskJob.Job || (Info.Job == TaskJob.FileUpload && Info.TaskSettings.AdvancedSettings.UseAfterCaptureTasksDuringFileUpload))
                     && Info.TaskSettings.AfterCaptureJob.HasFlag(AfterCaptureTasks.DeleteFile) && !string.IsNullOrEmpty(Info.FilePath) && File.Exists(Info.FilePath))
                 {
-                    File.Delete(Info.FilePath);
+                    foreach (string ownedFilePath in HistoryArtifactMetadata.GetOwnedFilePaths(Info.GetHistoryItem()).ToArray())
+                    {
+                        FileHelpers.DeleteFile(ownedFilePath);
+                    }
                 }
             }
 
@@ -576,8 +585,28 @@ namespace ShareX
                 return true;
             }
 
+            HdrFileOutputSettings hdrOutputSettings = GetHdrFileOutputSettings();
+
+            if (hdrImageDocument != null && hdrOutputSettings.OutputMode == HdrOutputMode.SdrOnly)
+            {
+                DiscardHdrImageDocument("HDR file output is set to SDR only.");
+            }
+
+            if (hdrImageDocument != null &&
+                Info.TaskSettings.AfterCaptureJob.HasFlag(AfterCaptureTasks.PerformActions) &&
+                Info.TaskSettings.ExternalPrograms?.Any(x => x.IsActive) == true &&
+                !ConfirmHdrToSdrFallback("External actions"))
+            {
+                return false;
+            }
+
             if (Info.TaskSettings.AfterCaptureJob.HasFlag(AfterCaptureTasks.BeautifyImage))
             {
+                if (!ConfirmHdrToSdrFallback("Beautify image"))
+                {
+                    return false;
+                }
+
                 Image = TaskHelpers.BeautifyImage(Image, Info.TaskSettings);
 
                 if (Image == null)
@@ -588,6 +617,11 @@ namespace ShareX
 
             if (Info.TaskSettings.AfterCaptureJob.HasFlag(AfterCaptureTasks.AddImageEffects))
             {
+                if (!ConfirmHdrToSdrFallback("Image effects"))
+                {
+                    return false;
+                }
+
                 Image = TaskHelpers.ApplyImageEffects(Image, Info.TaskSettings.ImageSettingsReference);
 
                 if (Image == null)
@@ -599,7 +633,58 @@ namespace ShareX
 
             if (Info.TaskSettings.AfterCaptureJob.HasFlag(AfterCaptureTasks.AnnotateImage))
             {
-                Image = TaskHelpers.AnnotateImage(Image, null, Info.TaskSettings, true);
+                if (hdrImageDocument != null)
+                {
+                    HdrEditorBridgeResult editorResult = TaskHelpers.AnnotateHdrImage(
+                        hdrImageDocument,
+                        Info.TaskSettings,
+                        out HdrImageDocument editedDocument);
+
+                    if (editorResult == HdrEditorBridgeResult.Cancelled)
+                    {
+                        return false;
+                    }
+
+                    if (editorResult == HdrEditorBridgeResult.Applied)
+                    {
+                        hdrImageDocument.Dispose();
+                        hdrImageDocument = editedDocument;
+                        editedDocument = null;
+
+                        Bitmap oldPreview = Image;
+                        Image = hdrImageDocument.CreateSdrPreview(
+                            Info.TaskSettings.CaptureSettings.HdrSettings ?? new HdrCaptureSettings());
+                        oldPreview?.Dispose();
+                    }
+                    else if (editorResult == HdrEditorBridgeResult.RequiresHdrOperationSupport)
+                    {
+                        editedDocument?.Dispose();
+
+                        if (Info.TaskSettings.ToolsSettingsReference.UseLegacyImageEditor)
+                        {
+                            if (!ConfirmHdrToSdrFallback("The legacy image editor"))
+                            {
+                                return false;
+                            }
+
+                            Image = TaskHelpers.AnnotateImage(Image, null, Info.TaskSettings, true);
+                        }
+                        else
+                        {
+                            if (!ConfirmHdrToSdrFallback(
+                                "This source-changing edit (reopening the editor is required)"))
+                            {
+                                return false;
+                            }
+
+                            Image = TaskHelpers.AnnotateImage(Image, null, Info.TaskSettings, true);
+                        }
+                    }
+                }
+                else
+                {
+                    Image = TaskHelpers.AnnotateImage(Image, null, Info.TaskSettings, true);
+                }
 
                 if (Image == null)
                 {
@@ -629,9 +714,26 @@ namespace ShareX
             if (Info.TaskSettings.AfterCaptureJob.HasFlagAny(AfterCaptureTasks.SaveImageToFile, AfterCaptureTasks.SaveImageToFileWithDialog, AfterCaptureTasks.DoOCR,
                 AfterCaptureTasks.UploadImageToHost, AfterCaptureTasks.AnalyzeImage))
             {
-                ImageData imageData = TaskHelpers.PrepareImage(Image, Info.TaskSettings);
+                bool encodeHdr = hdrImageDocument != null && hdrOutputSettings.OutputMode != HdrOutputMode.SdrOnly;
+                ImageData imageData = encodeHdr
+                    ? HdrImageOutput.Encode(hdrImageDocument, hdrOutputSettings)
+                    : TaskHelpers.PrepareImage(Image, Info.TaskSettings);
+
+                if (encodeHdr)
+                {
+                    Info.HdrFormat = hdrOutputSettings.FileFormat.ToString();
+                    Info.HdrOutputMode = hdrOutputSettings.OutputMode.ToString();
+                    Info.HdrMediaType = imageData.MediaType;
+                    Info.HdrMasteringPeakNits = hdrOutputSettings.MasteringDisplayMaximumNits;
+                    Info.PreserveUploadFileBytes = hdrOutputSettings.UploadWithFileUploader;
+                }
+
                 Data = imageData.ImageStream;
-                Info.FileName = Path.ChangeExtension(Info.FileName, imageData.ImageFormat.GetDescription());
+                Info.FileName = Path.ChangeExtension(
+                    Info.FileName,
+                    string.IsNullOrWhiteSpace(imageData.FileExtension)
+                        ? imageData.ImageFormat.GetDescription()
+                        : imageData.FileExtension);
 
                 if (Info.TaskSettings.AfterCaptureJob.HasFlagAny(AfterCaptureTasks.SaveImageToFile, AfterCaptureTasks.AnalyzeImage))
                 {
@@ -641,8 +743,17 @@ namespace ShareX
                     if (!string.IsNullOrEmpty(filePath))
                     {
                         Info.FilePath = filePath;
-                        imageData.Write(Info.FilePath);
-                        DebugHelper.WriteLine("Image saved to file: " + Info.FilePath);
+
+                        if (imageData.Write(Info.FilePath))
+                        {
+                            DebugHelper.WriteLine("Image saved to file: " + Info.FilePath);
+
+                            if (ShouldWriteSdrCompanion(hdrOutputSettings))
+                            {
+                                Info.CompanionFilePath = WriteSdrCompanion(Info.FilePath) ??
+                                    Info.CompanionFilePath;
+                            }
+                        }
                     }
                 }
 
@@ -679,6 +790,12 @@ namespace ShareX
 
                                 if (imageSaved)
                                 {
+                                    if (ShouldWriteSdrCompanion(hdrOutputSettings))
+                                    {
+                                        Info.CompanionFilePath = WriteSdrCompanion(Info.FilePath) ??
+                                            Info.CompanionFilePath;
+                                    }
+
                                     DebugHelper.WriteLine("Image saved to file with dialog: " + Info.FilePath);
                                 }
                             }
@@ -715,6 +832,72 @@ namespace ShareX
             }
 
             return true;
+        }
+
+        private HdrFileOutputSettings GetHdrFileOutputSettings()
+        {
+            HdrCaptureSettings hdrSettings = Info.TaskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
+            return hdrSettings.FileOutput ??= new HdrFileOutputSettings();
+        }
+
+        private void DiscardHdrImageDocument(string reason)
+        {
+            if (hdrImageDocument != null)
+            {
+                DebugHelper.WriteLine("HDR master discarded: " + reason);
+                hdrImageDocument.Dispose();
+                hdrImageDocument = null;
+            }
+        }
+
+        private bool ConfirmHdrToSdrFallback(string operation)
+        {
+            if (hdrImageDocument == null)
+            {
+                return true;
+            }
+
+            DialogResult result = MessageBox.Show(
+                $"{operation} does not yet support retained HDR pixels." + Environment.NewLine +
+                Environment.NewLine +
+                "Convert this capture to SDR and continue? Choosing No cancels the task so an SDR image is not silently saved as HDR.",
+                "ShareX - HDR compatibility",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+
+            if (result != DialogResult.Yes)
+            {
+                return false;
+            }
+
+            DiscardHdrImageDocument($"User chose SDR conversion for unsupported operation: {operation}.");
+            return true;
+        }
+
+        private bool ShouldWriteSdrCompanion(HdrFileOutputSettings settings) =>
+            hdrImageDocument != null &&
+            settings.OutputMode == HdrOutputMode.HdrAndSdr &&
+            settings.FileFormat != HdrFileFormat.UltraHdrJpeg;
+
+        private string WriteSdrCompanion(string hdrFilePath)
+        {
+            using ImageData sdrImageData = TaskHelpers.PrepareImage(Image, Info.TaskSettings);
+            string extension = string.IsNullOrWhiteSpace(sdrImageData.FileExtension)
+                ? sdrImageData.ImageFormat.GetDescription()
+                : sdrImageData.FileExtension;
+            string folder = Path.GetDirectoryName(hdrFilePath);
+            string fileName = Path.GetFileNameWithoutExtension(hdrFilePath) + "-SDR." + extension;
+            string companionPath = TaskHelpers.HandleExistsFile(
+                Path.Combine(folder, fileName),
+                Info.TaskSettings);
+
+            if (!string.IsNullOrEmpty(companionPath) && sdrImageData.Write(companionPath))
+            {
+                DebugHelper.WriteLine("SDR companion image saved to file: " + companionPath);
+                return companionPath;
+            }
+
+            return null;
         }
 
         private void DoFileJobs()
@@ -778,8 +961,17 @@ namespace ShareX
 
                 if (Info.TaskSettings.AfterCaptureJob.HasFlag(AfterCaptureTasks.AnalyzeImage) && Info.DataType == EDataType.Image)
                 {
-                    using (AIForm aiForm = new AIForm(Info.FilePath, Info.TaskSettings.ToolsSettingsReference.AIOptions,
-                        TaskHelpers.GetScreenshotWithoutCursor(Info.TaskSettings)))
+                    AIForm aiForm = hdrImageDocument != null
+                        ? new AIForm(
+                            Image,
+                            Info.TaskSettings.ToolsSettingsReference.AIOptions,
+                            TaskHelpers.GetScreenshotWithoutCursor(Info.TaskSettings))
+                        : new AIForm(
+                            Info.FilePath,
+                            Info.TaskSettings.ToolsSettingsReference.AIOptions,
+                            TaskHelpers.GetScreenshotWithoutCursor(Info.TaskSettings));
+
+                    using (aiForm)
                     {
                         aiForm.ShowDialog();
                     }
@@ -787,7 +979,14 @@ namespace ShareX
 
                 if (Info.TaskSettings.AfterCaptureJob.HasFlag(AfterCaptureTasks.ScanQRCode) && Info.DataType == EDataType.Image)
                 {
-                    QRCodeForm.OpenFormScanFromImageFile(Info.FilePath).ShowDialog();
+                    QRCodeForm qrCodeForm = hdrImageDocument != null
+                        ? QRCodeForm.OpenFormScanFromImage(Image, Info.TaskSettings)
+                        : QRCodeForm.OpenFormScanFromImageFile(Info.FilePath, Info.TaskSettings);
+
+                    using (qrCodeForm)
+                    {
+                        qrCodeForm.ShowDialog();
+                    }
                 }
             }
         }
@@ -953,6 +1152,13 @@ namespace ShareX
                 if (filter != null)
                 {
                     IGenericUploaderService service = filter.GetUploaderService();
+
+                    if (Info.PreserveUploadFileBytes && service is not FileUploaderService)
+                    {
+                        DebugHelper.WriteLine(
+                            $"Ignoring uploader filter '{filter}' because HDR upload byte preservation requires a file uploader.");
+                        service = null;
+                    }
 
                     if (service != null)
                     {
@@ -1224,6 +1430,9 @@ namespace ShareX
                 Data.Dispose();
                 Data = null;
             }
+
+            hdrImageDocument?.Dispose();
+            hdrImageDocument = null;
 
             if (!KeepImage && Image != null)
             {

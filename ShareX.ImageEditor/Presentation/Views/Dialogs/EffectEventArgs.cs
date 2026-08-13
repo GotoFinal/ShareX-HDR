@@ -24,6 +24,7 @@
 #endregion License Information (GPL v3)
 
 using SkiaSharp;
+using ShareX.ImageEditor.Hosting;
 
 namespace ShareX.ImageEditor.Presentation.Views.Dialogs;
 
@@ -32,10 +33,16 @@ public sealed class EffectEventArgs : EventArgs
     public Func<SKBitmap, SKBitmap> EffectOperation { get; }
 
     public string StatusMessage { get; }
+    public EditorImageEffectDescriptor Descriptor { get; }
 
-    public EffectEventArgs(Func<SKBitmap, SKBitmap> operation, string statusMessage)
+
+    public EffectEventArgs(
+        Func<SKBitmap, SKBitmap> operation,
+        string statusMessage,
+        EditorImageEffectDescriptor descriptor)
     {
         EffectOperation = operation ?? throw new ArgumentNullException(nameof(operation));
         StatusMessage = statusMessage ?? throw new ArgumentNullException(nameof(statusMessage));
+        Descriptor = descriptor ?? throw new ArgumentNullException(nameof(descriptor));
     }
 }

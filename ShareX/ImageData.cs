@@ -35,6 +35,10 @@ namespace ShareX
     {
         public MemoryStream ImageStream { get; set; }
         public EImageFormat ImageFormat { get; set; }
+        public string FileExtension { get; set; }
+        public string MediaType { get; set; }
+        public bool IsHdr { get; set; }
+        public Func<string, bool> FileVerifier { get; set; }
 
         public bool Write(string filePath)
         {
@@ -42,7 +46,7 @@ namespace ShareX
             {
                 if (ImageStream != null && !string.IsNullOrEmpty(filePath))
                 {
-                    return ImageStream.WriteToFile(filePath);
+                    return ImageStream.WriteToFileAtomic(filePath, FileVerifier);
                 }
             }
             catch (Exception e)

@@ -23,6 +23,8 @@
 
 #endregion License Information (GPL v3)
 
+using ShareX.ScreenCaptureLib;
+
 namespace ShareX
 {
     public class CaptureActiveWindow : CaptureBase
@@ -42,7 +44,9 @@ namespace ShareX
             }
             else
             {
-                metadata.Image = TaskHelpers.GetScreenshot(taskSettings).CaptureActiveWindow();
+                Screenshot screenshot = TaskHelpers.GetScreenshot(taskSettings);
+                metadata.Image = screenshot.CaptureActiveWindow(out HdrImageDocument hdrImageDocument);
+                metadata.HdrImageDocument = hdrImageDocument;
             }
 
             return metadata;

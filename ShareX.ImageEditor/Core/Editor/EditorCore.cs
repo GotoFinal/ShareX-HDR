@@ -92,6 +92,14 @@ public class EditorCore : IDisposable
     public SKBitmap? SourceImage { get; private set; }
 
     /// <summary>
+    /// Ordered semantic source operations used to replay lossless geometry against
+    /// a retained HDR master. An empty list means the source is unchanged.
+    /// </summary>
+    private readonly List<EditorSourceOperation> sourceOperations = new();
+    public IReadOnlyList<EditorSourceOperation> SourceOperations => sourceOperations;
+    public bool SourceImageMutated => sourceOperations.Count > 0;
+
+    /// <summary>
     /// Current active tool
     /// </summary>
     public EditorTool ActiveTool { get; set; } = EditorTool.Select;
@@ -173,6 +181,7 @@ public class EditorCore : IDisposable
         SourceImage?.Dispose();
         SourceImage = bitmap;
         CanvasSize = new SKSize(bitmap.Width, bitmap.Height);
+        sourceOperations.Clear();
         ClearAll();
         InvalidateRequested?.Invoke();
     }
@@ -209,7 +218,11 @@ public class EditorCore : IDisposable
     /// <param name="operation">Operation that takes current source image and returns the mutated image.</param>
     /// <param name="clearAnnotations">Whether annotations should be cleared after mutation.</param>
     /// <returns>True if operation succeeded and image changed.</returns>
-    public bool ApplyImageOperation(Func<SKBitmap, SKBitmap> operation, bool clearAnnotations = false, Action? transformAnnotations = null)
+    public bool ApplyImageOperation(
+        Func<SKBitmap, SKBitmap> operation,
+        bool clearAnnotations = false,
+        Action? transformAnnotations = null,
+        EditorSourceOperation? sourceOperation = null)
     {
         if (SourceImage == null || operation == null)
         {
@@ -252,6 +265,7 @@ public class EditorCore : IDisposable
         SourceImage.Dispose();
         SourceImage = result;
         CanvasSize = new SKSize(SourceImage.Width, SourceImage.Height);
+        sourceOperations.Add(sourceOperation ?? EditorSourceOperation.Unsupported());
 
         if (clearAnnotations)
         {
@@ -276,9 +290,14 @@ public class EditorCore : IDisposable
     /// <summary>
     /// Applies an image effect operation and tracks it in unified core history.
     /// </summary>
-    public bool ApplyImageEffect(Func<SKBitmap, SKBitmap> effectOperation)
+    public bool ApplyImageEffect(
+        Func<SKBitmap, SKBitmap> effectOperation,
+        EditorImageEffectDescriptor? descriptor = null)
     {
-        return ApplyImageOperation(effectOperation, clearAnnotations: false);
+        return ApplyImageOperation(
+            effectOperation,
+            clearAnnotations: false,
+            sourceOperation: descriptor == null ? null : EditorSourceOperation.ImageEffect(descriptor));
     }
 
     public bool ResizeImage(int newWidth, int newHeight, SKSamplingOptions sampling = default)
@@ -294,7 +313,8 @@ public class EditorCore : IDisposable
         return ApplyImageOperation(
             img => ImageHelpers.Resize(img, newWidth, newHeight, maintainAspectRatio: false, sampling),
             clearAnnotations: false,
-            transformAnnotations: () => ScaleAnnotations(scaleX, scaleY));
+            transformAnnotations: () => ScaleAnnotations(scaleX, scaleY),
+            sourceOperation: EditorSourceOperation.Resize(newWidth, newHeight));
     }
 
     public bool ResizeCanvas(int top, int right, int bottom, int left, SKColor backgroundColor)
@@ -302,7 +322,8 @@ public class EditorCore : IDisposable
         return ApplyImageOperation(
             img => ImageHelpers.ResizeCanvas(img, left, top, right, bottom, backgroundColor),
             clearAnnotations: false,
-            transformAnnotations: () => TranslateAnnotations(left, top));
+            transformAnnotations: () => TranslateAnnotations(left, top),
+            sourceOperation: EditorSourceOperation.ResizeCanvas(top, right, bottom, left, backgroundColor));
     }
 
     public bool Rotate90Clockwise()
@@ -312,7 +333,8 @@ public class EditorCore : IDisposable
         return ApplyImageOperation(
             ImageHelpers.Rotate90Clockwise,
             clearAnnotations: false,
-            transformAnnotations: () => RotateAnnotationsOrthogonal(90, oldW, oldH));
+            transformAnnotations: () => RotateAnnotationsOrthogonal(90, oldW, oldH),
+            sourceOperation: EditorSourceOperation.Rotate90Clockwise());
     }
 
     public bool Rotate90CounterClockwise()
@@ -322,7 +344,8 @@ public class EditorCore : IDisposable
         return ApplyImageOperation(
             ImageHelpers.Rotate90CounterClockwise,
             clearAnnotations: false,
-            transformAnnotations: () => RotateAnnotationsOrthogonal(270, oldW, oldH));
+            transformAnnotations: () => RotateAnnotationsOrthogonal(270, oldW, oldH),
+            sourceOperation: EditorSourceOperation.Rotate90CounterClockwise());
     }
 
     public bool Rotate180()
@@ -332,7 +355,8 @@ public class EditorCore : IDisposable
         return ApplyImageOperation(
             ImageHelpers.Rotate180,
             clearAnnotations: false,
-            transformAnnotations: () => RotateAnnotationsOrthogonal(180, oldW, oldH));
+            transformAnnotations: () => RotateAnnotationsOrthogonal(180, oldW, oldH),
+            sourceOperation: EditorSourceOperation.Rotate180());
     }
 
     public bool RotateCustomAngle(float angle, bool autoResize = true)
@@ -361,7 +385,8 @@ public class EditorCore : IDisposable
         return ApplyImageOperation(
             ImageHelpers.FlipHorizontal,
             clearAnnotations: false,
-            transformAnnotations: () => FlipAnnotations(true, false, w, 0));
+            transformAnnotations: () => FlipAnnotations(true, false, w, 0),
+            sourceOperation: EditorSourceOperation.FlipHorizontal());
     }
 
     public bool FlipVertical()
@@ -370,7 +395,8 @@ public class EditorCore : IDisposable
         return ApplyImageOperation(
             ImageHelpers.FlipVertical,
             clearAnnotations: false,
-            transformAnnotations: () => FlipAnnotations(false, true, 0, h));
+            transformAnnotations: () => FlipAnnotations(false, true, 0, h),
+            sourceOperation: EditorSourceOperation.FlipVertical());
     }
 
     /// <summary>
@@ -419,11 +445,15 @@ public class EditorCore : IDisposable
         }
 
         if (!hasContent) minX = minY = 0;
+        EditorSourceOperation sourceOperation = hasContent
+            ? EditorSourceOperation.Crop(minX, minY, maxX - minX + 1, maxY - minY + 1)
+            : EditorSourceOperation.Unsupported();
 
         return ApplyImageOperation(
             img => ImageHelpers.AutoCrop(img, topLeft, tolerance),
             clearAnnotations: false,
-            transformAnnotations: () => TranslateAnnotations(-minX, -minY));
+            transformAnnotations: () => TranslateAnnotations(-minX, -minY),
+            sourceOperation: sourceOperation);
     }
 
     #region Annotation Transformations
@@ -653,6 +683,9 @@ public class EditorCore : IDisposable
             AdjustAnnotationsForHorizontalCut(cutY, cutHeight, newHeight);
         }
 
+        sourceOperations.Add(isVertical
+            ? EditorSourceOperation.CutOutVertical(startPos, endPos - startPos)
+            : EditorSourceOperation.CutOutHorizontal(startPos, endPos - startPos));
         AnnotationsRestored?.Invoke();
         ImageChanged?.Invoke();
         HistoryChanged?.Invoke();
@@ -1354,6 +1387,9 @@ public class EditorCore : IDisposable
         return source.Select(a => a.Clone()).ToList();
     }
 
+    internal List<EditorSourceOperation> GetSourceOperationsSnapshot() =>
+        new(sourceOperations);
+
     /// <summary>
     /// Restore editor state from a memento
     /// ISSUE-010 fix: Restores selection state along with annotations
@@ -1376,6 +1412,9 @@ public class EditorCore : IDisposable
             // Notify that image has changed so UI can resize canvas control if needed
             ImageChanged?.Invoke();
         }
+
+        sourceOperations.Clear();
+        sourceOperations.AddRange(memento.SourceOperations);
 
         // ISSUE-010 fix: Restore selection state if memento captured a selected annotation
         if (memento.SelectedAnnotationId.HasValue)
@@ -1653,6 +1692,7 @@ public class EditorCore : IDisposable
         SourceImage = croppedBitmap;
         CanvasSize = new SKSize(width, height);
 
+        sourceOperations.Add(EditorSourceOperation.Crop(x, y, width, height));
         AnnotationsRestored?.Invoke();
         ImageChanged?.Invoke();
         HistoryChanged?.Invoke();
@@ -1673,6 +1713,7 @@ public class EditorCore : IDisposable
         // Create canvas memento before destructive cutout operation
         _history.CreateCanvasMemento();
 
+        EditorSourceOperation sourceOperation;
         if (cutOutAnnotation.IsVertical)
         {
             // Vertical cut: remove a vertical strip and join left and right parts
@@ -1725,6 +1766,7 @@ public class EditorCore : IDisposable
 
             // Adjust annotations for vertical cut
             AdjustAnnotationsForVerticalCut(cutX, cutWidth, newWidth);
+            sourceOperation = EditorSourceOperation.CutOutVertical(cutX, cutWidth);
         }
         else
         {
@@ -1778,11 +1820,13 @@ public class EditorCore : IDisposable
 
             // Adjust annotations for horizontal cut
             AdjustAnnotationsForHorizontalCut(cutY, cutHeight, newHeight);
+            sourceOperation = EditorSourceOperation.CutOutHorizontal(cutY, cutHeight);
         }
 
         // Remove cutout annotation
         _annotations.Remove(cutOutAnnotation);
 
+        sourceOperations.Add(sourceOperation);
         ImageChanged?.Invoke();
         InvalidateRequested?.Invoke();
     }

@@ -204,7 +204,8 @@ namespace ShareX.ImageEditor.Presentation.Views
 
             if (vm.ApplyEffect(
                 definition.CreateConfiguredEffect(Array.Empty<EffectParameterState>()).Apply,
-                statusMessage))
+                statusMessage,
+                definition.CreateDescriptor(Array.Empty<EffectParameterState>())))
             {
                 vm.ShowEffectAppliedNotification(statusMessage);
             }
@@ -408,7 +409,7 @@ namespace ShareX.ImageEditor.Presentation.Views
             effectDialog.PreviewRequested += (s, e) => vm.PreviewEffect(e.EffectOperation);
             effectDialog.ApplyRequested += (s, e) =>
             {
-                if (vm.ApplyEffect(e.EffectOperation, e.StatusMessage))
+                if (vm.ApplyEffect(e.EffectOperation, e.StatusMessage, e.Descriptor))
                 {
                     vm.ShowEffectAppliedNotification(e.StatusMessage);
                 }

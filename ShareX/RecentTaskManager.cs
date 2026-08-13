@@ -94,7 +94,8 @@ namespace ShareX
                     URL = task.Info.Result.URL,
                     ThumbnailURL = task.Info.Result.ThumbnailURL,
                     DeletionURL = task.Info.Result.DeletionURL,
-                    ShortenedURL = task.Info.Result.ShortenedURL
+                    ShortenedURL = task.Info.Result.ShortenedURL,
+                    Tags = task.Info.GetTags()
                 };
 
                 Add(recentItem);

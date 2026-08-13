@@ -90,6 +90,13 @@ namespace ShareX
             return form;
         }
 
+        public static QRCodeForm OpenFormScanFromImage(Bitmap image, TaskSettings taskSettings = null)
+        {
+            QRCodeForm form = new QRCodeForm(taskSettings: taskSettings);
+            form.ScanImage(image);
+            return form;
+        }
+
         public static QRCodeForm OpenFormScanScreen(TaskSettings taskSettings = null)
         {
             QRCodeForm form = Instance;

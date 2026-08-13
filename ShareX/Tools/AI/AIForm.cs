@@ -71,6 +71,16 @@ namespace ShareX
             }
         }
 
+        public AIForm(Bitmap image, AIOptions options, Screenshot screenshot = null) : this(options, screenshot)
+        {
+            if (image != null)
+            {
+                pbImage.LoadImage(image);
+                FormClosed += (_, _) => pbImage.Reset();
+                UpdateControls();
+            }
+        }
+
         private void UpdateControls()
         {
             btnAnalyze.Enabled = IsAPIKeyAvailable() && (!string.IsNullOrEmpty(txtImage.Text) || pbImage.Image != null);

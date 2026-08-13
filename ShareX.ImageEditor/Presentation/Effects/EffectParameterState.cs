@@ -276,6 +276,8 @@ public sealed partial class NumericParameterState : EffectParameterState
     public decimal Minimum { get; }
 
     public decimal Maximum { get; }
+    public decimal DefaultValue { get; }
+
 
     public decimal Increment { get; }
 
@@ -290,6 +292,7 @@ public sealed partial class NumericParameterState : EffectParameterState
         Increment = definition.Increment;
         FormatString = definition.FormatString;
         _value = definition.DefaultValue;
+        DefaultValue = definition.DefaultValue;
     }
 
     public NumericParameterState(CoreNumericParameter parameter)
@@ -301,6 +304,7 @@ public sealed partial class NumericParameterState : EffectParameterState
         Increment = parameter.Increment;
         FormatString = parameter.FormatString;
         _value = parameter.DefaultValue;
+        DefaultValue = parameter.DefaultValue;
     }
 
     internal override object? GetValue() => Value;

@@ -25,12 +25,15 @@
 
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Shapes;
+using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using ShareX.ImageEditor.Core.Annotations;
 using ShareX.ImageEditor.Hosting;
 using ShareX.ImageEditor.Presentation.Controls;
 using ShareX.ImageEditor.Presentation.Rendering;
 using ShareX.ImageEditor.Presentation.ViewModels;
+using SkiaSharp;
 
 namespace ShareX.ImageEditor.Presentation.Views
 {
@@ -166,6 +169,260 @@ namespace ShareX.ImageEditor.Presentation.Views
                 snapshotTarget.InvalidateMeasure();
                 snapshotTarget.InvalidateArrange();
             }
+        }
+
+        /// <summary>
+        /// Exports the existing editor's ordinary annotations as transparent BGRA8
+        /// layers and leaves source-dependent effects as ordered semantic operations.
+        /// This avoids flattening the SDR preview into a retained HDR source.
+        /// </summary>
+        internal EditorOverlayExport? GetAnnotationOverlayExport(
+            ulong? initialSourceFingerprint,
+            SKBitmap? initialSourceImage)
+        {
+            if (_editorCore.SourceImage == null)
+            {
+                return null;
+            }
+
+            var annotationCanvas = this.FindControl<Canvas>(nameof(AnnotationCanvas));
+            if (annotationCanvas == null)
+            {
+                return null;
+            }
+
+            int width = _editorCore.SourceImage.Width;
+            int height = _editorCore.SourceImage.Height;
+            var sourceOperations = new List<EditorSourceOperation>(_editorCore.SourceOperations);
+            EditorSourceOperation sourceOperation = sourceOperations.Count == 0
+                ? EditorSourceOperationDetector.Detect(
+                    initialSourceImage,
+                    _editorCore.SourceImage,
+                    initialSourceFingerprint,
+                    sourceImageMutated: false)
+                : EditorSourceOperation.None();
+            var operations = new List<EditorOverlayOperation>();
+            var handledAnnotationIds = new HashSet<Guid>();
+            var originalVisibility = annotationCanvas.Children
+                .OfType<Control>()
+                .ToDictionary(control => control, control => control.IsVisible);
+
+            try
+            {
+                // Spotlight is rendered by a dedicated control below AnnotationCanvas,
+                // regardless of its position in the annotation collection. Preserve that
+                // behavior as one combined source-effect operation before canvas children.
+                List<Annotation> spotlights = _editorCore.Annotations
+                    .OfType<SpotlightAnnotation>()
+                    .Select(annotation => annotation.Clone())
+                    .ToList();
+
+                if (spotlights.Count > 0)
+                {
+                    operations.Add(EditorOverlayOperation.CreateSourceEffect(
+                        spotlights,
+                        RenderSpotlightCoverageMask(spotlights, width, height)));
+                    foreach (SpotlightAnnotation annotation in _editorCore.Annotations.OfType<SpotlightAnnotation>())
+                    {
+                        handledAnnotationIds.Add(annotation.Id);
+                    }
+                }
+
+                var pendingOverlayControls = new List<Control>();
+
+                void FlushOverlay()
+                {
+                    if (pendingOverlayControls.Count == 0)
+                    {
+                        return;
+                    }
+
+                    SKBitmap overlay = RenderAnnotationControls(
+                        annotationCanvas,
+                        pendingOverlayControls,
+                        originalVisibility,
+                        width,
+                        height);
+                    operations.Add(EditorOverlayOperation.CreateOverlay(overlay));
+                    pendingOverlayControls.Clear();
+                }
+
+                // Child order is the actual persisted visual order. Splitting ordinary
+                // annotations around source effects retains the current z-order.
+                foreach (Control control in annotationCanvas.Children.OfType<Control>())
+                {
+                    if (control.Tag is not Annotation annotation)
+                    {
+                        continue;
+                    }
+
+                    handledAnnotationIds.Add(annotation.Id);
+
+                    if (annotation is SpotlightAnnotation)
+                    {
+                        continue;
+                    }
+
+                    if (annotation is BaseEffectAnnotation)
+                    {
+                        FlushOverlay();
+                        if (control is Shape effectShape)
+                        {
+                            operations.Add(EditorOverlayOperation.CreateSourceEffect(
+                                new[] { annotation.Clone() },
+                                RenderEffectCoverageMask(
+                                    annotationCanvas,
+                                    effectShape,
+                                    originalVisibility,
+                                    width,
+                                    height)));
+                        }
+                        else
+                        {
+                            operations.Add(EditorOverlayOperation.CreateUnsupported(annotation.Clone()));
+                        }
+                    }
+                    else
+                    {
+                        pendingOverlayControls.Add(control);
+                    }
+                }
+
+                FlushOverlay();
+
+                // Never silently drop an annotation if its visual was absent during export.
+                foreach (Annotation annotation in _editorCore.Annotations)
+                {
+                    if (!handledAnnotationIds.Contains(annotation.Id))
+                    {
+                        operations.Add(EditorOverlayOperation.CreateUnsupported(annotation.Clone()));
+                    }
+                }
+
+                return new EditorOverlayExport(width, height, sourceOperation, sourceOperations, operations);
+            }
+            catch
+            {
+                foreach (EditorOverlayOperation operation in operations)
+                {
+                    operation.Dispose();
+                }
+
+                throw;
+            }
+            finally
+            {
+                foreach ((Control control, bool isVisible) in originalVisibility)
+                {
+                    control.IsVisible = isVisible;
+                }
+
+                annotationCanvas.InvalidateMeasure();
+                annotationCanvas.InvalidateArrange();
+            }
+        }
+
+        private static SKBitmap RenderAnnotationControls(
+            Canvas annotationCanvas,
+            IReadOnlyCollection<Control> includedControls,
+            IReadOnlyDictionary<Control, bool> originalVisibility,
+            int width,
+            int height)
+        {
+            var included = includedControls.ToHashSet();
+
+            foreach (Control control in annotationCanvas.Children.OfType<Control>())
+            {
+                control.IsVisible = included.Contains(control) && originalVisibility.GetValueOrDefault(control);
+            }
+
+            annotationCanvas.Measure(new Size(width, height));
+            annotationCanvas.Arrange(new Rect(0, 0, width, height));
+
+            using var renderTarget = new RenderTargetBitmap(
+                new PixelSize(width, height),
+                new Vector(96, 96));
+            renderTarget.Render(annotationCanvas);
+            return BitmapConversionHelpers.ToSKBitmap(renderTarget);
+        }
+
+        private static EditorEffectCoverageMask RenderEffectCoverageMask(
+            Canvas annotationCanvas,
+            Shape effectShape,
+            IReadOnlyDictionary<Control, bool> originalVisibility,
+            int width,
+            int height)
+        {
+            IBrush? fill = effectShape.Fill;
+            IBrush? stroke = effectShape.Stroke;
+            double strokeThickness = effectShape.StrokeThickness;
+            double opacity = effectShape.Opacity;
+
+            try
+            {
+                effectShape.Fill = Brushes.White;
+                effectShape.Stroke = Brushes.Transparent;
+                effectShape.StrokeThickness = 0;
+                effectShape.Opacity = 1;
+                using SKBitmap rendered = RenderAnnotationControls(
+                    annotationCanvas,
+                    new[] { effectShape },
+                    originalVisibility,
+                    width,
+                    height);
+                return EditorEffectCoverageMask.FromBitmap(rendered);
+            }
+            finally
+            {
+                effectShape.Fill = fill;
+                effectShape.Stroke = stroke;
+                effectShape.StrokeThickness = strokeThickness;
+                effectShape.Opacity = opacity;
+            }
+        }
+
+        private static EditorEffectCoverageMask RenderSpotlightCoverageMask(
+            IReadOnlyList<Annotation> spotlights,
+            int width,
+            int height)
+        {
+            using var bitmap = new SKBitmap(
+                width,
+                height,
+                SKColorType.Bgra8888,
+                SKAlphaType.Premul);
+            using var canvas = new SKCanvas(bitmap);
+            canvas.Clear(SKColors.Transparent);
+
+            using var effectPaint = new SKPaint
+            {
+                Color = SKColors.White,
+                IsAntialias = true,
+                Style = SKPaintStyle.Fill
+            };
+            using var clearPaint = new SKPaint
+            {
+                BlendMode = SKBlendMode.Clear,
+                IsAntialias = true,
+                Style = SKPaintStyle.Fill
+            };
+
+            canvas.DrawRect(new SKRect(0, 0, width, height), effectPaint);
+            foreach (SpotlightAnnotation spotlight in spotlights.Cast<SpotlightAnnotation>())
+            {
+                SKRect bounds = spotlight.GetBounds();
+                if (spotlight.IsEllipse)
+                {
+                    canvas.DrawOval(bounds, clearPaint);
+                }
+                else
+                {
+                    canvas.DrawRect(bounds, clearPaint);
+                }
+            }
+
+            canvas.Flush();
+            return EditorEffectCoverageMask.FromBitmap(bitmap);
         }
 
         public Task<Bitmap?> RenderSnapshot()

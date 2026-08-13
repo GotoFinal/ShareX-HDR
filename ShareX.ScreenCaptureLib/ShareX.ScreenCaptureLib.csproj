@@ -24,4 +24,12 @@
       <LogicalName>ShareX.ScreenCaptureLib.HDR.HdrToneMap.hlsl</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64' Or '$(Platform)' == 'x64' Or ('$(RuntimeIdentifier)' == '' And '$(Platform)' == 'AnyCPU' And '$(PROCESSOR_ARCHITECTURE)' == 'AMD64')">
+    <Content Include="Native\UltraHdr\win-x64\ShareX.UltraHdr.dll">
+      <Link>ShareX.UltraHdr.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

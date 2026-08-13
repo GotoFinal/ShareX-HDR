@@ -25,6 +25,7 @@
 
 using ShareX.HelpersLib;
 using ShareX.Properties;
+using System;
 using System.Drawing;
 using System.Windows.Forms;
 
@@ -34,9 +35,11 @@ namespace ShareX
     {
         public delegate void TaskInfoSelectedEventHandler(QuickTaskInfo taskInfo);
         public TaskInfoSelectedEventHandler TaskInfoSelected;
+        public Action Cancelled;
 
         public void ShowMenu()
         {
+            bool accepted = false;
             ContextMenuStrip cms = new ContextMenuStrip()
             {
                 Font = new Font("Arial", 10f),
@@ -55,6 +58,7 @@ namespace ShareX
             tsmiContinue.Image = Resources.control;
             tsmiContinue.Click += (sender, e) =>
             {
+                accepted = true;
                 cms.Close();
                 OnTaskInfoSelected(null);
             };
@@ -72,6 +76,7 @@ namespace ShareX
                         tsmi.Image = taskInfo.Icon;
                         tsmi.Click += (sender, e) =>
                         {
+                            accepted = true;
                             cms.Close();
                             QuickTaskInfo selectedTaskInfo = ((ToolStripMenuItem)sender).Tag as QuickTaskInfo;
                             OnTaskInfoSelected(selectedTaskInfo);
@@ -104,6 +109,16 @@ namespace ShareX
             tsmiCancel.Image = Resources.cross;
             tsmiCancel.Click += (sender, e) => cms.Close();
             cms.Items.Add(tsmiCancel);
+
+            cms.Closed += (_, _) =>
+            {
+                cms.Dispose();
+
+                if (!accepted)
+                {
+                    Cancelled?.Invoke();
+                }
+            };
 
             ShareXResources.ApplyCustomThemeToContextMenuStrip(cms);
 

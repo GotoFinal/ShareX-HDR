@@ -261,7 +261,8 @@ public partial class SchemaDrivenEffectDialog : UserControl, IEffectDialog
     {
         return new EffectEventArgs(
             img => Definition.CreateConfiguredEffect(ParameterStates).Apply(img),
-            statusMessage);
+            statusMessage,
+            Definition.CreateDescriptor(ParameterStates));
     }
 
     private async void OnBrowseFilePathClick(object? sender, RoutedEventArgs e)

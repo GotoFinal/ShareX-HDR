@@ -241,9 +241,13 @@ namespace ShareX.HistoryLib
         {
             foreach (HistoryItem historyItem in historyItems)
             {
-                if (!string.IsNullOrEmpty(historyItem.FilePath) && File.Exists(historyItem.FilePath))
+                string[] ownedFilePaths = HistoryArtifactMetadata.GetOwnedFilePaths(historyItem).ToArray();
+                foreach (string filePath in ownedFilePaths)
                 {
-                    File.Delete(historyItem.FilePath);
+                    if (File.Exists(filePath))
+                    {
+                        File.Delete(filePath);
+                    }
                 }
             }
 

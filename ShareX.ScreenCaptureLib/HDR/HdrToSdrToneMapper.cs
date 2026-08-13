@@ -45,7 +45,8 @@ namespace ShareX.ScreenCaptureLib
             int height,
             HdrCaptureSettings settings,
             float sdrWhiteNits,
-            float displayMaxLuminanceNits)
+            float displayMaxLuminanceNits,
+            bool preserveAlpha = false)
         {
             ArgumentNullException.ThrowIfNull(settings);
 
@@ -86,7 +87,8 @@ namespace ShareX.ScreenCaptureLib
                         settings.PeakBrightnessMode,
                         settings.ToneMappingMode,
                         sdrWhiteNits,
-                        displayMaxLuminanceNits);
+                        displayMaxLuminanceNits,
+                        preserveAlpha);
                 }
                 finally
                 {
@@ -174,7 +176,8 @@ namespace ShareX.ScreenCaptureLib
             HdrPeakBrightnessMode peakBrightnessMode,
             HdrToneMappingMode toneMappingMode,
             float sdrWhiteNits,
-            float displayMaxLuminanceNits)
+            float displayMaxLuminanceNits,
+            bool preserveAlpha)
         {
             ToneMapParameters parameters = CreateToneMapParameters(
                 configuredPeakNits,
@@ -207,6 +210,25 @@ namespace ShareX.ScreenCaptureLib
                     float red = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[0]));
                     float green = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[1]));
                     float blue = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[2]));
+                    float alpha = Math.Clamp(
+                        SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[3])),
+                        0f,
+                        1f);
+
+                    if (preserveAlpha)
+                    {
+                        if (alpha <= 0f)
+                        {
+                            red = green = blue = 0f;
+                        }
+                        else if (alpha < 1f)
+                        {
+                            float inverseAlpha = 1f / alpha;
+                            red *= inverseAlpha;
+                            green *= inverseAlpha;
+                            blue *= inverseAlpha;
+                        }
+                    }
                     ToneMapPixel(
                         ref red,
                         ref green,
@@ -218,7 +240,7 @@ namespace ShareX.ScreenCaptureLib
                     destinationPixel[0] = ToSrgbByte(blue);
                     destinationPixel[1] = ToSrgbByte(green);
                     destinationPixel[2] = ToSrgbByte(red);
-                    destinationPixel[3] = 255;
+                    destinationPixel[3] = preserveAlpha ? ToByte(alpha) : byte.MaxValue;
 
                     sourcePixel += 4;
                     destinationPixel += 4;

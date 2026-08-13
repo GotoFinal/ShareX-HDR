@@ -647,6 +647,8 @@ namespace ShareX.HistoryLib
         {
             if (!string.IsNullOrEmpty(HistoryItem.FilePath))
             {
+                string oldFilePath = HistoryItem.FilePath;
+                bool hasCompanion = HistoryArtifactMetadata.TryGetOwnedCompanionFilePath(HistoryItem, out string oldCompanionPath);
                 string oldFileName = Path.GetFileNameWithoutExtension(HistoryItem.FilePath);
 
                 // TODO: Translate
@@ -659,9 +661,29 @@ namespace ShareX.HistoryLib
                         newFileName += Path.GetExtension(HistoryItem.FilePath);
                     }
 
-                    HistoryItem.FileName = newFileName;
                     string newFilePath = FileHelpers.RenameFile(HistoryItem.FilePath, newFileName);
+                    HistoryItem.FileName = Path.GetFileName(newFilePath);
                     HistoryItem.FilePath = newFilePath;
+
+                    if (!newFilePath.Equals(oldFilePath, StringComparison.OrdinalIgnoreCase) && hasCompanion)
+                    {
+                        if (File.Exists(oldCompanionPath))
+                        {
+                            string companionName = Path.GetFileNameWithoutExtension(newFilePath) +
+                                "-SDR" + Path.GetExtension(oldCompanionPath);
+                            string desiredCompanionPath = FileHelpers.GetUniqueFilePath(
+                                Path.Combine(Path.GetDirectoryName(newFilePath), companionName));
+                            string newCompanionPath = FileHelpers.RenameFile(
+                                oldCompanionPath,
+                                Path.GetFileName(desiredCompanionPath));
+                            HistoryArtifactMetadata.SetCompanionFilePath(HistoryItem, newCompanionPath);
+                        }
+                        else
+                        {
+                            HistoryArtifactMetadata.SetCompanionFilePath(HistoryItem, null);
+                        }
+                    }
+
                     OnEditRequested(HistoryItem);
                 }
             }

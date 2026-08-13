@@ -54,6 +54,20 @@ namespace ShareX.ScreenCaptureLib
         private HdrToneMappingMode toneMappingMode = HdrToneMappingMode.ContentAware;
         private HdrProcessingBackend processingBackend = HdrProcessingBackend.Cpu;
         private HdrPeakBrightnessMode? peakBrightnessMode;
+        private ObsGameCaptureSettings obsGameCapture = new ObsGameCaptureSettings();
+        private HdrFileOutputSettings fileOutput = new HdrFileOutputSettings();
+
+        public HdrFileOutputSettings FileOutput
+        {
+            get => fileOutput;
+            set => fileOutput = value ?? new HdrFileOutputSettings();
+        }
+
+        public ObsGameCaptureSettings ObsGameCapture
+        {
+            get => obsGameCapture;
+            set => obsGameCapture = value ?? new ObsGameCaptureSettings();
+        }
 
         public HdrPeakBrightnessMode PeakBrightnessMode
         {

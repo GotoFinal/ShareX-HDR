@@ -28,6 +28,7 @@ using ShareX.HelpersLib;
 using ShareX.HistoryLib;
 using ShareX.ImageEditor.Hosting;
 using ShareX.Properties;
+using ShareX.ScreenCaptureLib;
 using ShareX.UploadersLib;
 using System;
 using System.Collections.Generic;
@@ -381,6 +382,7 @@ namespace ShareX
 
                 DebugHelper.WriteLine("ShareX closing.");
 
+                Screenshot.ShutdownObsGameCapture();
                 WatchFolderManager?.Dispose();
                 SettingManager.HistoryClose();
                 SettingManager.SaveAllSettings();

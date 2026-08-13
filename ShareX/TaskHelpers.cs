@@ -391,6 +391,8 @@ namespace ShareX
             ImageData imageData = new ImageData();
             imageData.ImageStream = SaveImageAsStream(img, taskSettings.ImageSettings.ImageFormat, taskSettings);
             imageData.ImageFormat = taskSettings.ImageSettings.ImageFormat;
+            imageData.FileExtension = imageData.ImageFormat.GetDescription();
+            imageData.MediaType = GetImageMediaType(imageData.ImageFormat);
 
             if (taskSettings.ImageSettings.ImageAutoUseJPEG && taskSettings.ImageSettings.ImageFormat != EImageFormat.JPEG &&
                 imageData.ImageStream.Length > taskSettings.ImageSettings.ImageAutoUseJPEGSize * 1000)
@@ -410,10 +412,22 @@ namespace ShareX
                 }
 
                 imageData.ImageFormat = EImageFormat.JPEG;
+                imageData.FileExtension = imageData.ImageFormat.GetDescription();
+                imageData.MediaType = GetImageMediaType(imageData.ImageFormat);
             }
 
             return imageData;
         }
+
+        private static string GetImageMediaType(EImageFormat imageFormat) => imageFormat switch
+        {
+            EImageFormat.PNG => "image/png",
+            EImageFormat.JPEG => "image/jpeg",
+            EImageFormat.GIF => "image/gif",
+            EImageFormat.BMP => "image/bmp",
+            EImageFormat.TIFF => "image/tiff",
+            _ => "application/octet-stream"
+        };
 
         public static string CreateThumbnail(Bitmap bmp, string folder, string fileName, TaskSettings taskSettings)
         {
@@ -1219,6 +1233,12 @@ namespace ShareX
             {
                 if (taskSettings == null) taskSettings = TaskSettings.GetDefaultTaskSettings();
 
+                if (IsSupportedHdrEditorFile(filePath))
+                {
+                    AnnotateHdrImageFromFileAsync(filePath, taskSettings);
+                    return;
+                }
+
                 Bitmap bmp = ImageHelpers.LoadImage(filePath);
 
                 AnnotateImageAsync(bmp, filePath, taskSettings);
@@ -1227,6 +1247,141 @@ namespace ShareX
             {
                 MessageBox.Show("File does not exist:" + Environment.NewLine + filePath, "ShareX", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
+        }
+
+        private static bool IsSupportedHdrEditorFile(string filePath)
+        {
+            string extension = Path.GetExtension(filePath);
+            if (extension.Equals(".exr", StringComparison.OrdinalIgnoreCase))
+            {
+                return new OpenExrHdrImageDecoder().IsSupportedFile(filePath);
+            }
+
+            if (extension.Equals(".png", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HdrPngImageDecoder().IsSupportedFile(filePath);
+            }
+
+            return (extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase)) &&
+                new UltraHdrJpegImageDecoder().IsSupportedFile(filePath);
+        }
+
+        private static void AnnotateHdrImageFromFileAsync(string filePath, TaskSettings taskSettings)
+        {
+            TaskMetadata metadata = null;
+            Exception failure = null;
+            ThreadWorker worker = new ThreadWorker();
+
+            worker.DoWork += () =>
+            {
+                HdrImageDocument editedDocument = null;
+                HdrImageDocument outputDocument = null;
+
+                try
+                {
+                    HdrCaptureSettings hdrSettings = taskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
+                    using HdrImageDocument sourceDocument = DecodeHdrImageDocument(filePath, hdrSettings);
+                    float annotationWhiteNits = GetHdrAnnotationWhiteNits(sourceDocument);
+                    EditorOverlayEvents editorEvents = CreateHdrEditorEvents(
+                        sourceDocument,
+                        hdrSettings,
+                        taskSettings,
+                        filePath,
+                        annotationWhiteNits);
+
+                    ShowImageEditorSelector(taskSettings);
+                    if (taskSettings.ToolsSettingsReference.UseLegacyImageEditor)
+                    {
+                        ShowUnsupportedHdrEditorOperation(
+                            "HDR file editing requires the modern image editor. The image was not converted to SDR.");
+                        return;
+                    }
+
+                    HdrEditorBridgeResult result = HdrEditorBridge.ShowEditor(
+                        sourceDocument,
+                        hdrSettings,
+                        taskSettings.ToolsSettingsReference.ImageEditorOptions,
+                        annotationWhiteNits,
+                        out editedDocument,
+                        editorEvents,
+                        useContinueWorkflow: false);
+
+                    if (result == HdrEditorBridgeResult.Applied)
+                    {
+                        outputDocument = editedDocument;
+                        editedDocument = null;
+                    }
+                    else if (result == HdrEditorBridgeResult.ContinueWithoutApplying)
+                    {
+                        outputDocument = sourceDocument.Clone();
+                    }
+                    else if (result == HdrEditorBridgeResult.RequiresHdrOperationSupport)
+                    {
+                        ShowUnsupportedHdrEditorOperation(
+                            "One or more edits cannot yet be replayed over HDR pixels. The HDR file was not converted or queued.");
+                    }
+
+                    if (outputDocument != null)
+                    {
+                        Bitmap preview = outputDocument.CreateSdrPreview(hdrSettings);
+                        metadata = new TaskMetadata(preview, outputDocument);
+                        outputDocument = null;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    failure = exception;
+                }
+                finally
+                {
+                    editedDocument?.Dispose();
+                    outputDocument?.Dispose();
+                }
+            };
+
+            worker.Completed += () =>
+            {
+                if (failure != null)
+                {
+                    failure.ShowError(false);
+                }
+                else if (metadata != null)
+                {
+                    TaskMetadata ownedMetadata = metadata;
+                    metadata = null;
+                    UploadManager.RunImageTask(ownedMetadata, taskSettings);
+                }
+            };
+
+            worker.Start(ApartmentState.STA);
+        }
+
+        private static HdrImageDocument DecodeHdrImageDocument(
+            string filePath,
+            HdrCaptureSettings hdrSettings)
+        {
+            string extension = Path.GetExtension(filePath);
+            if (extension.Equals(".exr", StringComparison.OrdinalIgnoreCase))
+            {
+                return new OpenExrHdrImageDecoder().DecodeDocumentFile(
+                    filePath,
+                    HdrCaptureSettings.DefaultBrightnessNits,
+                    hdrSettings.FileOutput.MasteringDisplayMaximumNits);
+            }
+
+            if (extension.Equals(".png", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HdrPngImageDecoder().DecodeDocumentFile(filePath);
+            }
+
+            if (extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
+                extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase))
+            {
+                return new UltraHdrJpegImageDecoder().DecodeDocumentFile(filePath);
+            }
+
+            throw new NotSupportedException($"The HDR image format '{extension}' is not supported for editing.");
         }
 
         public static void AnnotateImageAsync(Bitmap bmp, string filePath, TaskSettings taskSettings)
@@ -1248,6 +1403,216 @@ namespace ShareX
 
             worker.Start(ApartmentState.STA);
         }
+
+        internal static HdrEditorBridgeResult AnnotateHdrImage(
+            HdrImageDocument document,
+            TaskSettings taskSettings,
+            out HdrImageDocument editedDocument)
+        {
+            editedDocument = null;
+            ShowImageEditorSelector(taskSettings);
+
+            if (taskSettings.ToolsSettingsReference.UseLegacyImageEditor)
+            {
+                return HdrEditorBridgeResult.RequiresHdrOperationSupport;
+            }
+
+            HdrCaptureSettings hdrSettings = taskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
+            return HdrEditorBridge.ShowEditor(
+                document,
+                hdrSettings,
+                taskSettings.ToolsSettingsReference.ImageEditorOptions,
+                GetHdrAnnotationWhiteNits(document),
+                out editedDocument);
+        }
+
+        private static float GetHdrAnnotationWhiteNits(HdrImageDocument document)
+        {
+            float selectedWhiteNits = 0f;
+
+            foreach (HdrCaptureSourceSegment segment in document.SourceSegments)
+            {
+                if (segment.SdrWhiteNits <= 0f)
+                {
+                    continue;
+                }
+
+                if (selectedWhiteNits > 0f && Math.Abs(selectedWhiteNits - segment.SdrWhiteNits) > 1f)
+                {
+                    return HdrCaptureSettings.DefaultBrightnessNits;
+                }
+
+                selectedWhiteNits = segment.SdrWhiteNits;
+            }
+
+            return selectedWhiteNits > 0f ? selectedWhiteNits : HdrCaptureSettings.DefaultBrightnessNits;
+        }
+
+        private static EditorOverlayEvents CreateHdrEditorEvents(
+            HdrImageDocument sourceDocument,
+            HdrCaptureSettings hdrSettings,
+            TaskSettings taskSettings,
+            string filePath,
+            float annotationWhiteNits)
+        {
+            return new EditorOverlayEvents
+            {
+                OpenImageRequested = newFilePath =>
+                {
+                    AnnotateImageFromFile(newFilePath, taskSettings);
+                    return true;
+                },
+                ImageFilePath = filePath,
+                SaveImageRequested = (export, currentFilePath) => SaveHdrEditorExport(
+                    sourceDocument,
+                    export,
+                    hdrSettings.FileOutput,
+                    annotationWhiteNits,
+                    currentFilePath,
+                    showDialog: false),
+                SaveImageAsRequested = (export, currentFilePath) => SaveHdrEditorExport(
+                    sourceDocument,
+                    export,
+                    hdrSettings.FileOutput,
+                    annotationWhiteNits,
+                    currentFilePath,
+                    showDialog: true)
+            };
+        }
+
+        private static string SaveHdrEditorExport(
+            HdrImageDocument sourceDocument,
+            EditorOverlayExport export,
+            HdrFileOutputSettings configuredSettings,
+            float annotationWhiteNits,
+            string filePath,
+            bool showDialog)
+        {
+            try
+            {
+                string destinationPath = showDialog || string.IsNullOrWhiteSpace(filePath)
+                    ? ShowHdrSaveFileDialog(filePath, configuredSettings.FileFormat)
+                    : filePath;
+                if (string.IsNullOrWhiteSpace(destinationPath))
+                {
+                    return null;
+                }
+
+                if (!TryGetHdrFileFormat(destinationPath, out HdrFileFormat format))
+                {
+                    ShowUnsupportedHdrEditorOperation(
+                        "HDR editor output must use OpenEXR (.exr), HDR PNG (.png), or Ultra HDR JPEG (.jpg/.jpeg).");
+                    return null;
+                }
+
+                HdrEditorBridgeResult result = HdrEditorBridge.ApplyExport(
+                    sourceDocument,
+                    export,
+                    annotationWhiteNits,
+                    out HdrImageDocument outputDocument);
+                if (result != HdrEditorBridgeResult.Applied || outputDocument == null)
+                {
+                    outputDocument?.Dispose();
+                    ShowUnsupportedHdrEditorOperation(
+                        "This edit cannot yet be replayed over HDR pixels. No SDR image was written in its place.");
+                    return null;
+                }
+
+                using (outputDocument)
+                using (ImageData imageData = HdrImageOutput.Encode(
+                    outputDocument,
+                    CloneHdrFileOutputSettings(configuredSettings, format)))
+                {
+                    return imageData.Write(destinationPath) ? destinationPath : null;
+                }
+            }
+            catch (Exception exception)
+            {
+                exception.ShowError(false);
+                return null;
+            }
+        }
+
+        private static string ShowHdrSaveFileDialog(string filePath, HdrFileFormat configuredFormat)
+        {
+            using SaveFileDialog dialog = new SaveFileDialog
+            {
+                Title = "ShareX - Save HDR image as",
+                AddExtension = true,
+                OverwritePrompt = true,
+                Filter = "OpenEXR (lossless) (*.exr)|*.exr|HDR PNG (experimental) (*.png)|*.png|Ultra HDR JPEG (*.jpg;*.jpeg)|*.jpg;*.jpeg|All files (*.*)|*.*",
+                FilterIndex = GetHdrSaveFilterIndex(filePath, configuredFormat)
+            };
+
+            if (!string.IsNullOrWhiteSpace(filePath))
+            {
+                dialog.FileName = Path.GetFileName(filePath);
+                string directory = Path.GetDirectoryName(filePath);
+                if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
+                {
+                    dialog.InitialDirectory = directory;
+                }
+            }
+
+            return dialog.ShowDialog() == DialogResult.OK ? dialog.FileName : null;
+        }
+
+        private static int GetHdrSaveFilterIndex(string filePath, HdrFileFormat configuredFormat)
+        {
+            if (TryGetHdrFileFormat(filePath, out HdrFileFormat pathFormat))
+            {
+                configuredFormat = pathFormat;
+            }
+
+            return configuredFormat switch
+            {
+                HdrFileFormat.OpenExr => 1,
+                HdrFileFormat.HdrPng => 2,
+                HdrFileFormat.UltraHdrJpeg => 3,
+                _ => 1
+            };
+        }
+
+        private static bool TryGetHdrFileFormat(string filePath, out HdrFileFormat format)
+        {
+            switch (Path.GetExtension(filePath)?.ToLowerInvariant())
+            {
+                case ".exr":
+                    format = HdrFileFormat.OpenExr;
+                    return true;
+                case ".png":
+                    format = HdrFileFormat.HdrPng;
+                    return true;
+                case ".jpg":
+                case ".jpeg":
+                    format = HdrFileFormat.UltraHdrJpeg;
+                    return true;
+                default:
+                    format = default;
+                    return false;
+            }
+        }
+
+        private static HdrFileOutputSettings CloneHdrFileOutputSettings(
+            HdrFileOutputSettings source,
+            HdrFileFormat format) => new HdrFileOutputSettings
+        {
+            OutputMode = HdrOutputMode.HdrOnly,
+            FileFormat = format,
+            MasteringDisplayMaximumNits = source.MasteringDisplayMaximumNits,
+            MasteringDisplayMinimumNits = source.MasteringDisplayMinimumNits,
+            JpegQuality = source.JpegQuality,
+            GainMapQuality = source.GainMapQuality,
+            FlattenTransparencyForUltraHdr = source.FlattenTransparencyForUltraHdr,
+            UploadWithFileUploader = source.UploadWithFileUploader
+        };
+
+        private static void ShowUnsupportedHdrEditorOperation(string message) =>
+            MessageBox.Show(
+                message,
+                "ShareX - HDR image editor",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
 
         public static Bitmap AnnotateImage(Bitmap bmp, string filePath, TaskSettings taskSettings, bool taskMode = false)
         {
@@ -1340,6 +1705,12 @@ namespace ShareX
 
             EditorEvents events = new EditorEvents
             {
+                OpenImageRequested = newFilePath =>
+                {
+                    if (!IsSupportedHdrEditorFile(newFilePath)) return false;
+                    AnnotateHdrImageFromFileAsync(newFilePath, taskSettings);
+                    return true;
+                },
                 CopyImageRequested = (skBitmap) =>
                 {
                     using Bitmap img = skBitmap.ToBitmap();
@@ -1417,7 +1788,7 @@ namespace ShareX
 
         // Avoid the slow PNG re-encode path for large captures while still bypassing
         // the WindowsForms Bitmap->SKBitmap conversion that regressed post-effects opens.
-        private static SKBitmap GdiBitmapToSkBitmap(Bitmap bitmap)
+        internal static SKBitmap GdiBitmapToSkBitmap(Bitmap bitmap)
         {
             Bitmap sourceBitmap = bitmap;
             bool disposeSourceBitmap = false;

@@ -25,6 +25,7 @@
 
 using ShareX.ImageEditor.Core.ImageEffects;
 using ShareX.ImageEditor.Core.ImageEffects.Manipulations;
+using ShareX.ImageEditor.Hosting;
 using CoreEffectParameter = ShareX.ImageEditor.Core.ImageEffects.Parameters.EffectParameter;
 
 namespace ShareX.ImageEditor.Presentation.Effects;
@@ -136,6 +137,46 @@ public sealed class EffectDefinition
         }
 
         return effect;
+    }
+
+    public EditorImageEffectDescriptor CreateDescriptor(IEnumerable<EffectParameterState> parameterStates)
+    {
+        ArgumentNullException.ThrowIfNull(parameterStates);
+
+        EditorImageEffectParameter[] parameters = parameterStates
+            .Select(CreateDescriptorParameter)
+            .ToArray();
+        EditorImageEffectReplayDeterminism replayDeterminism =
+            EditorImageEffectHdrCapabilities.GetCapability(Id) == EditorImageEffectHdrCapability.NativeFp16
+                ? EditorImageEffectReplayDeterminism.Deterministic
+                : EditorImageEffectReplayDeterminism.Unspecified;
+        return new EditorImageEffectDescriptor(Id, parameters, replayDeterminism);
+    }
+
+    private static EditorImageEffectParameter CreateDescriptorParameter(EffectParameterState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+
+        return state switch
+        {
+            SliderParameterState slider => EditorImageEffectParameter.Number(state.Key, slider.Value),
+            CheckboxParameterState checkbox => EditorImageEffectParameter.Boolean(state.Key, checkbox.Value),
+            EnumParameterState enumParameter => EditorImageEffectParameter.Enum(
+                state.Key,
+                enumParameter.SelectedOption.Value),
+            ColorParameterState color => EditorImageEffectParameter.Color(
+                state.Key,
+                color.Value.R,
+                color.Value.G,
+                color.Value.B,
+                color.Value.A),
+            NumericParameterState numeric => EditorImageEffectParameter.Decimal(
+                state.Key,
+                numeric.Value ?? numeric.DefaultValue),
+            TextParameterState text => EditorImageEffectParameter.Text(state.Key, text.Value),
+            FilePathParameterState filePath => EditorImageEffectParameter.FilePath(state.Key, filePath.Value),
+            _ => throw new NotSupportedException($"Unsupported image-effect parameter state '{state.GetType().FullName}'.")
+        };
     }
 
     private static ResizeImageEffectAspectRatioAnchor ResolveResizeImageAspectRatioAnchor(

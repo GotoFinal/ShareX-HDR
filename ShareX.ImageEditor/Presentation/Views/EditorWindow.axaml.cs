@@ -40,6 +40,9 @@ namespace ShareX.ImageEditor.Presentation.Views
         private readonly MainViewModel _viewModel;
         private string? _pendingFilePath;
         private bool _allowClose;
+        private ulong? _initialSourceFingerprint;
+        private bool _retainInitialSourceForOverlayExport;
+        private SKBitmap? _initialSourceForOverlayExport;
 
         public EditorWindow() : this(null)
         {
@@ -184,6 +187,8 @@ namespace ShareX.ImageEditor.Presentation.Views
                     throw new InvalidOperationException("SkiaSharp returned no bitmap.");
                 }
 
+                _initialSourceFingerprint = EditorImageFingerprint.Compute(bitmap);
+                RetainInitialSourceForOverlayExport(bitmap);
                 _viewModel.UpdatePreview(bitmap);
                 _viewModel.ImageFilePath = filePath;
                 _viewModel.IsDirty = false;
@@ -213,6 +218,8 @@ namespace ShareX.ImageEditor.Presentation.Views
                     throw new InvalidOperationException("SkiaSharp returned no bitmap.");
                 }
 
+                _initialSourceFingerprint = EditorImageFingerprint.Compute(bitmap);
+                RetainInitialSourceForOverlayExport(bitmap);
                 _viewModel.UpdatePreview(bitmap);
                 _viewModel.IsDirty = false;
             }
@@ -232,6 +239,8 @@ namespace ShareX.ImageEditor.Presentation.Views
 
             try
             {
+                _initialSourceFingerprint = EditorImageFingerprint.Compute(bitmap);
+                RetainInitialSourceForOverlayExport(bitmap);
                 _viewModel.UpdatePreview(bitmap);
                 _viewModel.IsDirty = false;
             }
@@ -275,6 +284,41 @@ namespace ShareX.ImageEditor.Presentation.Views
         {
             var editorView = this.FindControl<EditorView>("EditorViewControl");
             return editorView?.GetSource();
+        }
+
+        /// <summary>
+        /// Exports ordinary annotations as transparent sRGB overlays and
+        /// source-dependent annotations as ordered semantic operations.
+        /// </summary>
+        public EditorOverlayExport? GetAnnotationOverlayExport()
+        {
+            var editorView = this.FindControl<EditorView>(nameof(EditorViewControl));
+            return editorView?.GetAnnotationOverlayExport(
+                _initialSourceFingerprint,
+                _initialSourceForOverlayExport);
+        }
+
+        internal void EnableOverlaySourceOperationExport()
+        {
+            _retainInitialSourceForOverlayExport = true;
+        }
+
+        internal void ReleaseOverlaySourceOperationExport()
+        {
+            _initialSourceForOverlayExport?.Dispose();
+            _initialSourceForOverlayExport = null;
+            _retainInitialSourceForOverlayExport = false;
+        }
+
+        private void RetainInitialSourceForOverlayExport(SKBitmap bitmap)
+        {
+            if (!_retainInitialSourceForOverlayExport)
+            {
+                return;
+            }
+
+            _initialSourceForOverlayExport?.Dispose();
+            _initialSourceForOverlayExport = bitmap.Copy();
         }
 
         /// <summary>
