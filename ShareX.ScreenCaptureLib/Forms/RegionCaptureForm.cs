@@ -61,7 +61,8 @@ namespace ShareX.ScreenCaptureLib
         public bool IsEditorMode => Mode == RegionCaptureMode.Editor || Mode == RegionCaptureMode.TaskEditor;
         public bool IsAnnotationMode => Mode == RegionCaptureMode.Annotation || IsEditorMode;
         public bool IsImageModified => ShapeManager != null && ShapeManager.IsImageModified;
-        public bool CanExportHdrDrawingOverlay => ShapeManager != null && ShapeManager.EffectShapes.Length == 0;
+        public bool CanExportHdrDrawingOverlay => ShapeManager != null &&
+            HdrRegionEffectReplayer.CanReplay(ShapeManager.EffectShapes);
 
         public Point CurrentPosition { get; private set; }
         public SimpleWindowInfo SelectedWindow { get; private set; }
@@ -1604,6 +1605,23 @@ namespace ShareX.ScreenCaptureLib
 
             Rectangle localRectangle = RectangleToClient(selectedRectangle);
             return ShapeManager.RenderDrawingOverlay(localRectangle.Size, localRectangle.Location);
+        }
+
+        public void ApplyHdrRegionEffects(HdrImageDocument document, float annotationWhiteNits)
+        {
+            ArgumentNullException.ThrowIfNull(document);
+
+            Rectangle selectedRectangle = GetSelectedRectangle();
+            if (selectedRectangle.IsEmpty)
+            {
+                throw new InvalidOperationException("The region selection is empty.");
+            }
+
+            HdrRegionEffectReplayer.Replay(
+                document,
+                ShapeManager.EffectShapes,
+                RectangleToClient(selectedRectangle),
+                annotationWhiteNits);
         }
 
         private Bitmap ReceiveImageForTask()

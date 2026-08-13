@@ -296,6 +296,7 @@ namespace ShareX.ScreenCaptureLib
     public sealed class HdrImageDocument : IDisposable
     {
         public const float MaximumSupportedBlurSigma = 200f;
+        public const int MaximumSupportedBoxBlurRange = 199;
         public const float MaximumSupportedMagnification = 10f;
 
         private HdrRgba16FloatBuffer masterPixels;
@@ -1073,6 +1074,185 @@ namespace ShareX.ScreenCaptureLib
         }
 
         /// <summary>
+        /// Applies two horizontal/vertical box-blur passes to one local rectangle.
+        /// This matches the legacy region editor's blur strength and clipped-edge
+        /// sampling while retaining premultiplied linear scRGB values.
+        /// </summary>
+        public void BoxBlurRectangle(Rectangle localRectangle, int range)
+        {
+            if (localRectangle.Width <= 0 || localRectangle.Height <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(localRectangle));
+            }
+
+            if (range <= 1 || range > MaximumSupportedBoxBlurRange)
+            {
+                throw new ArgumentOutOfRangeException(nameof(range));
+            }
+
+            if ((range & 1) == 0)
+            {
+                range++;
+            }
+
+            HdrRgba16FloatBuffer pixels = MasterPixels;
+            Rectangle affected = Rectangle.Intersect(
+                new Rectangle(0, 0, pixels.Width, pixels.Height),
+                localRectangle);
+            if (affected.Width <= 0 || affected.Height <= 0)
+            {
+                return;
+            }
+
+            using var first = new HdrRgba16FloatBuffer(affected.Width, affected.Height);
+            using var second = new HdrRgba16FloatBuffer(affected.Width, affected.Height);
+            int rowBytes = checked(affected.Width * HdrRgba16FloatBuffer.BytesPerPixel);
+
+            for (int y = 0; y < affected.Height; y++)
+            {
+                pixels.GetRowSpan(affected.Top + y)
+                    .Slice(affected.Left * HdrRgba16FloatBuffer.BytesPerPixel, rowBytes)
+                    .CopyTo(first.GetWritableRowSpan(y));
+            }
+
+            for (int pass = 0; pass < 2; pass++)
+            {
+                BoxBlurHorizontal(first, second, range);
+                BoxBlurVertical(second, first, range);
+            }
+
+            for (int y = 0; y < affected.Height; y++)
+            {
+                first.GetRowSpan(y).CopyTo(
+                    pixels.GetWritableRowSpan(affected.Top + y)
+                        .Slice(affected.Left * HdrRgba16FloatBuffer.BytesPerPixel, rowBytes));
+            }
+
+            Revision = checked(Revision + 1);
+        }
+
+        private static void BoxBlurHorizontal(
+            HdrRgba16FloatBuffer source,
+            HdrRgba16FloatBuffer destination,
+            int range)
+        {
+            int halfRange = range / 2;
+
+            Parallel.For(0, source.Height, y =>
+            {
+                ReadOnlySpan<byte> sourceRow = source.GetRowSpan(y);
+                Span<byte> destinationRow = destination.GetWritableRowSpan(y);
+                double red = 0d;
+                double green = 0d;
+                double blue = 0d;
+                double alpha = 0d;
+                int count = 0;
+
+                for (int sampleX = 0; sampleX <= Math.Min(halfRange, source.Width - 1); sampleX++)
+                {
+                    int offset = sampleX * HdrRgba16FloatBuffer.BytesPerPixel;
+                    red += ReadHalf(sourceRow, offset);
+                    green += ReadHalf(sourceRow, offset + 2);
+                    blue += ReadHalf(sourceRow, offset + 4);
+                    alpha += ReadHalf(sourceRow, offset + 6);
+                    count++;
+                }
+
+                for (int x = 0; x < source.Width; x++)
+                {
+                    int destinationOffset = x * HdrRgba16FloatBuffer.BytesPerPixel;
+                    float inverseCount = 1f / count;
+                    WriteHalf(destinationRow, destinationOffset, (float)red * inverseCount);
+                    WriteHalf(destinationRow, destinationOffset + 2, (float)green * inverseCount);
+                    WriteHalf(destinationRow, destinationOffset + 4, (float)blue * inverseCount);
+                    WriteHalf(destinationRow, destinationOffset + 6, Math.Clamp((float)alpha * inverseCount, 0f, 1f));
+
+                    int removeX = x - halfRange;
+                    if (removeX >= 0)
+                    {
+                        int offset = removeX * HdrRgba16FloatBuffer.BytesPerPixel;
+                        red -= ReadHalf(sourceRow, offset);
+                        green -= ReadHalf(sourceRow, offset + 2);
+                        blue -= ReadHalf(sourceRow, offset + 4);
+                        alpha -= ReadHalf(sourceRow, offset + 6);
+                        count--;
+                    }
+
+                    int addX = x + halfRange + 1;
+                    if (addX < source.Width)
+                    {
+                        int offset = addX * HdrRgba16FloatBuffer.BytesPerPixel;
+                        red += ReadHalf(sourceRow, offset);
+                        green += ReadHalf(sourceRow, offset + 2);
+                        blue += ReadHalf(sourceRow, offset + 4);
+                        alpha += ReadHalf(sourceRow, offset + 6);
+                        count++;
+                    }
+                }
+            });
+        }
+
+        private static void BoxBlurVertical(
+            HdrRgba16FloatBuffer source,
+            HdrRgba16FloatBuffer destination,
+            int range)
+        {
+            int halfRange = range / 2;
+
+            Parallel.For(0, source.Width, x =>
+            {
+                int offset = x * HdrRgba16FloatBuffer.BytesPerPixel;
+                double red = 0d;
+                double green = 0d;
+                double blue = 0d;
+                double alpha = 0d;
+                int count = 0;
+
+                for (int sampleY = 0; sampleY <= Math.Min(halfRange, source.Height - 1); sampleY++)
+                {
+                    ReadOnlySpan<byte> row = source.GetRowSpan(sampleY);
+                    red += ReadHalf(row, offset);
+                    green += ReadHalf(row, offset + 2);
+                    blue += ReadHalf(row, offset + 4);
+                    alpha += ReadHalf(row, offset + 6);
+                    count++;
+                }
+
+                for (int y = 0; y < source.Height; y++)
+                {
+                    Span<byte> destinationRow = destination.GetWritableRowSpan(y);
+                    float inverseCount = 1f / count;
+                    WriteHalf(destinationRow, offset, (float)red * inverseCount);
+                    WriteHalf(destinationRow, offset + 2, (float)green * inverseCount);
+                    WriteHalf(destinationRow, offset + 4, (float)blue * inverseCount);
+                    WriteHalf(destinationRow, offset + 6, Math.Clamp((float)alpha * inverseCount, 0f, 1f));
+
+                    int removeY = y - halfRange;
+                    if (removeY >= 0)
+                    {
+                        ReadOnlySpan<byte> row = source.GetRowSpan(removeY);
+                        red -= ReadHalf(row, offset);
+                        green -= ReadHalf(row, offset + 2);
+                        blue -= ReadHalf(row, offset + 4);
+                        alpha -= ReadHalf(row, offset + 6);
+                        count--;
+                    }
+
+                    int addY = y + halfRange + 1;
+                    if (addY < source.Height)
+                    {
+                        ReadOnlySpan<byte> row = source.GetRowSpan(addY);
+                        red += ReadHalf(row, offset);
+                        green += ReadHalf(row, offset + 2);
+                        blue += ReadHalf(row, offset + 4);
+                        alpha += ReadHalf(row, offset + 6);
+                        count++;
+                    }
+                }
+            });
+        }
+
+        /// <summary>
         /// Applies one combined black spotlight overlay while leaving the union
         /// of the supplied axis-aligned rectangles unchanged.
         /// </summary>
@@ -1305,6 +1485,83 @@ namespace ShareX.ScreenCaptureLib
                             HdrRgba16FloatBuffer.BytesPerPixel));
                 }
             }
+
+            Revision = checked(Revision + 1);
+        }
+
+        /// <summary>
+        /// Pixelates a rectangle using blocks anchored to that rectangle, matching
+        /// the legacy region editor while averaging premultiplied linear HDR values.
+        /// </summary>
+        public void PixelateBlocksRectangle(Rectangle localRectangle, int pixelSize)
+        {
+            if (localRectangle.Width <= 0 || localRectangle.Height <= 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(localRectangle));
+            }
+
+            if (pixelSize <= 1)
+            {
+                throw new ArgumentOutOfRangeException(nameof(pixelSize));
+            }
+
+            HdrRgba16FloatBuffer pixels = MasterPixels;
+            Rectangle affected = Rectangle.Intersect(
+                new Rectangle(0, 0, pixels.Width, pixels.Height),
+                localRectangle);
+            if (affected.Width <= 0 || affected.Height <= 0)
+            {
+                return;
+            }
+
+            int blockRows = (affected.Height + pixelSize - 1) / pixelSize;
+            Parallel.For(0, blockRows, blockRow =>
+            {
+                int top = affected.Top + blockRow * pixelSize;
+                int bottom = Math.Min(top + pixelSize, affected.Bottom);
+
+                for (int left = affected.Left; left < affected.Right; left += pixelSize)
+                {
+                    int right = Math.Min(left + pixelSize, affected.Right);
+                    double red = 0d;
+                    double green = 0d;
+                    double blue = 0d;
+                    double alpha = 0d;
+                    int count = checked((right - left) * (bottom - top));
+
+                    for (int y = top; y < bottom; y++)
+                    {
+                        ReadOnlySpan<byte> row = pixels.GetRowSpan(y);
+                        for (int x = left; x < right; x++)
+                        {
+                            int offset = x * HdrRgba16FloatBuffer.BytesPerPixel;
+                            red += ReadHalf(row, offset);
+                            green += ReadHalf(row, offset + 2);
+                            blue += ReadHalf(row, offset + 4);
+                            alpha += ReadHalf(row, offset + 6);
+                        }
+                    }
+
+                    float inverseCount = 1f / count;
+                    float averageRed = (float)red * inverseCount;
+                    float averageGreen = (float)green * inverseCount;
+                    float averageBlue = (float)blue * inverseCount;
+                    float averageAlpha = Math.Clamp((float)alpha * inverseCount, 0f, 1f);
+
+                    for (int y = top; y < bottom; y++)
+                    {
+                        Span<byte> row = pixels.GetWritableRowSpan(y);
+                        for (int x = left; x < right; x++)
+                        {
+                            int offset = x * HdrRgba16FloatBuffer.BytesPerPixel;
+                            WriteHalf(row, offset, averageRed);
+                            WriteHalf(row, offset + 2, averageGreen);
+                            WriteHalf(row, offset + 4, averageBlue);
+                            WriteHalf(row, offset + 6, averageAlpha);
+                        }
+                    }
+                }
+            });
 
             Revision = checked(Revision + 1);
         }

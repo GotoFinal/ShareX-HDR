@@ -242,6 +242,9 @@ namespace ShareX
 
             try
             {
+                float annotationWhiteNits = TaskHelpers.GetHdrAnnotationWhiteNits(document);
+                form.ApplyHdrRegionEffects(document, annotationWhiteNits);
+
                 using Bitmap overlay = form.GetHdrDrawingOverlay();
                 if (overlay == null || overlay.Size != result.Size)
                 {
@@ -254,7 +257,7 @@ namespace ShareX
 
                 document.CompositeSdrAnnotationOverlay(
                     overlay,
-                    TaskHelpers.GetHdrAnnotationWhiteNits(document));
+                    annotationWhiteNits);
                 return document;
             }
             catch
