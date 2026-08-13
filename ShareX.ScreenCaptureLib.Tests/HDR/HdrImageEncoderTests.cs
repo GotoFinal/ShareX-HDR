@@ -195,12 +195,12 @@ public class HdrImageEncoderTests
     }
 
     [Fact]
-    public void HdrOutputSettings_DefaultToSdrOutputWithPngPreselectedAndClampMetadata()
+    public void HdrOutputSettings_DefaultToSdrOutputWithAvifPreselectedAndClampMetadata()
     {
         var settings = new HdrFileOutputSettings();
 
         Assert.Equal(HdrOutputMode.SdrOnly, settings.OutputMode);
-        Assert.Equal(HdrFileFormat.HdrPng, settings.FileFormat);
+        Assert.Equal(HdrFileFormat.Avif, settings.FileFormat);
 
         settings.MasteringDisplayMaximumNits = 50000f;
         settings.MasteringDisplayMinimumNits = -1f;

@@ -74,7 +74,7 @@ namespace ShareX.ScreenCaptureLib
         public const float DefaultMasteringDisplayMinimumNits = 0.0005f;
 
         private HdrOutputMode outputMode = HdrOutputMode.SdrOnly;
-        private HdrFileFormat fileFormat = HdrFileFormat.HdrPng;
+        private HdrFileFormat fileFormat = HdrFileFormat.Avif;
         private float masteringDisplayMaximumNits = DefaultMasteringDisplayMaximumNits;
         private float masteringDisplayMinimumNits = DefaultMasteringDisplayMinimumNits;
         private int jpegQuality = 95;
@@ -83,7 +83,7 @@ namespace ShareX.ScreenCaptureLib
         private int avifSpeed = 6;
         private OpenExrExposureMode openExrExposureMode = OpenExrExposureMode.DisplayReferenced;
         private HdrClipboardOutputMode clipboardOutputMode = HdrClipboardOutputMode.HdrAndSdr;
-        private HdrFileFormat clipboardFileFormat = HdrFileFormat.HdrPng;
+        private HdrFileFormat clipboardFileFormat = HdrFileFormat.Avif;
 
         public bool UploadWithFileUploader { get; set; } = true;
 
@@ -104,7 +104,7 @@ namespace ShareX.ScreenCaptureLib
         public HdrFileFormat FileFormat
         {
             get => fileFormat;
-            set => fileFormat = Enum.IsDefined(value) ? value : HdrFileFormat.HdrPng;
+            set => fileFormat = Enum.IsDefined(value) ? value : HdrFileFormat.Avif;
         }
 
         public float MasteringDisplayMaximumNits
@@ -140,7 +140,7 @@ namespace ShareX.ScreenCaptureLib
         public HdrFileFormat ClipboardFileFormat
         {
             get => clipboardFileFormat;
-            set => clipboardFileFormat = Enum.IsDefined(value) ? value : HdrFileFormat.HdrPng;
+            set => clipboardFileFormat = Enum.IsDefined(value) ? value : HdrFileFormat.Avif;
         }
 
         public int AvifQuality

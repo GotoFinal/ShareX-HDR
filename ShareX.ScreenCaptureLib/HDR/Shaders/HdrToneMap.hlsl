@@ -13,6 +13,10 @@ cbuffer ToneMapConstants : register(b0)
     float CurveYA;
     float CurveYB;
     uint UseToneMapMask;
+    uint PreserveAlpha;
+    uint Padding0;
+    uint Padding1;
+    uint Padding2;
 };
 
 struct VertexOutput
@@ -75,10 +79,23 @@ float4 PixelMain(VertexOutput input) : SV_Target
 {
     int2 pixel = int2(input.Position.xy);
     float4 source = SourceTexture.Load(int3(pixel, 0));
+    float alpha = saturate(SanitizeLinear(source.a));
     float3 color = float3(
         SanitizeLinear(source.r),
         SanitizeLinear(source.g),
         SanitizeLinear(source.b));
+
+    if (PreserveAlpha != 0)
+    {
+        if (alpha <= 0.0f)
+        {
+            color = 0.0f;
+        }
+        else if (alpha < 1.0f)
+        {
+            color /= alpha;
+        }
+    }
 
     color /= PaperWhiteScRgb;
     float maxRgb = GetRec2020Max(color);
@@ -93,5 +110,5 @@ float4 PixelMain(VertexOutput input) : SV_Target
     }
 
     color = saturate(color);
-    return float4(EncodeSrgb(color), 1.0f);
+    return float4(EncodeSrgb(color), PreserveAlpha != 0 ? alpha : 1.0f);
 }

@@ -64,6 +64,8 @@ namespace ShareX.ScreenCaptureLib
 
             if (TryCaptureObsGame(rect, IntPtr.Zero, out document, out ObsGameCaptureAttempt obsAttempt))
             {
+                document.NormalizeMixedMonitorBrightness(HdrSettings);
+
                 if (ShouldCaptureObsCursor(obsAttempt.CursorMode))
                 {
                     CompositeCursor(document, rect);
@@ -74,9 +76,14 @@ namespace ShareX.ScreenCaptureLib
 
             bool captured = WindowsGraphicsCapture.TryCaptureHdr(rect, null, out document);
 
-            if (captured && CaptureCursor)
+            if (captured)
             {
-                CompositeCursor(document, rect);
+                document.NormalizeMixedMonitorBrightness(HdrSettings);
+
+                if (CaptureCursor)
+                {
+                    CompositeCursor(document, rect);
+                }
             }
 
             return captured;
@@ -266,6 +273,8 @@ namespace ShareX.ScreenCaptureLib
 
             try
             {
+                capturedDocument.NormalizeMixedMonitorBrightness(HdrSettings);
+
                 if (HdrSettings.ToneMappingMode != HdrToneMappingMode.Uniform)
                 {
                     capturedDocument.CaptureWindowRegions(HdrSettings);

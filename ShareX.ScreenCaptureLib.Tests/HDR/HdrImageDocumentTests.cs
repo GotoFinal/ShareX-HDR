@@ -558,6 +558,83 @@ public class HdrImageDocumentTests
             document.ApplyHighlightRectangle(new Rectangle(0, 0, 1, 1), 255, 255, 0, 0f));
     }
 
+    [Fact]
+    public void NormalizeMixedMonitorBrightness_MatchesHdrWhiteWithoutScalingForegroundHdrPixels()
+    {
+        byte[] sourceBytes = new byte[4 * HdrRgba16FloatBuffer.BytesPerPixel];
+        WritePixel(sourceBytes, 0, 1f, 1f, 1f, 1f);
+        WritePixel(sourceBytes, 8, 4f, 3f, 2f, 1f);
+        WritePixel(sourceBytes, 16, 5f, 4f, 3f, 1f);
+        WritePixel(sourceBytes, 24, 1f, 1f, 1f, 1f);
+        using HdrRgba16FloatBuffer pixels = HdrRgba16FloatBuffer.CopyFrom(
+            sourceBytes,
+            sourceBytes.Length,
+            4,
+            1);
+        using var document = new HdrImageDocument(
+            new Rectangle(0, 0, 4, 1),
+            pixels.Clone(),
+            new[]
+            {
+                new HdrCaptureSourceSegment(new Rectangle(0, 0, 4, 1), "SDR", false, 80f, 300f),
+                new HdrCaptureSourceSegment(new Rectangle(1, 0, 2, 1), "HDR game", true, 203f, 1000f)
+            });
+
+        document.NormalizeMixedMonitorBrightness(new HdrCaptureSettings());
+
+        float expectedSdrWhite = 203f / HdrRgba16FloatBuffer.ReferenceWhiteNits;
+        ReadOnlySpan<byte> row = document.MasterPixels.GetRowSpan(0);
+        Assert.Equal(expectedSdrWhite, ReadHalf(row, 0), 2);
+        Assert.Equal(4f, ReadHalf(row, 8));
+        Assert.Equal(5f, ReadHalf(row, 16));
+        Assert.Equal(expectedSdrWhite, ReadHalf(row, 24), 2);
+        Assert.Equal(203f, document.SourceSegments[0].SdrWhiteNits);
+        Assert.Equal(203f, document.SourceSegments[1].SdrWhiteNits);
+        Assert.Equal(0, document.Revision);
+    }
+
+    [Fact]
+    public void NormalizeMixedMonitorBrightness_CustomAndPreserveModesAreExplicit()
+    {
+        static HdrImageDocument CreateDocument()
+        {
+            byte[] bytes = new byte[2 * HdrRgba16FloatBuffer.BytesPerPixel];
+            WritePixel(bytes, 0, 1f, 1f, 1f, 1f);
+            WritePixel(bytes, 8, 2f, 2f, 2f, 1f);
+            using HdrRgba16FloatBuffer pixels = HdrRgba16FloatBuffer.CopyFrom(
+                bytes,
+                bytes.Length,
+                2,
+                1);
+            return new HdrImageDocument(
+                new Rectangle(0, 0, 2, 1),
+                pixels.Clone(),
+                new[]
+                {
+                    new HdrCaptureSourceSegment(new Rectangle(0, 0, 1, 1), "SDR", false, 80f, 300f),
+                    new HdrCaptureSourceSegment(new Rectangle(1, 0, 1, 1), "HDR", true, 203f, 1000f)
+                });
+        }
+
+        using HdrImageDocument preserved = CreateDocument();
+        preserved.NormalizeMixedMonitorBrightness(new HdrCaptureSettings
+        {
+            MixedMonitorBrightnessMode = HdrMixedMonitorBrightnessMode.Preserve
+        });
+        Assert.Equal(1f, ReadHalf(preserved.MasterPixels.GetRowSpan(0), 0));
+        Assert.Equal(80f, preserved.SourceSegments[0].SdrWhiteNits);
+
+        using HdrImageDocument custom = CreateDocument();
+        custom.NormalizeMixedMonitorBrightness(new HdrCaptureSettings
+        {
+            MixedMonitorBrightnessMode = HdrMixedMonitorBrightnessMode.Custom,
+            MixedMonitorCustomSdrWhiteNits = 250f
+        });
+        Assert.Equal(250f / 80f, ReadHalf(custom.MasterPixels.GetRowSpan(0), 0), 2);
+        Assert.Equal(250f, custom.SourceSegments[0].SdrWhiteNits);
+        Assert.Equal(2f, ReadHalf(custom.MasterPixels.GetRowSpan(0), 8));
+    }
+
     private static void WritePixel(
         Span<byte> destination,
         int offset,

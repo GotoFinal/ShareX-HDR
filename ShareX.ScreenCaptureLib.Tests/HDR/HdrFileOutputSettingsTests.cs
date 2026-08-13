@@ -12,20 +12,20 @@ public class HdrFileOutputSettingsTests
         Assert.True(settings.UploadWithFileUploader);
         Assert.False(settings.FlattenTransparencyForUltraHdr);
         Assert.Equal(HdrOutputMode.SdrOnly, settings.OutputMode);
-        Assert.Equal(HdrFileFormat.HdrPng, settings.FileFormat);
+        Assert.Equal(HdrFileFormat.Avif, settings.FileFormat);
         Assert.Equal(HdrClipboardOutputMode.HdrAndSdr, settings.ClipboardOutputMode);
-        Assert.Equal(HdrFileFormat.HdrPng, settings.ClipboardFileFormat);
+        Assert.Equal(HdrFileFormat.Avif, settings.ClipboardFileFormat);
         Assert.Equal(OpenExrExposureMode.DisplayReferenced, settings.OpenExrExposureMode);
         Assert.Equal(90, settings.AvifQuality);
         Assert.Equal(6, settings.AvifSpeed);
 
         settings.FileFormat = (HdrFileFormat)99;
 
-        Assert.Equal(HdrFileFormat.HdrPng, settings.FileFormat);
+        Assert.Equal(HdrFileFormat.Avif, settings.FileFormat);
 
         settings.ClipboardFileFormat = (HdrFileFormat)99;
 
-        Assert.Equal(HdrFileFormat.HdrPng, settings.ClipboardFileFormat);
+        Assert.Equal(HdrFileFormat.Avif, settings.ClipboardFileFormat);
     }
 
     [Fact]

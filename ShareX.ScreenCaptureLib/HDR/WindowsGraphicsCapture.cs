@@ -638,14 +638,6 @@ namespace ShareX.ScreenCaptureLib
 
                 int width = Math.Min(frame.ContentSize.Width, (int)sourceDescription.Width);
                 int height = Math.Min(frame.ContentSize.Height, (int)sourceDescription.Height);
-                HdrToSdrToneMapper.ToneMapParameters parameters =
-                    HdrToSdrToneMapper.CreateToneMapParameters(
-                        settings.HdrBrightnessNits,
-                        settings.PeakBrightnessMode,
-                        settings.ToneMappingMode,
-                        sdrWhiteNits,
-                        maxLuminanceNits);
-
                 if (settings.ProcessingBackend == HdrProcessingBackend.Gpu)
                 {
                     Stopwatch gpuTimer = Stopwatch.StartNew();
@@ -661,7 +653,7 @@ namespace ShareX.ScreenCaptureLib
                             settings,
                             sdrWhiteNits,
                             maxLuminanceNits);
-                        LogToneMap("GPU", width, height, parameters, maxLuminanceNits, gpuTimer.Elapsed);
+                        LogToneMap("GPU", width, height, maxLuminanceNits, gpuTimer.Elapsed);
                         return gpuBitmap;
                     }
                     catch (Exception e)
@@ -702,7 +694,7 @@ namespace ShareX.ScreenCaptureLib
                         settings,
                         sdrWhiteNits,
                         maxLuminanceNits);
-                    LogToneMap("CPU", width, height, parameters, maxLuminanceNits, cpuTimer.Elapsed);
+                    LogToneMap("CPU", width, height, maxLuminanceNits, cpuTimer.Elapsed);
                     return cpuBitmap;
                 }
                 finally
@@ -763,12 +755,11 @@ namespace ShareX.ScreenCaptureLib
                 string backend,
                 int width,
                 int height,
-                HdrToSdrToneMapper.ToneMapParameters parameters,
                 float displayPeakNits,
                 TimeSpan elapsed)
             {
                 Log(
-                    $"tone-map backend={backend} size={width}x{height} paperWhite={parameters.PaperWhiteNits:F1}nits sourcePeak={parameters.SourcePeakNits:F1}nits displayPeak={displayPeakNits:F1}nits elapsedMs={elapsed.TotalMilliseconds:F1}");
+                    $"tone-map backend={backend} size={width}x{height} displayPeak={displayPeakNits:F1}nits elapsedMs={elapsed.TotalMilliseconds:F1}");
             }
 
             public sealed class MonitorCaptureSession : IDisposable

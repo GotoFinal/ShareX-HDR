@@ -1267,7 +1267,7 @@
             // nudHDRBrightnessNits
             //
             resources.ApplyResources(nudHDRBrightnessNits, "nudHDRBrightnessNits");
-            nudHDRBrightnessNits.Maximum = new decimal(new int[] { 1000, 0, 0, 0 });
+            nudHDRBrightnessNits.Maximum = new decimal(new int[] { 10000, 0, 0, 0 });
             nudHDRBrightnessNits.Minimum = new decimal(new int[] { 80, 0, 0, 0 });
             nudHDRBrightnessNits.Name = "nudHDRBrightnessNits";
             nudHDRBrightnessNits.Value = new decimal(new int[] { 203, 0, 0, 0 });

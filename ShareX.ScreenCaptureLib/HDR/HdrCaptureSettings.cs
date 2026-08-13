@@ -40,10 +40,31 @@ namespace ShareX.ScreenCaptureLib
 
     public enum HdrPeakBrightnessMode
     {
-        [Description("Automatic")]
+        [Description("Automatic (measure HDR content)")]
         Automatic,
 
         [Description("Custom")]
+        Custom
+    }
+
+    public enum HdrPaperWhiteMode
+    {
+        [Description("Automatic (Windows SDR brightness)")]
+        Automatic,
+
+        [Description("Custom")]
+        Custom
+    }
+
+    public enum HdrMixedMonitorBrightnessMode
+    {
+        [Description("Match nearest HDR display (recommended)")]
+        MatchHdrDisplay,
+
+        [Description("Preserve captured luminance")]
+        Preserve,
+
+        [Description("Custom SDR white")]
         Custom
     }
 
@@ -61,13 +82,19 @@ namespace ShareX.ScreenCaptureLib
     public sealed class HdrCaptureSettings
     {
         public const float MinimumBrightnessNits = 80f;
-        public const float MaximumBrightnessNits = 1000f;
+        public const float MaximumBrightnessNits = 10000f;
+        public const float MaximumPaperWhiteNits = 1000f;
         public const float DefaultBrightnessNits = 203f;
+        public const float DefaultCustomPeakBrightnessNits = 1000f;
 
         private float hdrBrightnessNits = DefaultBrightnessNits;
         private HdrToneMappingMode toneMappingMode = HdrToneMappingMode.ContentAware;
         private HdrProcessingBackend processingBackend = HdrProcessingBackend.Gpu;
         private HdrPeakBrightnessMode? peakBrightnessMode;
+        private HdrPaperWhiteMode paperWhiteMode;
+        private float paperWhiteNits = DefaultBrightnessNits;
+        private HdrMixedMonitorBrightnessMode mixedMonitorBrightnessMode;
+        private float mixedMonitorCustomSdrWhiteNits = DefaultBrightnessNits;
         private HdrGameWindowPromotionMode gameWindowPromotionMode = HdrGameWindowPromotionMode.AutomaticFullscreenHdr;
         private ObsGameCaptureSettings obsGameCapture = new ObsGameCaptureSettings();
         private HdrFileOutputSettings fileOutput = new HdrFileOutputSettings();
@@ -106,6 +133,35 @@ namespace ShareX.ScreenCaptureLib
         {
             get => toneMappingMode;
             set => toneMappingMode = Enum.IsDefined(value) ? value : HdrToneMappingMode.ContentAware;
+        }
+
+        public HdrPaperWhiteMode PaperWhiteMode
+        {
+            get => paperWhiteMode;
+            set => paperWhiteMode = Enum.IsDefined(value) ? value : HdrPaperWhiteMode.Automatic;
+        }
+
+        public float PaperWhiteNits
+        {
+            get => paperWhiteNits;
+            set => paperWhiteNits = Math.Clamp(value, MinimumBrightnessNits, MaximumPaperWhiteNits);
+        }
+
+        public HdrMixedMonitorBrightnessMode MixedMonitorBrightnessMode
+        {
+            get => mixedMonitorBrightnessMode;
+            set => mixedMonitorBrightnessMode = Enum.IsDefined(value)
+                ? value
+                : HdrMixedMonitorBrightnessMode.MatchHdrDisplay;
+        }
+
+        public float MixedMonitorCustomSdrWhiteNits
+        {
+            get => mixedMonitorCustomSdrWhiteNits;
+            set => mixedMonitorCustomSdrWhiteNits = Math.Clamp(
+                value,
+                MinimumBrightnessNits,
+                MaximumPaperWhiteNits);
         }
 
         public HdrGameWindowPromotionMode GameWindowPromotionMode

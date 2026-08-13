@@ -75,6 +75,12 @@ namespace ShareX
         private Label lblHdrAvifSpeed;
         private NumericUpDown nudHdrAvifQuality;
         private NumericUpDown nudHdrAvifSpeed;
+        private ComboBox cbHdrMixedMonitorBrightnessMode;
+        private NumericUpDown nudHdrMixedMonitorWhiteNits;
+        private Panel pHdrToneMapping;
+        private ComboBox cbHdrPaperWhiteMode;
+        private NumericUpDown nudHdrPaperWhiteNits;
+        private Label lblHdrPaperWhiteNits;
 
         private sealed class HdrFileFormatItem
         {
@@ -123,6 +129,7 @@ namespace ShareX
             InitializeComponent();
             TaskSettings = hotkeySetting;
             IsDefault = isDefault;
+            InitializeHdrToneMappingControls();
             InitializeObsGameCaptureControls();
             InitializeHdrFileOutputControls();
             ShareXResources.ApplyTheme(this, true);
@@ -376,6 +383,7 @@ namespace ShareX
                     x.Mode == TaskSettings.CaptureSettings.HdrSettings.ToneMappingMode);
             SetHdrControlsEnabled(TaskSettings.CaptureSettings.UseHDRSupport);
             nudHDRBrightnessNits.SetValue((decimal)TaskSettings.CaptureSettings.HdrSettings.HdrBrightnessNits);
+            LoadHdrToneMappingSettings();
             LoadObsGameCaptureSettings();
             LoadHdrFileOutputSettings();
             nudCaptureCustomRegionX.SetValue(TaskSettings.CaptureSettings.CaptureCustomRegion.X);
@@ -1706,10 +1714,41 @@ namespace ShareX
                 }
             };
 
+            AddHdrOutputLabel("Mixed-monitor SDR brightness:", 4, 443);
+            cbHdrMixedMonitorBrightnessMode =
+                CreateObsEnumComboBox<HdrMixedMonitorBrightnessMode>(190, 439, 320);
+            cbHdrMixedMonitorBrightnessMode.SelectedIndexChanged += (_, _) =>
+            {
+                if (loaded && TryGetObsEnumValue(
+                    cbHdrMixedMonitorBrightnessMode.SelectedItem,
+                    out HdrMixedMonitorBrightnessMode value))
+                {
+                    GetHdrCaptureSettings().MixedMonitorBrightnessMode = value;
+                    UpdateHdrFileOutputControlsEnabled();
+                }
+            };
+            pHdrFileOutput.Controls.Add(cbHdrMixedMonitorBrightnessMode);
+
+            AddHdrOutputLabel("Custom SDR white (nits):", 4, 477);
+            nudHdrMixedMonitorWhiteNits = CreateHdrOutputNumeric(
+                190,
+                473,
+                (decimal)HdrCaptureSettings.MinimumBrightnessNits,
+                (decimal)HdrCaptureSettings.MaximumPaperWhiteNits,
+                (decimal)HdrCaptureSettings.DefaultBrightnessNits);
+            nudHdrMixedMonitorWhiteNits.ValueChanged += (_, _) =>
+            {
+                if (loaded)
+                {
+                    GetHdrCaptureSettings().MixedMonitorCustomSdrWhiteNits =
+                        (float)nudHdrMixedMonitorWhiteNits.Value;
+                }
+            };
+
             lblHdrEncoderAvailability = new Label
             {
                 AutoSize = false,
-                Location = new Point(4, 440),
+                Location = new Point(4, 508),
                 Size = new Size(514, 42)
             };
             pHdrFileOutput.Controls.Add(lblHdrEncoderAvailability);
@@ -1718,8 +1757,8 @@ namespace ShareX
             var details = new Label
             {
                 AutoSize = false,
-                Location = new Point(4, 487),
-                Size = new Size(514, 255),
+                Location = new Point(4, 555),
+                Size = new Size(514, 285),
                 Text =
                     "Ultra HDR JPEG is the recommended shareable format: HDR-aware viewers use its gain map, " +
                     "and other viewers show the embedded SDR JPEG. HDR AVIF stores a compact 10-bit BT.2020/PQ " +
@@ -1737,7 +1776,10 @@ namespace ShareX
                     "the standard compatibility slots, while retaining the selected HDR bytes in explicit MIME " +
                     "and ShareX formats. Ultra HDR JPEG can also remain a normal JPEG because it contains its own " +
                     "SDR base. Windows has no universal negotiated HDR clipboard bitmap format, so applications " +
-                    "must understand the selected encoded format to paste the HDR representation."
+                    "must understand the selected encoded format to paste the HDR representation. In mixed-monitor " +
+                    "captures, Match nearest HDR display raises SDR-monitor paper white to the nearest HDR display's " +
+                    "Windows SDR brightness while respecting foreground HDR/game boundaries. Preserve keeps the " +
+                    "captured absolute luminance; Custom uses the entered paper-white value."
             };
             pHdrFileOutput.Controls.Add(details);
         }
@@ -1822,6 +1864,12 @@ namespace ShareX
             cbHdrUploadWithFileUploader.Checked = settings.UploadWithFileUploader;
             cbHdrClipboardOutputMode.SelectedIndex = (int)settings.ClipboardOutputMode;
             cbHdrClipboardFileFormat.SelectedItem = selectedClipboardFormat;
+            HdrCaptureSettings captureSettings = GetHdrCaptureSettings();
+            SelectObsEnumValue(
+                cbHdrMixedMonitorBrightnessMode,
+                captureSettings.MixedMonitorBrightnessMode);
+            nudHdrMixedMonitorWhiteNits.SetValue(
+                (decimal)captureSettings.MixedMonitorCustomSdrWhiteNits);
             UpdateHdrFileOutputControlsEnabled();
         }
 
@@ -1860,6 +1908,10 @@ namespace ShareX
             pHdrFileOutput.Enabled = hdrEnabled;
             cbHdrClipboardOutputMode.Enabled = hdrEnabled;
             cbHdrClipboardFileFormat.Enabled = hdrClipboardEnabled;
+            cbHdrMixedMonitorBrightnessMode.Enabled = hdrEnabled;
+            nudHdrMixedMonitorWhiteNits.Enabled = hdrEnabled &&
+                GetHdrCaptureSettings().MixedMonitorBrightnessMode ==
+                    HdrMixedMonitorBrightnessMode.Custom;
             cbHdrFileFormat.Enabled = nativeOutputEnabled;
             nudHdrMasteringMaximumNits.Enabled = hdrEncodingEnabled;
             nudHdrMasteringMinimumNits.Enabled = hdrEncodingEnabled;
@@ -1901,6 +1953,126 @@ namespace ShareX
                 : avifUnavailableReason;
             lblHdrEncoderAvailability.Text =
                 $"{ultraHdrStatus}. {avifStatus}. OpenEXR and HDR PNG are managed and architecture-independent.";
+        }
+
+        private void InitializeHdrToneMappingControls()
+        {
+            var page = new TabPage("HDR tone mapping")
+            {
+                BackColor = SystemColors.Window,
+                Padding = new Padding(8)
+            };
+            pHdrToneMapping = new Panel
+            {
+                Dock = DockStyle.Fill,
+                AutoScroll = true
+            };
+            page.Controls.Add(pHdrToneMapping);
+            tcCapture.TabPages.Add(page);
+
+            pCapture.Controls.Remove(lblHDRProcessingBackend);
+            pCapture.Controls.Remove(cbHDRProcessingBackend);
+            pCapture.Controls.Remove(lblHDRToneMappingMode);
+            pCapture.Controls.Remove(cbHDRToneMappingMode);
+            pCapture.Controls.Remove(lblHDRBrightnessNits);
+            pCapture.Controls.Remove(cbHDRPeakBrightnessMode);
+            pCapture.Controls.Remove(nudHDRBrightnessNits);
+
+            lblHDRProcessingBackend.Location = new Point(4, 13);
+            lblHDRProcessingBackend.Text = "Processing backend:";
+            cbHDRProcessingBackend.Location = new Point(190, 9);
+            cbHDRProcessingBackend.Size = new Size(320, 23);
+            pHdrToneMapping.Controls.Add(lblHDRProcessingBackend);
+            pHdrToneMapping.Controls.Add(cbHDRProcessingBackend);
+
+            lblHDRToneMappingMode.Location = new Point(4, 47);
+            cbHDRToneMappingMode.Location = new Point(190, 43);
+            cbHDRToneMappingMode.Size = new Size(320, 23);
+            pHdrToneMapping.Controls.Add(lblHDRToneMappingMode);
+            pHdrToneMapping.Controls.Add(cbHDRToneMappingMode);
+
+            lblHDRBrightnessNits.Location = new Point(4, 81);
+            lblHDRBrightnessNits.Text = "HDR content peak:";
+            cbHDRPeakBrightnessMode.Location = new Point(190, 77);
+            cbHDRPeakBrightnessMode.Size = new Size(230, 23);
+            nudHDRBrightnessNits.Location = new Point(426, 77);
+            nudHDRBrightnessNits.Size = new Size(84, 23);
+            pHdrToneMapping.Controls.Add(lblHDRBrightnessNits);
+            pHdrToneMapping.Controls.Add(cbHDRPeakBrightnessMode);
+            pHdrToneMapping.Controls.Add(nudHDRBrightnessNits);
+
+            var paperWhiteLabel = new Label
+            {
+                AutoSize = true,
+                Location = new Point(4, 115),
+                Text = "SDR paper white:"
+            };
+            pHdrToneMapping.Controls.Add(paperWhiteLabel);
+
+            cbHdrPaperWhiteMode = CreateObsEnumComboBox<HdrPaperWhiteMode>(190, 111, 230);
+            cbHdrPaperWhiteMode.SelectedIndexChanged += (_, _) =>
+            {
+                if (loaded && TryGetObsEnumValue(cbHdrPaperWhiteMode.SelectedItem, out HdrPaperWhiteMode value))
+                {
+                    GetHdrCaptureSettings().PaperWhiteMode = value;
+                    UpdateHdrToneMappingControlsEnabled();
+                }
+            };
+            pHdrToneMapping.Controls.Add(cbHdrPaperWhiteMode);
+
+            nudHdrPaperWhiteNits = new NumericUpDown
+            {
+                Location = new Point(426, 111),
+                Minimum = (decimal)HdrCaptureSettings.MinimumBrightnessNits,
+                Maximum = (decimal)HdrCaptureSettings.MaximumPaperWhiteNits,
+                Value = (decimal)HdrCaptureSettings.DefaultBrightnessNits,
+                Size = new Size(84, 23)
+            };
+            nudHdrPaperWhiteNits.ValueChanged += (_, _) =>
+            {
+                if (loaded)
+                {
+                    GetHdrCaptureSettings().PaperWhiteNits = (float)nudHdrPaperWhiteNits.Value;
+                }
+            };
+            pHdrToneMapping.Controls.Add(nudHdrPaperWhiteNits);
+            lblHdrPaperWhiteNits = paperWhiteLabel;
+
+            var explanation = new Label
+            {
+                AutoSize = false,
+                Location = new Point(4, 154),
+                Size = new Size(514, 190),
+                Text = "Automatic HDR content peak analyzes the FP16 pixels selected by the current content-aware " +
+                    "mask, rejects sparse outliers, and builds the tone curve from a high luminance percentile. " +
+                    "Custom uses the exact source peak entered above. Automatic SDR paper white uses Windows' " +
+                    "per-display SDR brightness calibration; Custom overrides it for advanced calibration or " +
+                    "incorrect display metadata. The reported display maximum remains diagnostic metadata because " +
+                    "panel capability is not the same as content brightness. Values are measured in nits."
+            };
+            pHdrToneMapping.Controls.Add(explanation);
+        }
+
+        private HdrCaptureSettings GetHdrCaptureSettings()
+        {
+            return TaskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
+        }
+
+        private void LoadHdrToneMappingSettings()
+        {
+            HdrCaptureSettings settings = GetHdrCaptureSettings();
+            SelectObsEnumValue(cbHdrPaperWhiteMode, settings.PaperWhiteMode);
+            nudHdrPaperWhiteNits.SetValue((decimal)settings.PaperWhiteNits);
+            UpdateHdrToneMappingControlsEnabled();
+        }
+
+        private void UpdateHdrToneMappingControlsEnabled()
+        {
+            bool enabled = cbUseHDRSupport.Checked;
+            cbHdrPaperWhiteMode.Enabled = enabled;
+            lblHdrPaperWhiteNits.Enabled = enabled;
+            nudHdrPaperWhiteNits.Enabled = enabled &&
+                GetHdrCaptureSettings().PaperWhiteMode == HdrPaperWhiteMode.Custom;
         }
 
         private void LoadObsGameCaptureSettings()
@@ -2451,6 +2623,7 @@ namespace ShareX
             lblHDRBrightnessNits.Enabled = enabled;
             nudHDRBrightnessNits.Enabled = enabled &&
                 TaskSettings.CaptureSettings.HdrSettings?.PeakBrightnessMode == HdrPeakBrightnessMode.Custom;
+            UpdateHdrToneMappingControlsEnabled();
             pObsGameCapture.Enabled = enabled;
             pHdrFileOutput.Enabled = enabled;
             UpdateHdrFileOutputControlsEnabled();
@@ -2479,11 +2652,27 @@ namespace ShareX
         {
             if (cbHDRPeakBrightnessMode.SelectedIndex >= 0)
             {
-                TaskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
-                TaskSettings.CaptureSettings.HdrSettings.PeakBrightnessMode =
+                HdrCaptureSettings settings = GetHdrCaptureSettings();
+                HdrPeakBrightnessMode previousMode = settings.PeakBrightnessMode;
+                HdrPeakBrightnessMode selectedMode =
                     (HdrPeakBrightnessMode)cbHDRPeakBrightnessMode.SelectedIndex;
+                settings.PeakBrightnessMode = selectedMode;
+
+                // The legacy 203-nit value represented Automatic, so seed a
+                // useful manual value the first time a migrated user selects
+                // Custom. Existing custom values remain untouched.
+                if (loaded &&
+                    previousMode == HdrPeakBrightnessMode.Automatic &&
+                    selectedMode == HdrPeakBrightnessMode.Custom &&
+                    Math.Abs(settings.HdrBrightnessNits - HdrCaptureSettings.DefaultBrightnessNits) < 0.01f)
+                {
+                    settings.HdrBrightnessNits = HdrCaptureSettings.DefaultCustomPeakBrightnessNits;
+                    nudHDRBrightnessNits.SetValue(
+                        (decimal)HdrCaptureSettings.DefaultCustomPeakBrightnessNits);
+                }
+
                 nudHDRBrightnessNits.Enabled = cbUseHDRSupport.Checked &&
-                    TaskSettings.CaptureSettings.HdrSettings.PeakBrightnessMode == HdrPeakBrightnessMode.Custom;
+                    settings.PeakBrightnessMode == HdrPeakBrightnessMode.Custom;
             }
         }
 
