@@ -166,9 +166,7 @@ namespace ShareX.ScreenCaptureLib
         {
             if (bmp != null && gp != null)
             {
-                Rectangle regionArea = Rectangle.Round(gp.GetBounds());
-                Rectangle screenRectangle = CaptureHelpers.GetScreenBounds();
-                resultArea = Rectangle.Intersect(regionArea, new Rectangle(0, 0, screenRectangle.Width, screenRectangle.Height));
+                resultArea = GetRegionPathArea(gp, bmp.Size);
 
                 if (resultArea.IsValid())
                 {
@@ -188,6 +186,17 @@ namespace ShareX.ScreenCaptureLib
 
             resultArea = Rectangle.Empty;
             return null;
+        }
+
+        internal static Rectangle GetRegionPathArea(GraphicsPath gp, Size canvasSize)
+        {
+            if (gp == null || canvasSize.Width <= 0 || canvasSize.Height <= 0)
+            {
+                return Rectangle.Empty;
+            }
+
+            Rectangle regionArea = Rectangle.Round(gp.GetBounds());
+            return Rectangle.Intersect(regionArea, new Rectangle(Point.Empty, canvasSize));
         }
 
         private static RegionCaptureOptions GetRegionCaptureOptions(RegionCaptureOptions options)

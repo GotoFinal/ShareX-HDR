@@ -1622,9 +1622,23 @@ namespace ShareX.ScreenCaptureLib
         {
             Rectangle rect = Rectangle.Empty;
 
-            if (Result == RegionResult.Region)
+            if (Result == RegionResult.Region || Result == RegionResult.LastRegion)
             {
-                if (ShapeManager.IsCurrentShapeValid)
+                GraphicsPath resultPath = Result == RegionResult.LastRegion
+                    ? LastRegionFillPath
+                    : regionFillPath;
+                Rectangle pathArea = RegionCaptureTasks.GetRegionPathArea(resultPath, Canvas.Size);
+
+                if (!pathArea.IsEmpty)
+                {
+                    // GetResultImage uses the same retained path. Drawing an
+                    // arrow or another annotation changes CurrentShape, so its
+                    // bounds must never replace the selected capture region.
+                    rect = CaptureHelpers.ClientToScreen(pathArea);
+                }
+                else if (Result == RegionResult.Region &&
+                    ShapeManager.IsCurrentShapeTypeRegion &&
+                    ShapeManager.IsCurrentShapeValid)
                 {
                     rect = CaptureHelpers.ClientToScreen(ShapeManager.CurrentRectangle.Round());
                 }

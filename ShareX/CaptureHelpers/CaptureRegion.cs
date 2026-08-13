@@ -209,11 +209,20 @@ namespace ShareX
             Rectangle selectedRectangle,
             HdrImageDocument hdrCanvasDocument)
         {
-            if (hdrCanvasDocument == null ||
-                selectedRectangle.IsEmpty ||
-                selectedRectangle.Size != result.Size ||
-                ImageHelpers.IsImageTransparent(result))
+            if (hdrCanvasDocument == null)
             {
+                DebugHelper.WriteLine("HDR region result unavailable | no retained HDR canvas.");
+                return null;
+            }
+
+            bool isTransparent = ImageHelpers.IsImageTransparent(result);
+            if (selectedRectangle.IsEmpty ||
+                selectedRectangle.Size != result.Size ||
+                isTransparent)
+            {
+                DebugHelper.WriteLine(
+                    $"HDR region result unavailable | selection={selectedRectangle} " +
+                    $"result={result.Size} transparent={isTransparent}");
                 return null;
             }
 
@@ -225,6 +234,8 @@ namespace ShareX
 
             if (!form.CanExportHdrDrawingOverlay)
             {
+                DebugHelper.WriteLine(
+                    "HDR region result unavailable | source-dependent region effect requires native HDR replay.");
                 document.Dispose();
                 return null;
             }
@@ -234,6 +245,9 @@ namespace ShareX
                 using Bitmap overlay = form.GetHdrDrawingOverlay();
                 if (overlay == null || overlay.Size != result.Size)
                 {
+                    DebugHelper.WriteLine(
+                        $"HDR region result unavailable | drawing overlay=" +
+                        $"{(overlay == null ? "null" : overlay.Size.ToString())} result={result.Size}");
                     document.Dispose();
                     return null;
                 }
