@@ -63,6 +63,8 @@ namespace ShareX
         private ComboBox cbHdrFileFormat;
         private ComboBox cbHdrOpenExrExposure;
         private Label lblHdrEncoderAvailability;
+        private CheckBox cbEnableEditorHdrPreview;
+        private CheckBox cbEnableRegionSelectorHdrPreview;
         private CheckBox cbHdrUploadWithFileUploader;
         private CheckBox cbHdrFlattenTransparencyForUltraHdr;
         private NumericUpDown nudHdrMasteringMaximumNits;
@@ -1804,10 +1806,44 @@ namespace ShareX
                 }
             };
 
+            cbEnableEditorHdrPreview = new CheckBox
+            {
+                AutoSize = false,
+                Location = new Point(4, 506),
+                Size = new Size(514, 24),
+                Text = "Show the retained HDR image in the editor preview (experimental)"
+            };
+            cbEnableEditorHdrPreview.CheckedChanged += (_, _) =>
+            {
+                if (loaded)
+                {
+                    GetHdrCaptureSettings().EnableEditorHdrPreview =
+                        cbEnableEditorHdrPreview.Checked;
+                }
+            };
+            pHdrFileOutput.Controls.Add(cbEnableEditorHdrPreview);
+
+            cbEnableRegionSelectorHdrPreview = new CheckBox
+            {
+                AutoSize = false,
+                Location = new Point(4, 535),
+                Size = new Size(514, 24),
+                Text = "Show the full region selector through the native HDR preview (experimental)"
+            };
+            cbEnableRegionSelectorHdrPreview.CheckedChanged += (_, _) =>
+            {
+                if (loaded)
+                {
+                    GetHdrCaptureSettings().EnableRegionSelectorHdrPreview =
+                        cbEnableRegionSelectorHdrPreview.Checked;
+                }
+            };
+            pHdrFileOutput.Controls.Add(cbEnableRegionSelectorHdrPreview);
+
             lblHdrEncoderAvailability = new Label
             {
                 AutoSize = false,
-                Location = new Point(4, 508),
+                Location = new Point(4, 568),
                 Size = new Size(514, 42)
             };
             pHdrFileOutput.Controls.Add(lblHdrEncoderAvailability);
@@ -1816,7 +1852,7 @@ namespace ShareX
             var details = new Label
             {
                 AutoSize = false,
-                Location = new Point(4, 555),
+                Location = new Point(4, 615),
                 Size = new Size(514, 285),
                 Text =
                     "Ultra HDR JPEG is the recommended shareable format: HDR-aware viewers use its gain map, " +
@@ -1929,6 +1965,9 @@ namespace ShareX
                 captureSettings.MixedMonitorBrightnessMode);
             nudHdrMixedMonitorWhiteNits.SetValue(
                 (decimal)captureSettings.MixedMonitorCustomSdrWhiteNits);
+            cbEnableEditorHdrPreview.Checked = captureSettings.EnableEditorHdrPreview;
+            cbEnableRegionSelectorHdrPreview.Checked =
+                captureSettings.EnableRegionSelectorHdrPreview;
             UpdateHdrFileOutputControlsEnabled();
         }
 

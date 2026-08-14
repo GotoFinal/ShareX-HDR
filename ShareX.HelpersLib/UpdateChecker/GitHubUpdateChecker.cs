@@ -146,7 +146,18 @@ namespace ShareX.HelpersLib
         {
             if (release != null && !string.IsNullOrEmpty(release.tag_name) && release.tag_name.Length > 1 && release.tag_name[0] == 'v')
             {
-                LatestVersion = new Version(release.tag_name.Substring(1));
+                string tagName = release.tag_name;
+                if (tagName.EndsWith("-hdr", StringComparison.OrdinalIgnoreCase))
+                {
+                    tagName = tagName.Substring(0, tagName.Length - 4);
+                }
+
+                if (!Version.TryParse(tagName.Substring(1), out Version version))
+                {
+                    return false;
+                }
+
+                LatestVersion = version;
 
                 GitHubAsset asset = null;
 

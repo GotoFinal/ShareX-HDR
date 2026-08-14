@@ -180,7 +180,10 @@
         <Grid RowDefinitions="*">
 
         <!-- Row 0: Main Content Area with Preview and Sidebar (Background Layer) -->
-        <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Background="{DynamicResource ShareX.Brush.Background.Main}">
+        <Grid x:Name="MainContentGrid"
+              Grid.Row="0"
+              ColumnDefinitions="Auto,*,Auto"
+              Background="{DynamicResource ShareX.Brush.Background.Main}">
 
             <!-- Left Sidebar (Settings Panel) -->
             <Border Grid.Column="0"
@@ -487,8 +490,21 @@
             </Border>
 
             <!-- Central Preview Canvas -->
-            <Grid Grid.Column="1" Margin="8">
+            <Grid x:Name="CentralPreviewHost" Grid.Column="1">
+                <!-- When the Windows HDR companion swap chain is active, these four
+                     panels retain the editor background while leaving only the source
+                     image rectangle transparent. -->
+                <Canvas x:Name="HdrPreviewBackdrop"
+                        IsVisible="False"
+                        IsHitTestVisible="False">
+                    <Border x:Name="HdrBackdropTop" Background="{DynamicResource ShareX.Brush.Background.Main}"/>
+                    <Border x:Name="HdrBackdropBottom" Background="{DynamicResource ShareX.Brush.Background.Main}"/>
+                    <Border x:Name="HdrBackdropLeft" Background="{DynamicResource ShareX.Brush.Background.Main}"/>
+                    <Border x:Name="HdrBackdropRight" Background="{DynamicResource ShareX.Brush.Background.Main}"/>
+                </Canvas>
+
                 <ScrollViewer Name="CanvasScrollViewer"
+                              Margin="8"
                               Background="Transparent"
                               HorizontalScrollBarVisibility="Auto"
                               VerticalScrollBarVisibility="Auto"
@@ -503,7 +519,8 @@
                         <!-- Main Canvas Container with Checkered Background and Shadow -->
                         <Grid HorizontalAlignment="Center" VerticalAlignment="Center">
                             <!-- Checkered Background -->
-                            <Border BorderThickness="1"
+                            <Border x:Name="CheckeredBackground"
+                                    BorderThickness="1"
                                     BorderBrush="{DynamicResource ShareX.Brush.Border}"
                                     Background="{DynamicResource ShareX.Brush.Checkered}"/>
 
@@ -519,7 +536,8 @@
                                 <Border BoxShadow="{Binding CanvasShadow}"
                                        CornerRadius="{Binding CanvasCornerRadius, Converter={StaticResource DoubleToCornerRadius}}">
                                     <!-- Padding Border: Uses top-left pixel color -->
-                                    <Border Background="{Binding SmartPaddingColor}"
+                                    <Border x:Name="SmartPaddingBorder"
+                                            Background="{Binding SmartPaddingColor}"
                                             Padding="{Binding SmartPaddingThickness}"
                                             CornerRadius="{Binding CanvasCornerRadius, Converter={StaticResource DoubleToCornerRadius}}"
                                             ClipToBounds="True">

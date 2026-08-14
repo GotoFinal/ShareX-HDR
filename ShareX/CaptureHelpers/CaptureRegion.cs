@@ -24,8 +24,12 @@
 #endregion License Information (GPL v3)
 
 using ShareX.HelpersLib;
+using ShareX.ImageEditor.Presentation.Rendering;
 using ShareX.ScreenCaptureLib;
+using System;
+using System.Collections.Generic;
 using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace ShareX
@@ -72,31 +76,267 @@ namespace ShareX
                 mode = RegionCaptureMode.Annotation;
             }
 
-            Bitmap canvas;
+            Bitmap canvas = null;
             Screenshot screenshot = TaskHelpers.GetScreenshot(taskSettings);
-            HdrImageDocument hdrCanvasDocument;
+            HdrCaptureSettings hdrSettings =
+                taskSettings.CaptureSettings.HdrSettings ?? new HdrCaptureSettings();
+            HdrImageDocument hdrCanvasDocument = null;
+            var hdrRegionPreviews = new List<(WindowsHdrPreviewPresenter Presenter, Rectangle Bounds)>();
+            WindowsHdrRegionDimWindow hdrRegionDim = null;
+            WindowsHdrRegionInputWindow hdrRegionInput = null;
+            Rectangle captureBounds = taskSettings.CaptureSettings.SurfaceOptions.ActiveMonitorMode
+                ? CaptureHelpers.GetActiveScreenBounds()
+                : CaptureHelpers.GetScreenBounds();
+            bool deferredHdrSurface = false;
 
-            if (taskSettings.CaptureSettings.SurfaceOptions.ActiveMonitorMode)
+            if (screenshot.UseHDRSupport && hdrSettings.EnableRegionSelectorHdrPreview)
             {
-                canvas = screenshot.CaptureActiveMonitor(out hdrCanvasDocument);
+                try
+                {
+                    deferredHdrSurface = screenshot.TryCaptureHdr(captureBounds, out hdrCanvasDocument);
+                    DebugHelper.WriteLine(
+                        deferredHdrSurface
+                            ? $"HDR region selector capture | retained size={captureBounds.Width}x{captureBounds.Height} preview=deferred"
+                            : "HDR region selector capture | fallback=SDR reason=HDR-capture-unavailable");
+                }
+                catch (Exception ex)
+                {
+                    hdrCanvasDocument?.Dispose();
+                    hdrCanvasDocument = null;
+                    DebugHelper.WriteLine(
+                        "HDR region selector capture | fallback=SDR reason=HDR-capture-failed");
+                    DebugHelper.WriteException(ex);
+                }
             }
-            else
+
+            if (!deferredHdrSurface)
             {
-                canvas = screenshot.CaptureFullscreen(out hdrCanvasDocument);
+                if (taskSettings.CaptureSettings.SurfaceOptions.ActiveMonitorMode)
+                {
+                    canvas = screenshot.CaptureActiveMonitor(out hdrCanvasDocument);
+                }
+                else
+                {
+                    canvas = screenshot.CaptureFullscreen(out hdrCanvasDocument);
+                }
             }
 
             try
             {
                 using (RegionCaptureForm form = new RegionCaptureForm(mode,
-                    taskSettings.CaptureSettingsReference.SurfaceOptions, canvas, screenshot))
+                    taskSettings.CaptureSettingsReference.SurfaceOptions,
+                    canvas,
+                    screenshot,
+                    allowEmptyCanvas: deferredHdrSurface))
                 {
+                    if (deferredHdrSurface)
+                    {
+                        form.SetDeferredCanvasFactory(() => screenshot.CreateSdrPreview(hdrCanvasDocument));
+                        form.SetHdrMagnifierFactory(screenRectangle =>
+                        {
+                            using HdrImageDocument sample =
+                                hdrCanvasDocument.CropToScreenRectangle(screenRectangle);
+                            return sample.CreateSdrPreview(hdrSettings);
+                        });
+                    }
+
+                    if (hdrCanvasDocument != null && hdrSettings.EnableRegionSelectorHdrPreview)
+                    {
+                        try
+                        {
+                            HdrRgba16FloatBuffer pixels = hdrCanvasDocument.MasterPixels;
+                            DebugHelper.WriteLine(
+                                $"HDR region selector preview | attempt size={pixels.Width}x{pixels.Height} " +
+                                $"bounds={hdrCanvasDocument.RequestedBounds} format=RGBA16F");
+                            HdrCaptureSourceSegment[] displaySegments = hdrCanvasDocument.SourceSegments
+                                .Where(segment => segment.DestinationRectangle.Width > 0 &&
+                                    segment.DestinationRectangle.Height > 0)
+                                .GroupBy(segment => segment.DisplayDeviceName ?? string.Empty)
+                                .Select(group => group.OrderByDescending(segment =>
+                                    (long)segment.DestinationRectangle.Width * segment.DestinationRectangle.Height).First())
+                                .ToArray();
+
+                            foreach (HdrCaptureSourceSegment segment in displaySegments)
+                            {
+                                Rectangle localBounds = Rectangle.Intersect(
+                                    segment.DestinationRectangle,
+                                    new Rectangle(0, 0, pixels.Width, pixels.Height));
+                                if (localBounds.Width <= 0 || localBounds.Height <= 0)
+                                {
+                                    continue;
+                                }
+
+                                Rectangle screenBounds = localBounds;
+                                screenBounds.Offset(hdrCanvasDocument.RequestedBounds.Location);
+                                if (segment.WasHdrActive)
+                                {
+                                    int pixelOffset = checked(
+                                        localBounds.Y * pixels.RowBytes +
+                                        localBounds.X * HdrRgba16FloatBuffer.BytesPerPixel);
+                                    var presenter = new WindowsHdrPreviewPresenter(
+                                        pixels.PixelBytes.Span.Slice(pixelOffset),
+                                        pixels.RowBytes,
+                                        localBounds.Width,
+                                        localBounds.Height);
+                                    hdrRegionPreviews.Add((presenter, screenBounds));
+                                }
+                                else
+                                {
+                                    using HdrImageDocument sdrDisplay =
+                                        hdrCanvasDocument.CropToScreenRectangle(screenBounds);
+                                    Bitmap sdrBackground = screenshot.CreateSdrPreview(sdrDisplay);
+                                    form.AddNativeHdrSdrBackground(sdrBackground, screenBounds);
+                                }
+                            }
+
+                            if (hdrRegionPreviews.Count == 0)
+                            {
+                                throw new NotSupportedException(
+                                    "No HDR-active display segment was available for native presentation.");
+                            }
+
+                            hdrRegionInput = new WindowsHdrRegionInputWindow();
+                            if (form.Options.BackgroundDimStrength > 0)
+                            {
+                                try
+                                {
+                                    hdrRegionDim = new WindowsHdrRegionDimWindow(
+                                        form.Options.BackgroundDimStrength);
+                                    form.NativeHdrDimRegionChanged += region =>
+                                    {
+                                        try
+                                        {
+                                            hdrRegionDim?.UpdateRegion(region);
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            hdrRegionDim?.Dispose();
+                                            hdrRegionDim = null;
+                                            DebugHelper.WriteLine(
+                                                "HDR region selector dim | disabled reason=region-update-failed");
+                                            DebugHelper.WriteException(ex);
+                                        }
+                                    };
+                                }
+                                catch (Exception ex)
+                                {
+                                    hdrRegionDim?.Dispose();
+                                    hdrRegionDim = null;
+                                    DebugHelper.WriteLine(
+                                        "HDR region selector dim | disabled reason=initialization-failed");
+                                    DebugHelper.WriteException(ex);
+                                }
+                            }
+
+                            form.EnableNativeHdrSelectionPreview();
+                            form.Shown += (_, _) =>
+                            {
+                                try
+                                {
+                                    foreach ((WindowsHdrPreviewPresenter presenter, Rectangle bounds) in hdrRegionPreviews)
+                                    {
+                                        presenter.UpdateLayout(bounds, bounds, form.Handle);
+                                    }
+                                    if (hdrRegionDim != null)
+                                    {
+                                        try
+                                        {
+                                            hdrRegionDim.Show(hdrCanvasDocument.RequestedBounds, form.Handle);
+                                            DebugHelper.WriteLine(
+                                                $"HDR region selector dim | enabled configuredStrength=" +
+                                                $"{form.Options.BackgroundDimStrength} effectiveStrength=" +
+                                                $"{hdrRegionDim.EffectiveDimStrength}");
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            hdrRegionDim.Dispose();
+                                            hdrRegionDim = null;
+                                            DebugHelper.WriteLine(
+                                                "HDR region selector dim | disabled reason=presentation-failed");
+                                            DebugHelper.WriteException(ex);
+                                        }
+                                    }
+                                    hdrRegionInput?.Show(hdrCanvasDocument.RequestedBounds, form.Handle);
+                                    DebugHelper.WriteLine(
+                                        "HDR region selector preview | enabled colorSpace=scRGB mode=full-surface");
+                                }
+                                catch (Exception ex)
+                                {
+                                    form.DisableNativeHdrSelectionPreview();
+                                    hdrRegionDim?.Dispose();
+                                    hdrRegionDim = null;
+                                    hdrRegionInput?.Dispose();
+                                    hdrRegionInput = null;
+                                    DisposeHdrRegionPreviews(hdrRegionPreviews);
+                                    _ = form.Canvas;
+                                    DebugHelper.WriteLine(
+                                        "HDR region selector preview | fallback=SDR reason=presentation-failed");
+                                    DebugHelper.WriteException(ex);
+                                }
+                            };
+                            form.FormClosed += (_, _) =>
+                            {
+                                hdrRegionDim?.Hide();
+                                hdrRegionInput?.Hide();
+                                foreach ((WindowsHdrPreviewPresenter presenter, _) in hdrRegionPreviews)
+                                {
+                                    presenter.Hide();
+                                }
+                            };
+                        }
+                        catch (Exception ex)
+                        {
+                            form.DisableNativeHdrSelectionPreview();
+                            hdrRegionDim?.Dispose();
+                            hdrRegionDim = null;
+                            hdrRegionInput?.Dispose();
+                            hdrRegionInput = null;
+                            DisposeHdrRegionPreviews(hdrRegionPreviews);
+                            _ = form.Canvas;
+                            DebugHelper.WriteLine(
+                                "HDR region selector preview | fallback=SDR reason=initialization-failed");
+                            DebugHelper.WriteException(ex);
+                        }
+                    }
+
                     form.ShowDialog();
 
-                    Bitmap result = form.GetResultImage();
+                    Rectangle selectedRectangle = form.GetSelectedRectangle();
+                    HdrImageDocument resultHdrDocument = null;
+                    Bitmap result = null;
+
+                    if (deferredHdrSurface && form.CanCreateOpaqueHdrResult &&
+                        form.CanExportHdrDrawingOverlay && !selectedRectangle.IsEmpty)
+                    {
+                        resultHdrDocument = CreateOpaqueHdrRegionDocument(
+                            form,
+                            selectedRectangle,
+                            hdrCanvasDocument);
+                        if (resultHdrDocument != null)
+                        {
+                            try
+                            {
+                                result = screenshot.CreateSdrPreview(resultHdrDocument);
+                                DebugHelper.WriteLine(
+                                    $"HDR region result | SDR derivative=selected-region size={result.Size}");
+                            }
+                            catch
+                            {
+                                resultHdrDocument.Dispose();
+                                resultHdrDocument = null;
+                                throw;
+                            }
+                        }
+                    }
+
+                    if (result == null)
+                    {
+                        result = form.GetResultImage();
+                    }
 
                     if (result != null)
                     {
-                        TaskMetadata metadata = new TaskMetadata(result);
+                        TaskMetadata metadata = new TaskMetadata(result, resultHdrDocument);
 
                         if (form.IsImageModified)
                         {
@@ -109,12 +349,14 @@ namespace ShareX
                             metadata.UpdateInfo(windowInfo);
                         }
 
-                        Rectangle selectedRectangle = form.GetSelectedRectangle();
-                        metadata.HdrImageDocument = CreateHdrRegionDocument(
-                            form,
-                            result,
-                            selectedRectangle,
-                            hdrCanvasDocument);
+                        if (metadata.HdrImageDocument == null)
+                        {
+                            metadata.HdrImageDocument = CreateHdrRegionDocument(
+                                form,
+                                result,
+                                selectedRectangle,
+                                hdrCanvasDocument);
+                        }
 
                         lastRegionCaptureType = RegionCaptureType.Default;
                         return metadata;
@@ -123,6 +365,9 @@ namespace ShareX
             }
             finally
             {
+                hdrRegionDim?.Dispose();
+                hdrRegionInput?.Dispose();
+                DisposeHdrRegionPreviews(hdrRegionPreviews);
                 hdrCanvasDocument?.Dispose();
             }
 
@@ -201,6 +446,58 @@ namespace ShareX
             }
 
             return null;
+        }
+
+        private static void DisposeHdrRegionPreviews(
+            List<(WindowsHdrPreviewPresenter Presenter, Rectangle Bounds)> previews)
+        {
+            foreach ((WindowsHdrPreviewPresenter presenter, _) in previews)
+            {
+                presenter.Dispose();
+            }
+
+            previews.Clear();
+        }
+
+        private static HdrImageDocument CreateOpaqueHdrRegionDocument(
+            RegionCaptureForm form,
+            Rectangle selectedRectangle,
+            HdrImageDocument hdrCanvasDocument)
+        {
+            if (hdrCanvasDocument == null || selectedRectangle.IsEmpty)
+            {
+                return null;
+            }
+
+            HdrImageDocument document = hdrCanvasDocument.CropToScreenRectangle(selectedRectangle);
+            if (!form.IsImageModified)
+            {
+                return document;
+            }
+
+            try
+            {
+                float annotationWhiteNits = TaskHelpers.GetHdrAnnotationWhiteNits(document);
+                form.ApplyHdrRegionEffects(document, annotationWhiteNits);
+
+                using Bitmap overlay = form.GetHdrDrawingOverlay();
+                if (overlay == null || overlay.Size != selectedRectangle.Size)
+                {
+                    DebugHelper.WriteLine(
+                        $"HDR region result unavailable | drawing overlay=" +
+                        $"{(overlay == null ? "null" : overlay.Size.ToString())} selection={selectedRectangle.Size}");
+                    document.Dispose();
+                    return null;
+                }
+
+                document.CompositeSdrAnnotationOverlay(overlay, annotationWhiteNits);
+                return document;
+            }
+            catch
+            {
+                document.Dispose();
+                throw;
+            }
         }
 
         private static HdrImageDocument CreateHdrRegionDocument(

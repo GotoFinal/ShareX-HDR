@@ -99,6 +99,9 @@ namespace ShareX.ScreenCaptureLib
         private ObsGameCaptureSettings obsGameCapture = new ObsGameCaptureSettings();
         private HdrFileOutputSettings fileOutput = new HdrFileOutputSettings();
 
+        public bool EnableEditorHdrPreview { get; set; } = true;
+        public bool EnableRegionSelectorHdrPreview { get; set; } = true;
+
         public HdrFileOutputSettings FileOutput
         {
             get => fileOutput;

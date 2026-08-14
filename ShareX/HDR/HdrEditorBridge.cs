@@ -14,6 +14,7 @@
 
 using ShareX.ImageEditor.Hosting;
 using ShareX.ImageEditor.Core.Annotations;
+using ShareX.HelpersLib;
 using ShareX.ScreenCaptureLib;
 using SkiaSharp;
 using System;
@@ -52,12 +53,23 @@ namespace ShareX
 
             using Bitmap preview = source.CreateSdrPreview(previewSettings);
             SKBitmap skPreview = TaskHelpers.GdiBitmapToSkBitmap(preview);
+            DebugHelper.WriteLine(
+                $"HDR editor preview | enabled={previewSettings.EnableEditorHdrPreview} " +
+                $"source={source.MasterPixels.Width}x{source.MasterPixels.Height} format=RGBA16F");
+            EditorHdrPreviewSource hdrPreview = previewSettings.EnableEditorHdrPreview
+                ? EditorHdrPreviewSource.CopyFrom(
+                    source.MasterPixels.PixelBytes.Span,
+                    source.MasterPixels.RowBytes,
+                    source.MasterPixels.Width,
+                    source.MasterPixels.Height)
+                : null;
 
             using EditorOverlayDialogResult editorResult =
                 AvaloniaIntegration.ShowEditorOverlayDialog(
                     skPreview,
                     editorOptions,
                     editorEvents,
+                    hdrPreview,
                     showTaskButtons: true,
                     useContinueWorkflow);
 

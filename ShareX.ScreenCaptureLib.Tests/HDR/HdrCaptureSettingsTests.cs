@@ -11,6 +11,8 @@ public sealed class HdrCaptureSettingsTests
         var screenshot = new Screenshot();
 
         Assert.Equal(HdrProcessingBackend.Gpu, settings.ProcessingBackend);
+        Assert.True(settings.EnableEditorHdrPreview);
+        Assert.True(settings.EnableRegionSelectorHdrPreview);
         Assert.Equal(HdrPeakBrightnessMode.Automatic, settings.PeakBrightnessMode);
         Assert.Equal(HdrPaperWhiteMode.Automatic, settings.PaperWhiteMode);
         Assert.Equal(HdrCaptureSettings.DefaultBrightnessNits, settings.PaperWhiteNits);

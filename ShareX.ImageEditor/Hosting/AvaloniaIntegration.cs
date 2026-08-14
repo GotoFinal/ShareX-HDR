@@ -148,6 +148,7 @@ namespace ShareX.ImageEditor.Hosting
             SKBitmap sdrPreview,
             ImageEditorOptions options,
             EditorOverlayEvents? events = null,
+            EditorHdrPreviewSource? hdrPreview = null,
             bool showTaskButtons = true,
             bool useContinueWorkflow = true)
         {
@@ -161,17 +162,26 @@ namespace ShareX.ImageEditor.Hosting
             catch
             {
                 sdrPreview.Dispose();
+                hdrPreview?.Dispose();
                 throw;
             }
 
             var tcs = new TaskCompletionSource<EditorOverlayDialogResult>();
+            EditorHdrPreviewSource? pendingHdrPreview = hdrPreview;
 
             Dispatcher.UIThread.Post(() =>
             {
+                EditorWindow? window = null;
+
                 try
                 {
-                    EditorWindow window = new EditorWindow(options);
+                    window = new EditorWindow(options);
                     window.EnableOverlaySourceOperationExport();
+                    if (pendingHdrPreview != null)
+                    {
+                        window.EnableHdrPreview(pendingHdrPreview);
+                        pendingHdrPreview = null;
+                    }
                     window.LoadImage(sdrPreview);
 
                     if (window.DataContext is MainViewModel vm)
@@ -227,7 +237,10 @@ namespace ShareX.ImageEditor.Hosting
                 }
                 catch (Exception ex)
                 {
+                    window?.ReleaseHdrPreview();
                     sdrPreview.Dispose();
+                    pendingHdrPreview?.Dispose();
+                    pendingHdrPreview = null;
                     tcs.TrySetException(ex);
                 }
             });

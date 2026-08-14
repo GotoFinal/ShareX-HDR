@@ -26,6 +26,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
+using Avalonia.Media;
 using ShareX.ImageEditor.Hosting;
 using ShareX.ImageEditor.Presentation.ViewModels;
 using SkiaSharp;
@@ -43,6 +44,7 @@ namespace ShareX.ImageEditor.Presentation.Views
         private ulong? _initialSourceFingerprint;
         private bool _retainInitialSourceForOverlayExport;
         private SKBitmap? _initialSourceForOverlayExport;
+        private EditorHdrPreviewSource? _pendingHdrPreview;
 
         public EditorWindow() : this(null)
         {
@@ -85,6 +87,7 @@ namespace ShareX.ImageEditor.Presentation.Views
 
         protected override void OnClosed(EventArgs e)
         {
+            ReleaseHdrPreview();
             SaveWindowState();
             base.OnClosed(e);
         }
@@ -150,6 +153,57 @@ namespace ShareX.ImageEditor.Presentation.Views
                 LoadImageInternal(_pendingFilePath);
                 _pendingFilePath = null;
             }
+
+            ActivatePendingHdrPreview();
+        }
+
+        private void ActivatePendingHdrPreview()
+        {
+            if (_pendingHdrPreview != null)
+            {
+                EditorHdrPreviewSource source = _pendingHdrPreview;
+                _pendingHdrPreview = null;
+                var editorView = this.FindControl<EditorView>(nameof(EditorViewControl));
+
+                if (editorView != null)
+                {
+                    editorView.EnableHdrPreview(source);
+                }
+                else
+                {
+                    source.Dispose();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Enables the Windows-only FP16 HDR presentation experiment. Ownership of
+        /// <paramref name="source"/> is transferred to this window.
+        /// </summary>
+        internal void EnableHdrPreview(EditorHdrPreviewSource source)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+
+            if (OperatingSystem.IsWindows())
+            {
+                TransparencyLevelHint = new[] { WindowTransparencyLevel.Transparent };
+                Background = Brushes.Transparent;
+            }
+
+            _pendingHdrPreview?.Dispose();
+            _pendingHdrPreview = source;
+
+            if (IsLoaded)
+            {
+                ActivatePendingHdrPreview();
+            }
+        }
+
+        internal void ReleaseHdrPreview()
+        {
+            _pendingHdrPreview?.Dispose();
+            _pendingHdrPreview = null;
+            this.FindControl<EditorView>(nameof(EditorViewControl))?.DisposeHdrPreview();
         }
 
         /// <summary>

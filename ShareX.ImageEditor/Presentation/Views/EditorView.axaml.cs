@@ -110,6 +110,8 @@ namespace ShareX.ImageEditor.Presentation.Views
             _editorCore.InvalidateRequested += () => Avalonia.Threading.Dispatcher.UIThread.Post(RenderCore);
             _editorCore.ImageChanged += () =>
             {
+                QueueHdrPreviewFallbackAfterSourceChange();
+
                 // Capture the one-shot skip synchronously so it applies to the event
                 // raised by the VM->Core sync, not the next unrelated crop/cut/undo event.
                 bool skipVmSync = _skipNextCoreImageChanged;
@@ -195,6 +197,7 @@ namespace ShareX.ImageEditor.Presentation.Views
         {
             UpdateDpiScaleFromTopLevel();
             RequestOverlayCanvasLayoutUpdate();
+            UpdateHdrPreviewLayout();
         }
 
         /// <summary>
@@ -457,6 +460,8 @@ namespace ShareX.ImageEditor.Presentation.Views
                 _parentWindow.KeyDown += OnKeyDown;
                 _parentWindow.KeyUp += OnKeyUp;
                 _parentWindow.Activated += OnWindowActivated;
+                _parentWindow.PositionChanged += OnHdrPreviewWindowPositionChanged;
+                _parentWindow.PropertyChanged += OnHdrPreviewParentWindowPropertyChanged;
             }
 
             // Give the editor initial focus
@@ -529,6 +534,7 @@ namespace ShareX.ImageEditor.Presentation.Views
             }
 
             RefreshPlatformColorTracking();
+            ActivatePendingHdrPreview();
         }
 
         protected override void OnUnloaded(RoutedEventArgs e)
@@ -542,6 +548,8 @@ namespace ShareX.ImageEditor.Presentation.Views
                 _parentWindow.KeyDown -= OnKeyDown;
                 _parentWindow.KeyUp -= OnKeyUp;
                 _parentWindow.Activated -= OnWindowActivated;
+                _parentWindow.PositionChanged -= OnHdrPreviewWindowPositionChanged;
+                _parentWindow.PropertyChanged -= OnHdrPreviewParentWindowPropertyChanged;
             }
 
             if (DataContext is MainViewModel vm)
@@ -569,6 +577,7 @@ namespace ShareX.ImageEditor.Presentation.Views
             _selectionController.RequestUpdateEffect -= OnRequestUpdateEffect;
             ClearEffectPreviewCache();
             SetPlatformSettings(null);
+            DisposeHdrPreview();
         }
 
         private void OnEditorDataContextChanged(object? sender, EventArgs e)
@@ -929,6 +938,7 @@ namespace ShareX.ImageEditor.Presentation.Views
         private void OnWindowActivated(object? sender, EventArgs e)
         {
             _ = CheckClipboardStatus();
+            UpdateHdrPreviewLayout();
         }
 
         private void OnEffectBrowserOverlayPointerPressed(object? sender, global::Avalonia.Input.PointerPressedEventArgs e)

@@ -27,6 +27,7 @@ using Avalonia.Win32.Interoperability;
 using ShareX.HelpersLib;
 using ShareX.HistoryLib;
 using ShareX.ImageEditor.Hosting;
+using ShareX.ImageEditor.Hosting.Diagnostics;
 using ShareX.Properties;
 using ShareX.ScreenCaptureLib;
 using ShareX.UploadersLib;
@@ -287,6 +288,7 @@ namespace ShareX
             UpdatePersonalPath();
 
             DebugHelper.Init(LogsFilePath);
+            ConfigureImageEditorDiagnostics();
 
             IsAdmin = Helpers.IsAdministrator();
             MultiInstance = CLI.IsCommandExist("multi", "m");
@@ -319,6 +321,32 @@ namespace ShareX
             }
 
             DebugHelper.Flush();
+        }
+
+        private static void ConfigureImageEditorDiagnostics()
+        {
+            EditorServices.Diagnostics = new DelegateEditorDiagnosticsSink(diagnostic =>
+            {
+                if (diagnostic.Level == EditorDiagnosticLevel.Debug && !Debugger.IsAttached)
+                {
+                    return;
+                }
+
+                var message = new StringBuilder()
+                    .Append("Image editor diagnostic | level=")
+                    .Append(diagnostic.Level)
+                    .Append(" source=")
+                    .Append(diagnostic.Source)
+                    .Append(" | ")
+                    .Append(diagnostic.Message);
+
+                if (!string.IsNullOrWhiteSpace(diagnostic.ExceptionText))
+                {
+                    message.AppendLine().Append(diagnostic.ExceptionText);
+                }
+
+                DebugHelper.WriteLine(message.ToString());
+            });
         }
 
         private static void Run()

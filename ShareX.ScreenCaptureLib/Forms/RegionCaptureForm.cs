@@ -46,11 +46,13 @@ namespace ShareX.ScreenCaptureLib
         public event Action<Bitmap> CopyImageRequested;
         public event Action<Bitmap> UploadImageRequested;
         public event Action<Bitmap> PrintImageRequested;
+        public event Action<Region> NativeHdrDimRegionChanged;
 
         public RegionCaptureOptions Options { get; set; }
         public Rectangle ScreenBounds { get; set; }
         public Rectangle ClientArea { get; private set; }
-        public Bitmap Canvas { get; private set; }
+        public Bitmap Canvas => EnsureCanvas();
+        public bool HasCanvas => canvas != null;
         public RectangleF CanvasRectangle { get; internal set; }
         public RegionResult Result { get; private set; }
         public int MonitorIndex { get; set; }
@@ -63,6 +65,7 @@ namespace ShareX.ScreenCaptureLib
         public bool IsImageModified => ShapeManager != null && ShapeManager.IsImageModified;
         public bool CanExportHdrDrawingOverlay => ShapeManager != null &&
             HdrRegionEffectReplayer.CanReplay(ShapeManager.EffectShapes);
+        public bool IsNativeHdrSelectionPreviewEnabled { get; private set; }
 
         public Point CurrentPosition { get; private set; }
         public SimpleWindowInfo SelectedWindow { get; private set; }
@@ -95,6 +98,11 @@ namespace ShareX.ScreenCaptureLib
         internal int ToolbarHeight;
 
         private InputManager InputManager => ShapeManager.InputManager;
+        private Bitmap canvas;
+        private Func<Bitmap> deferredCanvasFactory;
+        private Func<Rectangle, Bitmap> hdrMagnifierFactory;
+        private readonly List<(Bitmap Image, Bitmap DimmedImage, Rectangle Destination)> nativeHdrSdrBackgrounds = new();
+        private byte[] nativeHdrDimRegionData;
         private TextureBrush backgroundBrush, backgroundHighlightBrush;
         private GraphicsPath regionFillPath, regionDrawPath;
         private Pen borderPen, borderDotPen, borderDotStaticPen, textOuterBorderPen, textInnerBorderPen, markerPen, canvasBorderPen;
@@ -107,8 +115,14 @@ namespace ShareX.ScreenCaptureLib
         private Cursor defaultCursor, openHandCursor, closedHandCursor;
         private Color canvasBackgroundColor, canvasBorderColor, textColor, textShadowColor, textBackgroundColor, textOuterBorderColor, textInnerBorderColor;
         private float zoomFactor = 1;
+        private static readonly Color HdrPreviewTransparencyKey = Color.FromArgb(1, 0, 1);
 
-        public RegionCaptureForm(RegionCaptureMode mode, RegionCaptureOptions options, Bitmap canvas = null, Screenshot screenshot = null)
+        public RegionCaptureForm(
+            RegionCaptureMode mode,
+            RegionCaptureOptions options,
+            Bitmap canvas = null,
+            Screenshot screenshot = null,
+            bool allowEmptyCanvas = false)
         {
             Mode = mode;
             Options = options;
@@ -120,7 +134,7 @@ namespace ShareX.ScreenCaptureLib
             {
                 ScreenBounds = CaptureHelpers.GetActiveScreenBounds();
 
-                if (canvas == null)
+                if (canvas == null && !allowEmptyCanvas)
                 {
                     canvas = ScreenCapture.CaptureRectangle(ScreenBounds);
                 }
@@ -131,7 +145,7 @@ namespace ShareX.ScreenCaptureLib
             {
                 ScreenBounds = CaptureHelpers.GetScreenBounds();
 
-                if (canvas == null)
+                if (canvas == null && !allowEmptyCanvas)
                 {
                     canvas = ScreenCapture.CaptureRectangle(ScreenBounds);
                 }
@@ -270,6 +284,86 @@ namespace ShareX.ScreenCaptureLib
             ResumeLayout(false);
         }
 
+        public void EnableNativeHdrSelectionPreview()
+        {
+            if (!IsFullscreen)
+            {
+                throw new InvalidOperationException(
+                    "Native HDR selection preview is available only in the fullscreen region selector.");
+            }
+
+            BackColor = HdrPreviewTransparencyKey;
+            TransparencyKey = HdrPreviewTransparencyKey;
+            IsNativeHdrSelectionPreviewEnabled = true;
+            Invalidate();
+        }
+
+        public void DisableNativeHdrSelectionPreview()
+        {
+            IsNativeHdrSelectionPreviewEnabled = false;
+            TransparencyKey = Color.Empty;
+            Invalidate();
+        }
+
+        /// <summary>
+        /// Supplies the SDR derivative only if a selector feature actually needs
+        /// source pixels. Normal HDR region selection therefore avoids tone mapping
+        /// the entire desktop before the user can interact with it.
+        /// </summary>
+        public void SetDeferredCanvasFactory(Func<Bitmap> factory)
+        {
+            deferredCanvasFactory = factory ?? throw new ArgumentNullException(nameof(factory));
+        }
+
+        public void SetHdrMagnifierFactory(Func<Rectangle, Bitmap> factory)
+        {
+            hdrMagnifierFactory = factory ?? throw new ArgumentNullException(nameof(factory));
+        }
+
+        /// <summary>
+        /// Adds a tone-mapped display segment for an SDR output. The form assumes
+        /// ownership of the bitmap and draws it beside native HDR swap-chain segments.
+        /// </summary>
+        public void AddNativeHdrSdrBackground(Bitmap image, Rectangle screenRectangle)
+        {
+            ArgumentNullException.ThrowIfNull(image);
+            Rectangle destination = new Rectangle(
+                screenRectangle.X - ScreenBounds.X,
+                screenRectangle.Y - ScreenBounds.Y,
+                screenRectangle.Width,
+                screenRectangle.Height);
+            Bitmap dimmedImage = (Bitmap)image.Clone();
+            if (Options.BackgroundDimStrength > 0)
+            {
+                int alpha = (int)Math.Round(255 * (Options.BackgroundDimStrength / 100f));
+                using Graphics graphics = Graphics.FromImage(dimmedImage);
+                using var brush = new SolidBrush(Color.FromArgb(alpha, Color.Black));
+                graphics.FillRectangle(brush, 0, 0, dimmedImage.Width, dimmedImage.Height);
+            }
+
+            nativeHdrSdrBackgrounds.Add((image, dimmedImage, destination));
+        }
+
+        public bool CanCreateOpaqueHdrResult
+        {
+            get
+            {
+                if (Result == RegionResult.Fullscreen || Result == RegionResult.Monitor ||
+                    Result == RegionResult.ActiveMonitor)
+                {
+                    return true;
+                }
+
+                if (Result == RegionResult.Region)
+                {
+                    BaseShape[] regions = ShapeManager?.ValidRegions;
+                    return regions?.Length == 1 && regions[0].ShapeType == ShapeType.RegionRectangle;
+                }
+
+                return false;
+            }
+        }
+
         internal void UpdateTitle()
         {
             if (forceClose) return;
@@ -349,11 +443,18 @@ namespace ShareX.ScreenCaptureLib
 
         internal void InitBackground(Bitmap canvas, bool centerCanvas = true)
         {
-            Canvas?.Dispose();
+            this.canvas?.Dispose();
             backgroundBrush?.Dispose();
             backgroundHighlightBrush?.Dispose();
 
-            Canvas = canvas;
+            this.canvas = canvas;
+
+            if (canvas == null)
+            {
+                backgroundBrush = null;
+                backgroundHighlightBrush = null;
+                return;
+            }
 
             if (IsEditorMode)
             {
@@ -898,8 +999,17 @@ namespace ShareX.ScreenCaptureLib
                 g.DrawRectangleProper(canvasBorderPen, CanvasRectangle.Offset(1f));
             }
 
-            DrawBackground(g);
+            if (IsNativeHdrSelectionPreviewEnabled)
+            {
+                g.Clear(HdrPreviewTransparencyKey);
+                DrawNativeHdrSdrBackgrounds(g);
+            }
+            else
+            {
+                DrawBackground(g);
+            }
             DrawShapes(g);
+            UpdateNativeHdrDimRegion();
 
             if (Options.ShowFPS && IsFullscreen)
             {
@@ -914,6 +1024,11 @@ namespace ShareX.ScreenCaptureLib
 
         private void DrawBackground(Graphics g)
         {
+            if (backgroundBrush == null)
+            {
+                return;
+            }
+
             using (GraphicsQualityManager quality = new GraphicsQualityManager(g, false))
             {
                 g.CompositingMode = CompositingMode.SourceCopy;
@@ -947,7 +1062,12 @@ namespace ShareX.ScreenCaptureLib
                 UpdateRegionPath();
 
                 // If background is dimmed then draw non dimmed background to region selections
-                if (!IsEditorMode && Options.BackgroundDimStrength > 0 && backgroundHighlightBrush != null)
+                if (IsNativeHdrSelectionPreviewEnabled)
+                {
+                    RevealNativeHdrSdrBackgrounds(g, regionFillPath);
+                }
+                else if (!IsEditorMode &&
+                    Options.BackgroundDimStrength > 0 && backgroundHighlightBrush != null)
                 {
                     using (Region region = new Region(regionDrawPath))
                     {
@@ -1306,14 +1426,13 @@ namespace ShareX.ScreenCaptureLib
             Size totalSize = Size.Empty;
 
             int magnifierPosition = 0;
-            Bitmap magnifier = null;
+            using Bitmap magnifier = CreateMagnifierImage();
 
-            if (Options.ShowMagnifier)
+            if (magnifier != null)
             {
                 if (itemCount > 0) totalSize.Height += itemGap;
                 magnifierPosition = totalSize.Height;
 
-                magnifier = Magnifier(Canvas, ScaledClientMousePosition, Options.MagnifierPixelCount, Options.MagnifierPixelCount, Options.MagnifierPixelSize);
                 totalSize.Width = Math.Max(totalSize.Width, magnifier.Width);
 
                 totalSize.Height += magnifier.Height;
@@ -1357,7 +1476,7 @@ namespace ShareX.ScreenCaptureLib
             }
 
             Matrix initialTranform = g.Transform;
-            if (Options.ShowMagnifier)
+            if (magnifier != null)
             {
                 ZoomTransform(g, true);
                 if (Options.UseSquareMagnifier)
@@ -1416,7 +1535,70 @@ namespace ShareX.ScreenCaptureLib
             }
         }
 
-        private Bitmap Magnifier(Image img, PointF position, int horizontalPixelCount, int verticalPixelCount, int pixelSize)
+        private Bitmap CreateMagnifierImage()
+        {
+            if (!Options.ShowMagnifier)
+            {
+                return null;
+            }
+
+            if (HasCanvas)
+            {
+                return Magnifier(
+                    Canvas,
+                    ScaledClientMousePosition,
+                    Options.MagnifierPixelCount,
+                    Options.MagnifierPixelCount,
+                    Options.MagnifierPixelSize,
+                    CanvasRectangle.Location);
+            }
+
+            if (hdrMagnifierFactory == null)
+            {
+                return null;
+            }
+
+            int horizontalPixelCount = (Options.MagnifierPixelCount | 1).Clamp(1, 101);
+            int verticalPixelCount = horizontalPixelCount;
+            PointF position = ScaledClientMousePosition;
+            Rectangle sampleRectangle = new Rectangle(
+                (int)Math.Floor(position.X - horizontalPixelCount / 2f),
+                (int)Math.Floor(position.Y - verticalPixelCount / 2f),
+                horizontalPixelCount,
+                verticalPixelCount);
+            sampleRectangle = Rectangle.Intersect(sampleRectangle, ClientArea);
+            if (sampleRectangle.Width <= 0 || sampleRectangle.Height <= 0)
+            {
+                return null;
+            }
+
+            Rectangle screenSampleRectangle = sampleRectangle;
+            screenSampleRectangle.Offset(ScreenBounds.Location);
+            using Bitmap sample = hdrMagnifierFactory(screenSampleRectangle);
+            if (sample == null)
+            {
+                return null;
+            }
+
+            PointF samplePosition = new PointF(
+                position.X - sampleRectangle.X,
+                position.Y - sampleRectangle.Y);
+            return Magnifier(
+                sample,
+                samplePosition,
+                Options.MagnifierPixelCount,
+                Options.MagnifierPixelCount,
+                Options.MagnifierPixelSize,
+                PointF.Empty);
+        }
+
+        private Bitmap Magnifier(
+            Image img,
+            PointF position,
+            int horizontalPixelCount,
+            int verticalPixelCount,
+            int pixelSize,
+            PointF imageOrigin)
         {
             horizontalPixelCount = (horizontalPixelCount | 1).Clamp(1, 101);
             verticalPixelCount = (verticalPixelCount | 1).Clamp(1, 101);
@@ -1428,8 +1610,11 @@ namespace ShareX.ScreenCaptureLib
                 pixelSize = 10;
             }
 
-            RectangleF srcRect = new RectangleF(position.X - (horizontalPixelCount / 2) - CanvasRectangle.X,
-                position.Y - (verticalPixelCount / 2) - CanvasRectangle.Y, horizontalPixelCount, verticalPixelCount).Round();
+            RectangleF srcRect = new RectangleF(
+                position.X - (horizontalPixelCount / 2) - imageOrigin.X,
+                position.Y - (verticalPixelCount / 2) - imageOrigin.Y,
+                horizontalPixelCount,
+                verticalPixelCount).Round();
 
             int width = horizontalPixelCount * pixelSize;
             int height = verticalPixelCount * pixelSize;
@@ -1607,6 +1792,82 @@ namespace ShareX.ScreenCaptureLib
             return ShapeManager.RenderDrawingOverlay(localRectangle.Size, localRectangle.Location);
         }
 
+        private void DrawNativeHdrSdrBackgrounds(Graphics graphics)
+        {
+            if (nativeHdrSdrBackgrounds.Count == 0)
+            {
+                return;
+            }
+
+            using var quality = new GraphicsQualityManager(graphics, false);
+            CompositingMode previousCompositingMode = graphics.CompositingMode;
+            try
+            {
+                graphics.CompositingMode = CompositingMode.SourceCopy;
+                foreach ((_, Bitmap dimmedImage, Rectangle destination) in nativeHdrSdrBackgrounds)
+                {
+                    graphics.DrawImage(dimmedImage, destination);
+                }
+            }
+            finally
+            {
+                graphics.CompositingMode = previousCompositingMode;
+            }
+        }
+
+        private void RevealNativeHdrSdrBackgrounds(Graphics graphics, GraphicsPath selectedPath)
+        {
+            if (nativeHdrSdrBackgrounds.Count == 0)
+            {
+                return;
+            }
+
+            GraphicsState state = graphics.Save();
+            try
+            {
+                graphics.SetClip(selectedPath, CombineMode.Intersect);
+                graphics.CompositingMode = CompositingMode.SourceCopy;
+                foreach ((Bitmap image, _, Rectangle destination) in nativeHdrSdrBackgrounds)
+                {
+                    graphics.DrawImage(image, destination);
+                }
+            }
+            finally
+            {
+                graphics.Restore(state);
+            }
+        }
+
+        private void UpdateNativeHdrDimRegion()
+        {
+            if (!IsNativeHdrSelectionPreviewEnabled || NativeHdrDimRegionChanged == null)
+            {
+                return;
+            }
+
+            using var dimRegion = new Region(ClientArea);
+            BaseShape[] selectedRegions = ShapeManager.ValidRegions;
+            if (selectedRegions.Length > 0)
+            {
+                using var selectedPath = new GraphicsPath { FillMode = FillMode.Winding };
+                foreach (BaseShape selectedRegion in selectedRegions)
+                {
+                    selectedRegion.AddShapePath(selectedPath);
+                }
+
+                dimRegion.Exclude(selectedPath);
+            }
+
+            byte[] regionData = dimRegion.GetRegionData().Data;
+            if (nativeHdrDimRegionData != null && nativeHdrDimRegionData.SequenceEqual(regionData))
+            {
+                return;
+            }
+
+            nativeHdrDimRegionData = regionData;
+            NativeHdrDimRegionChanged(dimRegion);
+        }
+
         public void ApplyHdrRegionEffects(HdrImageDocument document, float annotationWhiteNits)
         {
             ArgumentNullException.ThrowIfNull(document);
@@ -1622,6 +1883,24 @@ namespace ShareX.ScreenCaptureLib
                 ShapeManager.EffectShapes,
                 RectangleToClient(selectedRectangle),
                 annotationWhiteNits);
+        }
+
+        private Bitmap EnsureCanvas()
+        {
+            if (canvas == null && deferredCanvasFactory != null)
+            {
+                Func<Bitmap> factory = deferredCanvasFactory;
+                deferredCanvasFactory = null;
+                Bitmap generatedCanvas = factory();
+                if (generatedCanvas == null)
+                {
+                    throw new InvalidOperationException("The deferred SDR canvas could not be created.");
+                }
+
+                InitBackground(generatedCanvas, centerCanvas: false);
+            }
+
+            return canvas;
         }
 
         private Bitmap ReceiveImageForTask()
@@ -1645,7 +1924,9 @@ namespace ShareX.ScreenCaptureLib
                 GraphicsPath resultPath = Result == RegionResult.LastRegion
                     ? LastRegionFillPath
                     : regionFillPath;
-                Rectangle pathArea = RegionCaptureTasks.GetRegionPathArea(resultPath, Canvas.Size);
+                Rectangle pathArea = RegionCaptureTasks.GetRegionPathArea(
+                    resultPath,
+                    HasCanvas ? Canvas.Size : ClientArea.Size);
 
                 if (!pathArea.IsEmpty)
                 {
@@ -1807,7 +2088,13 @@ namespace ShareX.ScreenCaptureLib
 
             regionDrawPath?.Dispose();
             DimmedCanvas?.Dispose();
-            Canvas?.Dispose();
+            canvas?.Dispose();
+            foreach ((Bitmap image, Bitmap dimmedImage, _) in nativeHdrSdrBackgrounds)
+            {
+                image.Dispose();
+                dimmedImage.Dispose();
+            }
+            nativeHdrSdrBackgrounds.Clear();
 
             base.Dispose(disposing);
         }

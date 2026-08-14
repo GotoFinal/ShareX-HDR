@@ -62,6 +62,33 @@ namespace ShareX.ScreenCaptureLib
             return TryCaptureHdr(rect, captureContext: null, captureScope: null, out document);
         }
 
+        /// <summary>
+        /// Creates the compatibility SDR derivative for a retained HDR capture.
+        /// This can be deferred until a selector tool or the final result needs it.
+        /// </summary>
+        public Bitmap CreateSdrPreview(HdrImageDocument document)
+        {
+            ArgumentNullException.ThrowIfNull(document);
+            Stopwatch totalTimer = Stopwatch.StartNew();
+            Stopwatch windowsTimer = Stopwatch.StartNew();
+            if (HdrSettings.ToneMappingMode != HdrToneMappingMode.Uniform)
+            {
+                document.CaptureWindowRegions(HdrSettings);
+            }
+            windowsTimer.Stop();
+
+            Stopwatch previewTimer = Stopwatch.StartNew();
+            Bitmap preview = document.CreateSdrPreview(HdrSettings);
+            previewTimer.Stop();
+            totalTimer.Stop();
+            DebugHelper.WriteLine(
+                $"HDR deferred preview pipeline | size={document.RequestedBounds.Width}x{document.RequestedBounds.Height} " +
+                $"windowsMs={windowsTimer.Elapsed.TotalMilliseconds:F1} " +
+                $"previewMs={previewTimer.Elapsed.TotalMilliseconds:F1} " +
+                $"totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
+            return preview;
+        }
+
         private bool TryCaptureHdr(
             Rectangle rect,
             WindowsGraphicsCapture.CaptureContext captureContext,

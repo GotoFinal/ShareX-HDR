@@ -29,28 +29,20 @@ namespace ShareX
 {
     internal class ShareXUpdateManager : GitHubUpdateManager
     {
+        internal const string ForkOwner = "GotoFinal";
+        internal const string ForkRepository = "ShareX-HDR";
+
         public UpdateChannel UpdateChannel { get; set; }
 
         public override GitHubUpdateChecker CreateUpdateChecker()
         {
-            if (UpdateChannel == UpdateChannel.Dev)
+            return new GitHubUpdateChecker(ForkOwner, ForkRepository)
             {
-                return new GitHubUpdateChecker("ShareX", "DevBuilds")
-                {
-                    IsDev = true,
-                    IsPortable = Program.Portable,
-                    IgnoreRevision = true
-                };
-            }
-            else
-            {
-                return new GitHubUpdateChecker("ShareX", "ShareX")
-                {
-                    IsPortable = Program.Portable,
-                    IncludePreRelease = UpdateChannel == UpdateChannel.PreRelease,
-                    IgnoreRevision = true
-                };
-            }
+                IsDev = UpdateChannel == UpdateChannel.Dev,
+                IsPortable = Program.Portable,
+                IncludePreRelease = UpdateChannel != UpdateChannel.Release,
+                IgnoreRevision = true
+            };
         }
     }
 }
