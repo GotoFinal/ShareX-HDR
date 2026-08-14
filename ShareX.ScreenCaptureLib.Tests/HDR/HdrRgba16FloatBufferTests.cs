@@ -95,6 +95,104 @@ public class HdrRgba16FloatBufferTests
         }
     }
 
+    [Fact]
+    public void CopyFromPointer_FusesRgbScalingWithSanitizationAndPreservesAlpha()
+    {
+        const int pixelCount = 8;
+        byte[] source = new byte[pixelCount * HdrRgba16FloatBuffer.BytesPerPixel];
+
+        for (int pixel = 0; pixel < pixelCount; pixel++)
+        {
+            int offset = pixel * HdrRgba16FloatBuffer.BytesPerPixel;
+            WriteHalf(source, offset, 1f + pixel);
+            WriteHalf(source, offset + 2, -0.5f * pixel);
+            WriteHalf(source, offset + 4, pixel == 2 ? float.NaN : 3f);
+            WriteHalf(source, offset + 6, 0.5f);
+        }
+
+        WriteHalf(source, 3 * HdrRgba16FloatBuffer.BytesPerPixel, float.PositiveInfinity);
+        WriteHalf(source, 4 * HdrRgba16FloatBuffer.BytesPerPixel, float.NegativeInfinity);
+        WriteHalf(source, 5 * HdrRgba16FloatBuffer.BytesPerPixel, 40000f);
+        GCHandle sourceHandle = GCHandle.Alloc(source, GCHandleType.Pinned);
+
+        try
+        {
+            using var destination = new HdrRgba16FloatBuffer(pixelCount, 1);
+            destination.CopyFrom(
+                sourceHandle.AddrOfPinnedObject(),
+                source.Length,
+                pixelCount,
+                1,
+                Point.Empty,
+                rgbScale: 2f);
+
+            ReadOnlySpan<byte> row = destination.GetRowSpan(0);
+            Assert.Equal(2f, ReadHalf(row, 0));
+            Assert.Equal(6f, ReadHalf(row, 4));
+            Assert.Equal(0.5f, ReadHalf(row, 6));
+            Assert.Equal(0f, ReadHalf(row, 2 * HdrRgba16FloatBuffer.BytesPerPixel + 4));
+            Assert.Equal(65504f, ReadHalf(row, 3 * HdrRgba16FloatBuffer.BytesPerPixel));
+            Assert.Equal(-65504f, ReadHalf(row, 4 * HdrRgba16FloatBuffer.BytesPerPixel));
+            Assert.Equal(65504f, ReadHalf(row, 5 * HdrRgba16FloatBuffer.BytesPerPixel));
+        }
+        finally
+        {
+            sourceHandle.Free();
+        }
+    }
+
+    [Fact]
+    public void CopyFromPointer_ParallelScaledRowsMatchExpectedValues()
+    {
+        const int width = 8;
+        const int height = 64;
+        const int sourceStride = width * HdrRgba16FloatBuffer.BytesPerPixel + 16;
+        byte[] source = new byte[sourceStride * height];
+
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int offset = y * sourceStride + x * HdrRgba16FloatBuffer.BytesPerPixel;
+                WriteHalf(source, offset, y + x + 0.5f);
+                WriteHalf(source, offset + 2, -(x + 0.25f));
+                WriteHalf(source, offset + 4, y == 17 && x == 3 ? float.NaN : 2f);
+                WriteHalf(source, offset + 6, 0.75f);
+            }
+        }
+
+        GCHandle sourceHandle = GCHandle.Alloc(source, GCHandleType.Pinned);
+
+        try
+        {
+            using var destination = new HdrRgba16FloatBuffer(width, height);
+            destination.CopyFrom(
+                sourceHandle.AddrOfPinnedObject(),
+                sourceStride,
+                width,
+                height,
+                Point.Empty,
+                rgbScale: 0.5f);
+
+            for (int y = 0; y < height; y++)
+            {
+                ReadOnlySpan<byte> row = destination.GetRowSpan(y);
+                for (int x = 0; x < width; x++)
+                {
+                    int offset = x * HdrRgba16FloatBuffer.BytesPerPixel;
+                    Assert.Equal((y + x + 0.5f) * 0.5f, ReadHalf(row, offset));
+                    Assert.Equal(-(x + 0.25f) * 0.5f, ReadHalf(row, offset + 2));
+                    Assert.Equal(y == 17 && x == 3 ? 0f : 1f, ReadHalf(row, offset + 4));
+                    Assert.Equal(0.75f, ReadHalf(row, offset + 6));
+                }
+            }
+        }
+        finally
+        {
+            sourceHandle.Free();
+        }
+    }
+
     private static void WriteHalf(Span<byte> bytes, int offset, float value)
     {
         BinaryPrimitives.WriteUInt16LittleEndian(

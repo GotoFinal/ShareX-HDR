@@ -76,7 +76,11 @@ namespace ShareX.ScreenCaptureLib
                 return true;
             }
 
-            bool captured = WindowsGraphicsCapture.TryCaptureHdr(rect, null, out document);
+            bool captured = WindowsGraphicsCapture.TryCaptureHdr(
+                rect,
+                null,
+                HdrSettings,
+                out document);
 
             if (captured)
             {
@@ -257,7 +261,11 @@ namespace ShareX.ScreenCaptureLib
             }
 
             if (UseHDRSupport &&
-                WindowsGraphicsCapture.TryCaptureHdr(rect, captureContext, out HdrImageDocument hdrDocument))
+                WindowsGraphicsCapture.TryCaptureHdr(
+                    rect,
+                    captureContext,
+                    HdrSettings,
+                    out HdrImageDocument hdrDocument))
             {
                 return CreateSdrPreviewAndRetain(hdrDocument, rect, CaptureCursor, out document);
             }

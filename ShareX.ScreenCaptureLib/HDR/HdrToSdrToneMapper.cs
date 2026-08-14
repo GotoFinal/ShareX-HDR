@@ -295,6 +295,12 @@ namespace ShareX.ScreenCaptureLib
                 paperWhiteScRgb,
                 mask,
                 peakSamples);
+            List<WindowToneMapDecision> windowDecisions = AnalyzeWindowBoundaries(
+                width,
+                height,
+                toneMappingMode,
+                windowRegions,
+                mask);
 
             Parallel.For(0, height, y =>
             {
@@ -311,13 +317,9 @@ namespace ShareX.ScreenCaptureLib
             });
 
             ApplyWindowBoundaries(
-                (byte*)source,
-                sourceRowPitch,
                 width,
-                height,
-                paperWhiteScRgb,
                 toneMappingMode,
-                windowRegions,
+                windowDecisions,
                 mask);
             return mask;
         }
@@ -903,26 +905,23 @@ namespace ShareX.ScreenCaptureLib
                 tilesY));
         }
 
-        private static void ApplyWindowBoundaries(
-            byte* source,
-            int sourceRowPitch,
+        private static List<WindowToneMapDecision> AnalyzeWindowBoundaries(
             int width,
             int height,
-            float paperWhiteScRgb,
             HdrToneMappingMode toneMappingMode,
             IReadOnlyList<HdrWindowRegion> windowRegions,
-            byte[] mask)
+            byte[] headroomMask)
         {
+            var decisions = new List<WindowToneMapDecision>();
             if (windowRegions == null || windowRegions.Count == 0)
             {
-                return;
+                return decisions;
             }
 
             List<VisibleWindowRegion> visibleWindows = BuildVisibleWindowRegions(
                 width,
                 height,
                 windowRegions);
-            float headroomThreshold = paperWhiteScRgb * HdrDetectionMargin;
 
             foreach (VisibleWindowRegion window in visibleWindows)
             {
@@ -931,10 +930,9 @@ namespace ShareX.ScreenCaptureLib
                 if (window.Region.PromotionKind == HdrWindowPromotionKind.DetectFullscreenHdr)
                 {
                     forceHdr = IsPromoted(window.Region) || HasCoherentHdrContent(
-                        source,
-                        sourceRowPitch,
-                        window.ContentRectangles,
-                        headroomThreshold);
+                        headroomMask,
+                        width,
+                        window.ContentRectangles);
 
                     if (forceHdr)
                     {
@@ -942,7 +940,28 @@ namespace ShareX.ScreenCaptureLib
                     }
                 }
 
-                if (forceHdr)
+                bool isHdr = forceHdr || HasHdrContent(
+                    headroomMask,
+                    width,
+                    window.Rectangles,
+                    toneMappingMode == HdrToneMappingMode.PerWindow);
+                decisions.Add(new WindowToneMapDecision(window, forceHdr, isHdr));
+            }
+
+            return decisions;
+        }
+
+        private static void ApplyWindowBoundaries(
+            int width,
+            HdrToneMappingMode toneMappingMode,
+            IReadOnlyList<WindowToneMapDecision> decisions,
+            byte[] mask)
+        {
+            foreach (WindowToneMapDecision decision in decisions)
+            {
+                VisibleWindowRegion window = decision.Window;
+
+                if (decision.ForceHdr)
                 {
                     // Keep title bars/non-client pixels SDR while promoting the
                     // complete visible game client. Higher z-order windows were
@@ -952,19 +971,12 @@ namespace ShareX.ScreenCaptureLib
                     continue;
                 }
 
-                bool isHdr = HasHdrContent(
-                    source,
-                    sourceRowPitch,
-                    window.Rectangles,
-                    headroomThreshold,
-                    toneMappingMode == HdrToneMappingMode.PerWindow);
-
-                if (toneMappingMode == HdrToneMappingMode.ContentAware && isHdr)
+                if (toneMappingMode == HdrToneMappingMode.ContentAware && decision.IsHdr)
                 {
                     continue;
                 }
 
-                byte value = isHdr && toneMappingMode == HdrToneMappingMode.PerWindow
+                byte value = decision.IsHdr && toneMappingMode == HdrToneMappingMode.PerWindow
                     ? byte.MaxValue
                     : (byte)0;
                 FillMaskRectangles(mask, width, window.Rectangles, value);
@@ -1027,10 +1039,9 @@ namespace ShareX.ScreenCaptureLib
         }
 
         private static bool HasCoherentHdrContent(
-            byte* source,
-            int sourceRowPitch,
-            IReadOnlyList<Rectangle> rectangles,
-            float headroomThreshold)
+            byte[] headroomMask,
+            int width,
+            IReadOnlyList<Rectangle> rectangles)
         {
             foreach (Rectangle rectangle in rectangles)
             {
@@ -1049,20 +1060,17 @@ namespace ShareX.ScreenCaptureLib
 
                         for (int y = tileTop; y < tileBottom; y++)
                         {
-                            ushort* sourcePixel = (ushort*)(source + y * sourceRowPitch) + tileLeft * 4;
+                            int maskIndex = y * width + tileLeft;
 
                             for (int x = tileLeft; x < tileRight; x++)
                             {
-                                float red = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[0]));
-                                float green = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[1]));
-                                float blue = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[2]));
-                                if (GetRec2020Max(red, green, blue) > headroomThreshold &&
+                                if (headroomMask[maskIndex] == byte.MaxValue &&
                                     ++headroomPixels >= AutomaticPromotionMinimumPixelsPerTile)
                                 {
                                     return true;
                                 }
 
-                                sourcePixel += 4;
+                                maskIndex++;
                             }
                         }
                     }
@@ -1147,10 +1155,9 @@ namespace ShareX.ScreenCaptureLib
         }
 
         private static bool HasHdrContent(
-            byte* source,
-            int sourceRowPitch,
+            byte[] headroomMask,
+            int width,
             IReadOnlyList<Rectangle> rectangles,
-            float headroomThreshold,
             bool requireWindowCoverage)
         {
             long pixelCount = 0;
@@ -1168,20 +1175,17 @@ namespace ShareX.ScreenCaptureLib
             {
                 for (int y = rectangle.Top; y < rectangle.Bottom; y++)
                 {
-                    ushort* sourcePixel = (ushort*)(source + y * sourceRowPitch) + rectangle.Left * 4;
+                    int maskIndex = y * width + rectangle.Left;
 
                     for (int x = rectangle.Left; x < rectangle.Right; x++)
                     {
-                        float red = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[0]));
-                        float green = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[1]));
-                        float blue = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[2]));
-                        if (GetRec2020Max(red, green, blue) > headroomThreshold &&
+                        if (headroomMask[maskIndex] == byte.MaxValue &&
                             ++headroomPixels >= requiredPixels)
                         {
                             return true;
                         }
 
-                        sourcePixel += 4;
+                        maskIndex++;
                     }
                 }
             }
@@ -1691,6 +1695,23 @@ namespace ShareX.ScreenCaptureLib
                 Rectangles = rectangles;
                 ContentRectangles = contentRectangles;
                 Region = region;
+            }
+        }
+
+        private sealed class WindowToneMapDecision
+        {
+            public VisibleWindowRegion Window { get; }
+            public bool ForceHdr { get; }
+            public bool IsHdr { get; }
+
+            public WindowToneMapDecision(
+                VisibleWindowRegion window,
+                bool forceHdr,
+                bool isHdr)
+            {
+                Window = window;
+                ForceHdr = forceHdr;
+                IsHdr = isHdr;
             }
         }
 

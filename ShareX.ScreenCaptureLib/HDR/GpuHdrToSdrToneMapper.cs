@@ -166,90 +166,160 @@ namespace ShareX.ScreenCaptureLib
             HdrToSdrToneMapper.ToneMapInputAnalysis analysis,
             bool preserveAlpha,
             ToneMapResources reusableResources = null,
-            bool sourceAlreadyUploaded = false)
+            bool sourceAlreadyUploaded = false,
+            double resourceCreationMilliseconds = 0d,
+            double sourceUploadMilliseconds = 0d)
         {
             Stopwatch totalTimer = Stopwatch.StartNew();
-            Stopwatch resourceTimer = Stopwatch.StartNew();
             HdrToSdrToneMapper.ToneMapParameters parameters = analysis.Parameters;
-            using ToneMapResources ownedResources = reusableResources == null
-                ? new ToneMapResources(device, width, height)
-                : null;
+            ToneMapResources ownedResources = null;
+
+            if (reusableResources == null)
+            {
+                Stopwatch resourceCreationTimer = Stopwatch.StartNew();
+                ownedResources = new ToneMapResources(device, width, height);
+                resourceCreationTimer.Stop();
+                resourceCreationMilliseconds = resourceCreationTimer.Elapsed.TotalMilliseconds;
+            }
+
             ToneMapResources resources = reusableResources ?? ownedResources;
-
-            if (!sourceAlreadyUploaded)
-            {
-                ArgumentNullException.ThrowIfNull(sourceTexture);
-                context.CopyResource(resources.ShaderInput, sourceTexture);
-            }
-
-            bool useToneMapMask = analysis.ToneMapMask != null;
-            if (useToneMapMask)
-            {
-                context.UpdateSubresource(
-                    analysis.ToneMapMask,
-                    resources.ToneMapMask,
-                    0,
-                    (uint)width);
-            }
-
-            var constants = new GpuToneMapConstants(
-                parameters,
-                useToneMapMask,
-                preserveAlpha,
-                analysis.DefaultToneMapAmount);
-            context.UpdateSubresource(
-                resources.Constants,
-                0,
-                null,
-                (IntPtr)(&constants),
-                0,
-                0);
-            resourceTimer.Stop();
 
             try
             {
-                Stopwatch submitTimer = Stopwatch.StartNew();
-                context.OMSetRenderTargets(resources.OutputView);
-                context.RSSetViewport(new Viewport(width, height));
-                context.IASetInputLayout(null);
-                context.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
-                context.VSSetShader(resources.VertexShader);
-                context.PSSetShader(resources.PixelShader);
-                context.PSSetConstantBuffer(0, resources.Constants);
-                context.PSSetShaderResource(0, resources.SourceView);
-                context.PSSetShaderResource(1, useToneMapMask ? resources.MaskView : null);
-                context.Draw(3, 0);
+                Stopwatch sourceTransferTimer = Stopwatch.StartNew();
+                if (!sourceAlreadyUploaded)
+                {
+                    ArgumentNullException.ThrowIfNull(sourceTexture);
+                    context.CopyResource(resources.ShaderInput, sourceTexture);
+                }
+                sourceTransferTimer.Stop();
+                if (!sourceAlreadyUploaded)
+                {
+                    sourceUploadMilliseconds = sourceTransferTimer.Elapsed.TotalMilliseconds;
+                }
 
-                context.PSSetShaderResource(0, null);
-                context.PSSetShaderResource(1, null);
-                context.OMSetRenderTargets((ID3D11RenderTargetView)null);
-                context.CopyResource(resources.StagingOutput, resources.Output);
-                submitTimer.Stop();
+                bool useToneMapMask = analysis.ToneMapMask != null;
+                Stopwatch maskUploadTimer = Stopwatch.StartNew();
+                if (useToneMapMask)
+                {
+                    context.UpdateSubresource(
+                        analysis.ToneMapMask,
+                        resources.ToneMapMask,
+                        0,
+                        (uint)width);
+                }
+                maskUploadTimer.Stop();
 
-                Stopwatch readbackTimer = Stopwatch.StartNew();
-                Bitmap bitmap = ReadBgra8Bitmap(
-                    context,
-                    resources.StagingOutput,
-                    width,
-                    height);
-                readbackTimer.Stop();
-                totalTimer.Stop();
-                LogPerformance(
-                    $"HDR GPU preview stages | size={width}x{height} " +
-                    $"reused={reusableResources != null} " +
-                    $"resourcesMs={resourceTimer.Elapsed.TotalMilliseconds:F1} " +
-                    $"submitMs={submitTimer.Elapsed.TotalMilliseconds:F1} " +
-                    $"readbackMs={readbackTimer.Elapsed.TotalMilliseconds:F1} " +
-                    $"totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
-                return bitmap;
+                Stopwatch constantsTimer = Stopwatch.StartNew();
+                var constants = new GpuToneMapConstants(
+                    parameters,
+                    useToneMapMask,
+                    preserveAlpha,
+                    analysis.DefaultToneMapAmount);
+                context.UpdateSubresource(
+                    resources.Constants,
+                    0,
+                    null,
+                    (IntPtr)(&constants),
+                    0,
+                    0);
+                constantsTimer.Stop();
+
+                try
+                {
+                    Stopwatch submitTimer = Stopwatch.StartNew();
+                    context.Begin(resources.TimestampDisjoint);
+                    context.End(resources.ShaderStartTimestamp);
+                    context.OMSetRenderTargets(resources.OutputView);
+                    context.RSSetViewport(new Viewport(width, height));
+                    context.IASetInputLayout(null);
+                    context.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
+                    context.VSSetShader(resources.VertexShader);
+                    context.PSSetShader(resources.PixelShader);
+                    context.PSSetConstantBuffer(0, resources.Constants);
+                    context.PSSetShaderResource(0, resources.SourceView);
+                    context.PSSetShaderResource(1, useToneMapMask ? resources.MaskView : null);
+                    context.Draw(3, 0);
+                    context.End(resources.ShaderEndTimestamp);
+                    context.End(resources.TimestampDisjoint);
+
+                    context.PSSetShaderResource(0, null);
+                    context.PSSetShaderResource(1, null);
+                    context.OMSetRenderTargets((ID3D11RenderTargetView)null);
+                    context.CopyResource(resources.StagingOutput, resources.Output);
+                    submitTimer.Stop();
+
+                    Bitmap bitmap = ReadBgra8Bitmap(
+                        context,
+                        resources.StagingOutput,
+                        width,
+                        height,
+                        out double bgraMapWaitMilliseconds,
+                        out double bgraCopyMilliseconds);
+                    double gpuShaderMilliseconds = TryGetGpuElapsedMilliseconds(
+                        context,
+                        resources);
+                    totalTimer.Stop();
+                    LogPerformance(
+                        $"HDR GPU preview stages | size={width}x{height} " +
+                        $"reused={reusableResources != null} " +
+                        $"resourceCreateMs={resourceCreationMilliseconds:F1} " +
+                        $"sourceUploadMs={sourceUploadMilliseconds:F1} " +
+                        $"maskUploadMs={maskUploadTimer.Elapsed.TotalMilliseconds:F1} " +
+                        $"constantsMs={constantsTimer.Elapsed.TotalMilliseconds:F1} " +
+                        $"submitMs={submitTimer.Elapsed.TotalMilliseconds:F1} " +
+                        $"gpuShaderMs={gpuShaderMilliseconds:F3} " +
+                        $"bgraMapWaitMs={bgraMapWaitMilliseconds:F1} " +
+                        $"bgraCopyMs={bgraCopyMilliseconds:F1} " +
+                        $"totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
+                    return bitmap;
+                }
+                finally
+                {
+                    // Never release resources while the immediate context retains
+                    // references to them. This device is private to one capture.
+                    context.ClearState();
+                    context.Flush();
+                }
             }
             finally
             {
-                // Never release resources while the immediate context retains
-                // references to them. This device is private to one capture.
-                context.ClearState();
-                context.Flush();
+                ownedResources?.Dispose();
             }
+        }
+
+        private static double TryGetGpuElapsedMilliseconds(
+            ID3D11DeviceContext context,
+            ToneMapResources resources)
+        {
+            QueryDataTimestampDisjoint disjoint = default;
+            ulong start = 0;
+            ulong end = 0;
+
+            var disjointResult = context.GetData(
+                resources.TimestampDisjoint,
+                (IntPtr)(&disjoint),
+                (uint)sizeof(QueryDataTimestampDisjoint),
+                AsyncGetDataFlags.None);
+            var startResult = context.GetData(
+                resources.ShaderStartTimestamp,
+                (IntPtr)(&start),
+                sizeof(ulong),
+                AsyncGetDataFlags.None);
+            var endResult = context.GetData(
+                resources.ShaderEndTimestamp,
+                (IntPtr)(&end),
+                sizeof(ulong),
+                AsyncGetDataFlags.None);
+
+            if (disjointResult.Code != 0 || startResult.Code != 0 || endResult.Code != 0 ||
+                disjoint.Disjoint ||
+                disjoint.Frequency == 0 || end < start)
+            {
+                return double.NaN;
+            }
+
+            return (end - start) * 1000d / disjoint.Frequency;
         }
 
         private static void LogPerformance(string message)
@@ -276,6 +346,9 @@ namespace ShareX.ScreenCaptureLib
             public ID3D11ShaderResourceView SourceView { get; private set; }
             public ID3D11ShaderResourceView MaskView { get; private set; }
             public ID3D11RenderTargetView OutputView { get; private set; }
+            public ID3D11Query TimestampDisjoint { get; private set; }
+            public ID3D11Query ShaderStartTimestamp { get; private set; }
+            public ID3D11Query ShaderEndTimestamp { get; private set; }
 
             public ToneMapResources(ID3D11Device device, int width, int height)
             {
@@ -313,6 +386,12 @@ namespace ShareX.ScreenCaptureLib
                     SourceView = device.CreateShaderResourceView(ShaderInput);
                     MaskView = device.CreateShaderResourceView(ToneMapMask);
                     OutputView = device.CreateRenderTargetView(Output);
+                    TimestampDisjoint = device.CreateQuery(
+                        new QueryDescription(QueryType.TimestampDisjoint, QueryFlags.None));
+                    ShaderStartTimestamp = device.CreateQuery(
+                        new QueryDescription(QueryType.Timestamp, QueryFlags.None));
+                    ShaderEndTimestamp = device.CreateQuery(
+                        new QueryDescription(QueryType.Timestamp, QueryFlags.None));
                 }
                 catch
                 {
@@ -323,6 +402,12 @@ namespace ShareX.ScreenCaptureLib
 
             public void Dispose()
             {
+                ShaderEndTimestamp?.Dispose();
+                ShaderEndTimestamp = null;
+                ShaderStartTimestamp?.Dispose();
+                ShaderStartTimestamp = null;
+                TimestampDisjoint?.Dispose();
+                TimestampDisjoint = null;
                 OutputView?.Dispose();
                 OutputView = null;
                 MaskView?.Dispose();
@@ -394,8 +479,11 @@ namespace ShareX.ScreenCaptureLib
                     windowRegions);
                 analysisTimer.Stop();
                 HdrToSdrToneMapper.LogAnalysis("GPU", settings, analysis, displayMaxLuminanceNits);
+                ToneMapResources resources = GetResources(
+                    width,
+                    height,
+                    out double resourceCreationMilliseconds);
                 Stopwatch uploadTimer = Stopwatch.StartNew();
-                ToneMapResources resources = GetResources(width, height);
                 context.UpdateSubresource(
                     resources.ShaderInput,
                     0,
@@ -414,7 +502,9 @@ namespace ShareX.ScreenCaptureLib
                     analysis,
                     preserveAlpha,
                     resources,
-                    sourceAlreadyUploaded: true);
+                    sourceAlreadyUploaded: true,
+                    resourceCreationMilliseconds: resourceCreationMilliseconds,
+                    sourceUploadMilliseconds: uploadTimer.Elapsed.TotalMilliseconds);
                 renderTimer.Stop();
                 LogPerformance(
                     $"HDR GPU preview input | size={width}x{height} " +
@@ -435,8 +525,11 @@ namespace ShareX.ScreenCaptureLib
                 ObjectDisposedException.ThrowIf(disposed, this);
                 HdrToSdrToneMapper.ToneMapInputAnalysis analysis =
                     HdrToSdrToneMapper.CreateKnownSdrAnalysis(paperWhiteNits);
+                ToneMapResources resources = GetResources(
+                    width,
+                    height,
+                    out double resourceCreationMilliseconds);
                 Stopwatch uploadTimer = Stopwatch.StartNew();
-                ToneMapResources resources = GetResources(width, height);
                 context.UpdateSubresource(
                     resources.ShaderInput,
                     0,
@@ -455,7 +548,9 @@ namespace ShareX.ScreenCaptureLib
                     analysis,
                     preserveAlpha,
                     resources,
-                    sourceAlreadyUploaded: true);
+                    sourceAlreadyUploaded: true,
+                    resourceCreationMilliseconds: resourceCreationMilliseconds,
+                    sourceUploadMilliseconds: uploadTimer.Elapsed.TotalMilliseconds);
                 renderTimer.Stop();
                 LogPerformance(
                     $"HDR GPU preview input | size={width}x{height} analysisMs=0.0 " +
@@ -464,8 +559,12 @@ namespace ShareX.ScreenCaptureLib
                 return bitmap;
             }
 
-            private ToneMapResources GetResources(int width, int height)
+            private ToneMapResources GetResources(
+                int width,
+                int height,
+                out double creationMilliseconds)
             {
+                creationMilliseconds = 0d;
                 var size = new System.Drawing.Size(width, height);
                 if (!resourceCache.TryGetValue(size, out ToneMapResources resources))
                 {
@@ -479,7 +578,10 @@ namespace ShareX.ScreenCaptureLib
                         resourceCache.Clear();
                     }
 
+                    Stopwatch creationTimer = Stopwatch.StartNew();
                     resources = new ToneMapResources(device, width, height);
+                    creationTimer.Stop();
+                    creationMilliseconds = creationTimer.Elapsed.TotalMilliseconds;
                     resourceCache.Add(size, resources);
                 }
 
@@ -598,13 +700,19 @@ namespace ShareX.ScreenCaptureLib
             ID3D11DeviceContext context,
             ID3D11Texture2D texture,
             int width,
-            int height)
+            int height,
+            out double mapWaitMilliseconds,
+            out double copyMilliseconds)
         {
+            Stopwatch mapWaitTimer = Stopwatch.StartNew();
             MappedSubresource mapped = context.Map(
                 texture,
                 0,
                 MapMode.Read,
                 Vortice.Direct3D11.MapFlags.None);
+            mapWaitTimer.Stop();
+            mapWaitMilliseconds = mapWaitTimer.Elapsed.TotalMilliseconds;
+            copyMilliseconds = 0d;
 
             try
             {
@@ -619,6 +727,7 @@ namespace ShareX.ScreenCaptureLib
 
                     try
                     {
+                        Stopwatch copyTimer = Stopwatch.StartNew();
                         int destinationPitch = Math.Abs(destination.Stride);
                         int rowBytes = checked(width * 4);
 
@@ -630,6 +739,9 @@ namespace ShareX.ScreenCaptureLib
                                 : (byte*)destination.Scan0 + (height - 1 - y) * destinationPitch;
                             Buffer.MemoryCopy(sourceRow, destinationRow, destinationPitch, rowBytes);
                         }
+
+                        copyTimer.Stop();
+                        copyMilliseconds = copyTimer.Elapsed.TotalMilliseconds;
                     }
                     finally
                     {

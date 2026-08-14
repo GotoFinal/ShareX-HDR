@@ -20,6 +20,9 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.X86;
 using System.Threading.Tasks;
 
 namespace ShareX.ScreenCaptureLib
@@ -114,7 +117,8 @@ namespace ShareX.ScreenCaptureLib
             int sourceRowBytes,
             int width,
             int height,
-            Point destinationLocation)
+            Point destinationLocation,
+            float rgbScale = 1f)
         {
             ObjectDisposedException.ThrowIf(pixels == null, this);
             if (source == IntPtr.Zero)
@@ -136,17 +140,34 @@ namespace ShareX.ScreenCaptureLib
 
             fixed (byte* destinationBase = pixels)
             {
+                if (Math.Abs(rgbScale - 1f) > 0.0001f && height >= 64)
+                {
+                    nint sourceAddress = (nint)source;
+                    nint destinationAddress = (nint)destinationBase;
+                    Parallel.For(0, height, y =>
+                    {
+                        byte* destinationRow = (byte*)destinationAddress +
+                            (destinationLocation.Y + y) * RowBytes +
+                            destinationLocation.X * BytesPerPixel;
+                        CopySanitizedRow(
+                            (byte*)sourceAddress + y * sourceRowBytes,
+                            destinationRow,
+                            width,
+                            rgbScale);
+                    });
+                    return;
+                }
+
                 for (int y = 0; y < height; y++)
                 {
                     byte* destinationRow = destinationBase +
                         (destinationLocation.Y + y) * RowBytes +
                         destinationLocation.X * BytesPerPixel;
-                    Buffer.MemoryCopy(
+                    CopySanitizedRow(
                         (byte*)source + y * sourceRowBytes,
                         destinationRow,
-                        activeRowBytes,
-                        activeRowBytes);
-                    SanitizeNonFinite(destinationRow, width * 4);
+                        width,
+                        rgbScale);
                 }
             }
         }
@@ -243,24 +264,166 @@ namespace ShareX.ScreenCaptureLib
 
         private static unsafe void SanitizeNonFinite(byte* values, int valueCount)
         {
+            ushort* halfValues = (ushort*)values;
+            int valueIndex = 0;
+
+            if (Avx2.IsSupported)
+            {
+                for (; valueIndex <= valueCount - Vector256<ushort>.Count;
+                    valueIndex += Vector256<ushort>.Count)
+                {
+                    Vector256<ushort> source = Unsafe.ReadUnaligned<Vector256<ushort>>(
+                        halfValues + valueIndex);
+                    Unsafe.WriteUnaligned(
+                        halfValues + valueIndex,
+                        SanitizeHalfVector(source));
+                }
+            }
+
+            for (; valueIndex < valueCount; valueIndex++)
+            {
+                halfValues[valueIndex] = SanitizeHalfBits(halfValues[valueIndex]);
+            }
+        }
+
+        private static unsafe void CopySanitizedRow(
+            byte* source,
+            byte* destination,
+            int pixelCount,
+            float rgbScale)
+        {
+            int valueCount = checked(pixelCount * 4);
+            ushort* sourceValues = (ushort*)source;
+            ushort* destinationValues = (ushort*)destination;
+            bool scaleRgb = Math.Abs(rgbScale - 1f) > 0.0001f;
+            int valueIndex = 0;
+
+            if (Avx2.IsSupported)
+            {
+                Vector256<float> scale = Vector256.Create(
+                    rgbScale,
+                    rgbScale,
+                    rgbScale,
+                    1f,
+                    rgbScale,
+                    rgbScale,
+                    rgbScale,
+                    1f);
+                float* scaledValues = stackalloc float[Vector256<ushort>.Count];
+
+                for (; valueIndex <= valueCount - Vector256<ushort>.Count;
+                    valueIndex += Vector256<ushort>.Count)
+                {
+                    Vector256<ushort> sanitized = SanitizeHalfVector(
+                        Unsafe.ReadUnaligned<Vector256<ushort>>(sourceValues + valueIndex));
+
+                    if (!scaleRgb)
+                    {
+                        Unsafe.WriteUnaligned(destinationValues + valueIndex, sanitized);
+                        continue;
+                    }
+
+                    Vector256<float> lower = Avx.Multiply(
+                        ConvertFiniteHalf8ToSingle(sanitized.GetLower()),
+                        scale);
+                    Vector256<float> upper = Avx.Multiply(
+                        ConvertFiniteHalf8ToSingle(sanitized.GetUpper()),
+                        scale);
+                    Avx.Store(scaledValues, lower);
+                    Avx.Store(scaledValues + Vector256<float>.Count, upper);
+
+                    for (int lane = 0; lane < Vector256<ushort>.Count; lane++)
+                    {
+                        destinationValues[valueIndex + lane] =
+                            BitConverter.HalfToUInt16Bits((Half)ClampFiniteHalf(scaledValues[lane]));
+                    }
+                }
+            }
+
+            for (; valueIndex < valueCount; valueIndex++)
+            {
+                ushort sanitized = SanitizeHalfBits(sourceValues[valueIndex]);
+                if (!scaleRgb || valueIndex % 4 == 3)
+                {
+                    destinationValues[valueIndex] = sanitized;
+                    continue;
+                }
+
+                float value = (float)BitConverter.UInt16BitsToHalf(sanitized);
+                destinationValues[valueIndex] = BitConverter.HalfToUInt16Bits(
+                    (Half)ClampFiniteHalf(value * rgbScale));
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static ushort SanitizeHalfBits(ushort bits)
+        {
             const ushort exponentMask = 0x7C00;
             const ushort mantissaMask = 0x03FF;
             const ushort signMask = 0x8000;
             const ushort maximumFinite = 0x7BFF;
-            ushort* halfValues = (ushort*)values;
 
-            for (int valueIndex = 0; valueIndex < valueCount; valueIndex++)
+            if ((bits & exponentMask) != exponentMask)
             {
-                ushort bits = halfValues[valueIndex];
-                if ((bits & exponentMask) != exponentMask)
-                {
-                    continue;
-                }
-
-                halfValues[valueIndex] = (bits & mantissaMask) != 0
-                    ? (ushort)0
-                    : (ushort)((bits & signMask) | maximumFinite);
+                return bits;
             }
+
+            return (bits & mantissaMask) != 0
+                ? (ushort)0
+                : (ushort)((bits & signMask) | maximumFinite);
+        }
+
+        private static Vector256<ushort> SanitizeHalfVector(Vector256<ushort> values)
+        {
+            Vector256<ushort> exponentMask = Vector256.Create((ushort)0x7C00);
+            Vector256<ushort> mantissaMask = Vector256.Create((ushort)0x03FF);
+            Vector256<ushort> signMask = Vector256.Create((ushort)0x8000);
+            Vector256<ushort> maximumFinite = Vector256.Create((ushort)0x7BFF);
+            Vector256<ushort> nonFinite = Avx2.CompareEqual(
+                Avx2.And(values, exponentMask),
+                exponentMask);
+            Vector256<ushort> nan = Avx2.CompareGreaterThan(
+                Avx2.And(values, mantissaMask).AsInt16(),
+                Vector256<short>.Zero).AsUInt16();
+            Vector256<ushort> infinityReplacement = Avx2.Or(
+                Avx2.And(values, signMask),
+                maximumFinite);
+            Vector256<ushort> replacement = Avx2.BlendVariable(
+                infinityReplacement,
+                Vector256<ushort>.Zero,
+                nan);
+            return Avx2.BlendVariable(values, replacement, nonFinite);
+        }
+
+        private static Vector256<float> ConvertFiniteHalf8ToSingle(Vector128<ushort> values)
+        {
+            Vector256<uint> expanded = Avx2.ConvertToVector256Int32(values).AsUInt32();
+            Vector256<uint> sign = Avx2.ShiftLeftLogical(
+                Avx2.And(expanded, Vector256.Create(0x8000u)),
+                16);
+            Vector256<uint> magnitude = Avx2.And(expanded, Vector256.Create(0x7FFFu));
+            Vector256<uint> exponentIsZero = Avx2.CompareEqual(
+                Avx2.And(magnitude, Vector256.Create(0x7C00u)),
+                Vector256<uint>.Zero);
+            Vector256<uint> normalBits = Avx2.Add(
+                Avx2.ShiftLeftLogical(magnitude, 13),
+                Vector256.Create(0x38000000u));
+            Vector256<float> subnormal = Avx.Subtract(
+                Avx2.Add(normalBits, Vector256.Create(0x00800000u)).AsSingle(),
+                Vector256.Create(BitConverter.Int32BitsToSingle(0x38800000)));
+            Vector256<float> magnitudeValues = Avx.BlendVariable(
+                normalBits.AsSingle(),
+                subnormal,
+                exponentIsZero.AsSingle());
+            return Avx2.Or(magnitudeValues.AsUInt32(), sign).AsSingle();
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static float ClampFiniteHalf(float value)
+        {
+            return float.IsFinite(value)
+                ? Math.Clamp(value, -(float)Half.MaxValue, (float)Half.MaxValue)
+                : 0f;
         }
 
         private static void ValidateDimensions(int width, int height)
@@ -2464,6 +2627,7 @@ namespace ShareX.ScreenCaptureLib
             Bitmap segmentPreview = null;
             bool usedGpu = false;
             Stopwatch segmentTimer = Stopwatch.StartNew();
+            Stopwatch toneMapTimer = Stopwatch.StartNew();
 
             if (gpuSession != null)
             {
@@ -2518,16 +2682,21 @@ namespace ShareX.ScreenCaptureLib
                     rectangle.Height,
                     segment.SdrWhiteNits,
                     preserveAlpha: true);
+            toneMapTimer.Stop();
 
+            Stopwatch gdiCompositionTimer = Stopwatch.StartNew();
             using (segmentPreview)
             {
                 graphics.DrawImageUnscaled(segmentPreview, rectangle.Location);
             }
+            gdiCompositionTimer.Stop();
 
             segmentTimer.Stop();
             DebugHelper.WriteLine(
                 $"HDR preview segment | display={segment.DisplayDeviceName} hdr={segment.WasHdrActive} " +
                 $"backend={(usedGpu ? "GPU" : "CPU")} size={rectangle.Width}x{rectangle.Height} " +
+                $"toneMapMs={toneMapTimer.Elapsed.TotalMilliseconds:F1} " +
+                $"gdiCompositionMs={gdiCompositionTimer.Elapsed.TotalMilliseconds:F1} " +
                 $"elapsedMs={segmentTimer.Elapsed.TotalMilliseconds:F1}");
         }
 

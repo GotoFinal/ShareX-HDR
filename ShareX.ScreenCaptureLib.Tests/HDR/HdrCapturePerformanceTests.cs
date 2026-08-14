@@ -44,6 +44,7 @@ public sealed class HdrCapturePerformanceTests
         bool captured = WindowsGraphicsCapture.TryCaptureHdr(
             bounds,
             null,
+            new HdrCaptureSettings(),
             out HdrImageDocument document);
         stopwatch.Stop();
 
@@ -69,6 +70,7 @@ public sealed class HdrCapturePerformanceTests
         bool captured = WindowsGraphicsCapture.TryCaptureHdr(
             bounds,
             null,
+            settings,
             out HdrImageDocument document);
         captureTimer.Stop();
 
