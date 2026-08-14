@@ -34,7 +34,9 @@ internal sealed class WindowsHdrRegionDimWindow : IDisposable
     private const uint LwaAlpha = 0x00000002;
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpShowWindow = 0x0040;
+    private const uint WmNcHitTest = 0x0084;
     private const int SwHide = 0;
+    private const int HtTransparent = -1;
     private const int BlackBrush = 4;
 
     private static readonly object WindowClassSync = new();
@@ -186,8 +188,17 @@ internal sealed class WindowsHdrRegionDimWindow : IDisposable
         }
     }
 
-    private static IntPtr WindowProcedure(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam) =>
-        DefWindowProcW(hwnd, message, wParam, lParam);
+    private static IntPtr WindowProcedure(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam)
+    {
+        // WS_EX_TRANSPARENT controls paint ordering; it does not guarantee
+        // click-through hit testing. This mask is visual-only.
+        if (message == WmNcHitTest)
+        {
+            return (IntPtr)HtTransparent;
+        }
+
+        return DefWindowProcW(hwnd, message, wParam, lParam);
+    }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct WindowClassEx

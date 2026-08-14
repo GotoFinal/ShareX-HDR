@@ -36,7 +36,9 @@ public sealed class WindowsHdrPreviewPresenter : IDisposable
     private const uint WsExNoActivate = 0x08000000;
     private const uint SwpNoActivate = 0x0010;
     private const uint SwpShowWindow = 0x0040;
+    private const uint WmNcHitTest = 0x0084;
     private const int SwHide = 0;
+    private const int HtTransparent = -1;
 
     private static readonly object WindowClassSync = new();
     private static readonly WindowProc PreviewWindowProc = WindowProcedure;
@@ -297,8 +299,18 @@ public sealed class WindowsHdrPreviewPresenter : IDisposable
         }
     }
 
-    private static IntPtr WindowProcedure(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam) =>
-        DefWindowProcW(hwnd, message, wParam, lParam);
+    private static IntPtr WindowProcedure(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam)
+    {
+        // This window only presents pixels. Mouse input must continue to the
+        // editor/region-selector overlay even when this swap chain happens to
+        // be above its dedicated input proxy in the composed Z order.
+        if (message == WmNcHitTest)
+        {
+            return (IntPtr)HtTransparent;
+        }
+
+        return DefWindowProcW(hwnd, message, wParam, lParam);
+    }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct WindowClassEx

@@ -40,6 +40,8 @@ internal sealed class WindowsHdrRegionInputWindow : IDisposable
     private const uint WmNcHitTest = 0x0084;
     private const uint WmMouseFirst = 0x0200;
     private const uint WmMouseLast = 0x020E;
+    private const uint WmMouseWheel = 0x020A;
+    private const uint WmMouseHorizontalWheel = 0x020E;
     private const int HtClient = 1;
     private const int MaNoActivate = 3;
     private const int BlackBrush = 4;
@@ -166,10 +168,30 @@ internal sealed class WindowsHdrRegionInputWindow : IDisposable
             return (IntPtr)MaNoActivate;
         }
 
-        if (instance?.targetHandle != IntPtr.Zero &&
-            (message == WmSetCursor || (message >= WmMouseFirst && message <= WmMouseLast)))
+        if (instance?.targetHandle != IntPtr.Zero && message == WmSetCursor)
         {
-            return SendMessageW(instance.targetHandle, message, wParam, lParam);
+            return SendMessageW(instance.targetHandle, message, instance.targetHandle, lParam);
+        }
+
+        if (instance?.targetHandle != IntPtr.Zero &&
+            message >= WmMouseFirst && message <= WmMouseLast)
+        {
+            IntPtr translatedLParam = lParam;
+            if (message != WmMouseWheel && message != WmMouseHorizontalWheel)
+            {
+                var point = new NativePoint
+                {
+                    X = GetSignedLowWord(lParam),
+                    Y = GetSignedHighWord(lParam)
+                };
+
+                if (MapWindowPoints(hwnd, instance.targetHandle, ref point, 1) != 0)
+                {
+                    translatedLParam = MakeLParam(point.X, point.Y);
+                }
+            }
+
+            return SendMessageW(instance.targetHandle, message, wParam, translatedLParam);
         }
 
         return DefWindowProcW(hwnd, message, wParam, lParam);
@@ -205,6 +227,20 @@ internal sealed class WindowsHdrRegionInputWindow : IDisposable
 
             windowClassRegistered = true;
         }
+    }
+
+    private static short GetSignedLowWord(IntPtr value) => unchecked((short)(long)value);
+
+    private static short GetSignedHighWord(IntPtr value) => unchecked((short)((long)value >> 16));
+
+    private static IntPtr MakeLParam(int x, int y) =>
+        (IntPtr)(long)(uint)((ushort)x | ((uint)(ushort)y << 16));
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -254,6 +290,13 @@ internal sealed class WindowsHdrRegionInputWindow : IDisposable
 
     [DllImport("user32.dll")]
     private static extern IntPtr SendMessageW(IntPtr hwnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern int MapWindowPoints(
+        IntPtr fromWindow,
+        IntPtr toWindow,
+        ref NativePoint points,
+        uint pointCount);
 
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
