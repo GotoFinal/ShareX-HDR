@@ -120,6 +120,75 @@ namespace ShareX.ScreenCaptureLib
             }
         }
 
+        internal static Bitmap ToneMapKnownSdrRgba16Float(
+            IntPtr source,
+            int sourceRowPitch,
+            int width,
+            int height,
+            float paperWhiteNits,
+            bool preserveAlpha)
+        {
+            if (source == IntPtr.Zero)
+            {
+                throw new ArgumentException("The source pointer cannot be null.", nameof(source));
+            }
+
+            if (width <= 0 || height <= 0 || sourceRowPitch < width * sizeof(ushort) * 4)
+            {
+                throw new ArgumentOutOfRangeException(nameof(width));
+            }
+
+            Bitmap bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+
+            try
+            {
+                BitmapData destination = bitmap.LockBits(
+                    new Rectangle(0, 0, width, height),
+                    ImageLockMode.WriteOnly,
+                    PixelFormat.Format32bppArgb);
+
+                try
+                {
+                    ToneMapRgba16FloatAnalyzed(
+                        (byte*)source,
+                        sourceRowPitch,
+                        (byte*)destination.Scan0,
+                        destination.Stride,
+                        width,
+                        height,
+                        CreateKnownSdrAnalysis(paperWhiteNits),
+                        preserveAlpha);
+                }
+                finally
+                {
+                    bitmap.UnlockBits(destination);
+                }
+
+                return bitmap;
+            }
+            catch
+            {
+                bitmap.Dispose();
+                throw;
+            }
+        }
+
+        internal static ToneMapInputAnalysis CreateKnownSdrAnalysis(float paperWhiteNits)
+        {
+            float clampedWhite = Math.Clamp(
+                paperWhiteNits,
+                HdrCaptureSettings.MinimumBrightnessNits,
+                HdrCaptureSettings.MaximumPaperWhiteNits);
+            return new ToneMapInputAnalysis(
+                new ToneMapParameters(
+                    clampedWhite,
+                    clampedWhite / ScRgbNitsPerUnit,
+                    clampedWhite * 1.0001f),
+                null,
+                ContentPeakMeasurement.NotMeasured,
+                defaultToneMapAmount: 0f);
+        }
+
         internal static ToneMapParameters CreateToneMapParameters(
             float configuredPeakNits,
             HdrPeakBrightnessMode peakBrightnessMode,
@@ -271,6 +340,27 @@ namespace ShareX.ScreenCaptureLib
                 preserveAlpha,
                 windowRegions);
             LogAnalysis("CPU", settings, inputAnalysis, displayMaxLuminanceNits);
+            ToneMapRgba16FloatAnalyzed(
+                source,
+                sourceRowPitch,
+                destination,
+                destinationStride,
+                width,
+                height,
+                inputAnalysis,
+                preserveAlpha);
+        }
+
+        private static void ToneMapRgba16FloatAnalyzed(
+            byte* source,
+            int sourceRowPitch,
+            byte* destination,
+            int destinationStride,
+            int width,
+            int height,
+            ToneMapInputAnalysis inputAnalysis,
+            bool preserveAlpha)
+        {
             ToneMapParameters parameters = inputAnalysis.Parameters;
             float paperWhiteScRgb = parameters.PaperWhiteScRgb;
             bool useContentDetection = inputAnalysis.ToneMapMask != null;
@@ -317,7 +407,7 @@ namespace ShareX.ScreenCaptureLib
                         toneMapper,
                         useContentDetection
                             ? toneMapMask[y * width + x] / 255f
-                            : 1f);
+                            : inputAnalysis.DefaultToneMapAmount);
 
                     destinationPixel[0] = ToSrgbByte(blue);
                     destinationPixel[1] = ToSrgbByte(green);
@@ -1572,15 +1662,18 @@ namespace ShareX.ScreenCaptureLib
             public ToneMapParameters Parameters { get; }
             public byte[] ToneMapMask { get; }
             public ContentPeakMeasurement ContentPeak { get; }
+            public float DefaultToneMapAmount { get; }
 
             public ToneMapInputAnalysis(
                 ToneMapParameters parameters,
                 byte[] toneMapMask,
-                ContentPeakMeasurement contentPeak)
+                ContentPeakMeasurement contentPeak,
+                float defaultToneMapAmount = 1f)
             {
                 Parameters = parameters;
                 ToneMapMask = toneMapMask;
                 ContentPeak = contentPeak;
+                DefaultToneMapAmount = Math.Clamp(defaultToneMapAmount, 0f, 1f);
             }
         }
 

@@ -25,6 +25,7 @@
 
 using ShareX.HelpersLib;
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
@@ -270,23 +271,39 @@ namespace ShareX.ScreenCaptureLib
             out HdrImageDocument document)
         {
             document = null;
+            Stopwatch totalTimer = Stopwatch.StartNew();
 
             try
             {
+                Stopwatch normalizeTimer = Stopwatch.StartNew();
                 capturedDocument.NormalizeMixedMonitorBrightness(HdrSettings);
+                normalizeTimer.Stop();
 
+                Stopwatch windowsTimer = Stopwatch.StartNew();
                 if (HdrSettings.ToneMappingMode != HdrToneMappingMode.Uniform)
                 {
                     capturedDocument.CaptureWindowRegions(HdrSettings);
                 }
+                windowsTimer.Stop();
 
+                Stopwatch cursorTimer = Stopwatch.StartNew();
                 if (captureCursor)
                 {
                     CompositeCursor(capturedDocument, captureRectangle);
                 }
+                cursorTimer.Stop();
 
+                Stopwatch previewTimer = Stopwatch.StartNew();
                 Bitmap preview = capturedDocument.CreateSdrPreview(HdrSettings);
+                previewTimer.Stop();
                 document = capturedDocument;
+                DebugHelper.WriteLine(
+                    $"HDR preview pipeline | size={captureRectangle.Width}x{captureRectangle.Height} " +
+                    $"normalizeMs={normalizeTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"windowsMs={windowsTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"cursorMs={cursorTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"previewMs={previewTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
                 return preview;
             }
             catch

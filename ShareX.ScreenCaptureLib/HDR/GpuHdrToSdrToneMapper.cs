@@ -151,7 +151,11 @@ namespace ShareX.ScreenCaptureLib
             using ID3D11Buffer constants = device.CreateBuffer(
                 new GpuToneMapConstants[]
                 {
-                    new GpuToneMapConstants(parameters, toneMapMask != null, preserveAlpha)
+                    new GpuToneMapConstants(
+                        parameters,
+                        toneMapMask != null,
+                        preserveAlpha,
+                        analysis.DefaultToneMapAmount)
                 },
                 BindFlags.ConstantBuffer);
             using ID3D11ShaderResourceView sourceView = device.CreateShaderResourceView(shaderInput);
@@ -257,6 +261,40 @@ namespace ShareX.ScreenCaptureLib
                     preserveAlpha,
                     windowRegions);
                 HdrToSdrToneMapper.LogAnalysis("GPU", settings, analysis, displayMaxLuminanceNits);
+                using ID3D11Texture2D sourceTexture = CreateTexture(
+                    device,
+                    (uint)width,
+                    (uint)height,
+                    Format.R16G16B16A16_Float,
+                    BindFlags.ShaderResource);
+                context.UpdateSubresource(
+                    sourceTexture,
+                    0,
+                    null,
+                    source,
+                    (uint)sourceRowPitch,
+                    0);
+                return ToneMapAnalyzed(
+                    device,
+                    context,
+                    sourceTexture,
+                    width,
+                    height,
+                    analysis,
+                    preserveAlpha);
+            }
+
+            public Bitmap ToneMapKnownSdr(
+                IntPtr source,
+                int sourceRowPitch,
+                int width,
+                int height,
+                float paperWhiteNits,
+                bool preserveAlpha)
+            {
+                ObjectDisposedException.ThrowIf(disposed, this);
+                HdrToSdrToneMapper.ToneMapInputAnalysis analysis =
+                    HdrToSdrToneMapper.CreateKnownSdrAnalysis(paperWhiteNits);
                 using ID3D11Texture2D sourceTexture = CreateTexture(
                     device,
                     (uint)width,
@@ -476,14 +514,15 @@ namespace ShareX.ScreenCaptureLib
             public readonly float CurveYB;
             public readonly uint UseToneMapMask;
             public readonly uint PreserveAlpha;
-            public readonly uint Padding0;
+            public readonly float DefaultToneMapAmount;
             public readonly uint Padding1;
             public readonly uint Padding2;
 
             public GpuToneMapConstants(
                 HdrToSdrToneMapper.ToneMapParameters parameters,
                 bool useToneMapMask,
-                bool preserveAlpha)
+                bool preserveAlpha,
+                float defaultToneMapAmount)
             {
                 PaperWhiteScRgb = parameters.PaperWhiteScRgb;
                 InputMaximum = parameters.InputMaximum;
@@ -494,7 +533,7 @@ namespace ShareX.ScreenCaptureLib
                 CurveYB = parameters.CurveYB;
                 UseToneMapMask = useToneMapMask ? 1u : 0u;
                 PreserveAlpha = preserveAlpha ? 1u : 0u;
-                Padding0 = 0;
+                DefaultToneMapAmount = defaultToneMapAmount;
                 Padding1 = 0;
                 Padding2 = 0;
             }

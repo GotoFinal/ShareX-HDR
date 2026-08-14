@@ -14,7 +14,7 @@ cbuffer ToneMapConstants : register(b0)
     float CurveYB;
     uint UseToneMapMask;
     uint PreserveAlpha;
-    uint Padding0;
+    float DefaultToneMapAmount;
     uint Padding1;
     uint Padding2;
 };
@@ -101,7 +101,7 @@ float4 PixelMain(VertexOutput input) : SV_Target
     float maxRgb = GetRec2020Max(color);
     float toneMapAmount = UseToneMapMask != 0
         ? ToneMapMask.Load(int3(pixel, 0))
-        : 1.0f;
+        : DefaultToneMapAmount;
 
     if (toneMapAmount > 0.0f)
     {

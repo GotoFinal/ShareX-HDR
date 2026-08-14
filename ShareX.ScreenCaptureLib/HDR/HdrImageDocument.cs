@@ -16,6 +16,7 @@ using ShareX.HelpersLib;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -201,32 +202,31 @@ namespace ShareX.ScreenCaptureLib
             }
         }
 
-        private void SanitizeNonFinite()
+        private unsafe void SanitizeNonFinite()
         {
-            for (int y = 0; y < Height; y++)
+            const ushort exponentMask = 0x7C00;
+            const ushort mantissaMask = 0x03FF;
+            const ushort signMask = 0x8000;
+            const ushort maximumFinite = 0x7BFF;
+
+            fixed (byte* pixelBase = pixels)
             {
-                Span<byte> row = pixels.AsSpan(y * RowBytes, Width * BytesPerPixel);
-
-                for (int offset = 0; offset < row.Length; offset += 2)
+                int valuesPerRow = checked(Width * 4);
+                for (int y = 0; y < Height; y++)
                 {
-                    ushort bits = BinaryPrimitives.ReadUInt16LittleEndian(row.Slice(offset, 2));
-                    Half value = BitConverter.UInt16BitsToHalf(bits);
+                    ushort* row = (ushort*)(pixelBase + y * RowBytes);
 
-                    if (Half.IsNaN(value))
+                    for (int valueIndex = 0; valueIndex < valuesPerRow; valueIndex++)
                     {
-                        BinaryPrimitives.WriteUInt16LittleEndian(row.Slice(offset, 2), 0);
-                    }
-                    else if (Half.IsPositiveInfinity(value))
-                    {
-                        BinaryPrimitives.WriteUInt16LittleEndian(
-                            row.Slice(offset, 2),
-                            BitConverter.HalfToUInt16Bits(Half.MaxValue));
-                    }
-                    else if (Half.IsNegativeInfinity(value))
-                    {
-                        BinaryPrimitives.WriteUInt16LittleEndian(
-                            row.Slice(offset, 2),
-                            BitConverter.HalfToUInt16Bits(Half.MinValue));
+                        ushort bits = row[valueIndex];
+                        if ((bits & exponentMask) != exponentMask)
+                        {
+                            continue;
+                        }
+
+                        row[valueIndex] = (bits & mantissaMask) != 0
+                            ? (ushort)0
+                            : (ushort)((bits & signMask) | maximumFinite);
                     }
                 }
             }
@@ -376,6 +376,17 @@ namespace ShareX.ScreenCaptureLib
                 return;
             }
 
+            if (!sourceSegments.Exists(segment => !segment.WasHdrActive))
+            {
+                return;
+            }
+
+            if (!SourceSegmentsOverlap())
+            {
+                NormalizeNonOverlappingSdrSegments(settings, hdrSegments);
+                return;
+            }
+
             HdrRgba16FloatBuffer pixels = MasterPixels;
             byte[] coveredPixels = new byte[checked(pixels.Width * pixels.Height)];
 
@@ -445,6 +456,82 @@ namespace ShareX.ScreenCaptureLib
                         $"sourceWhite={sourceWhiteNits:F1}nits targetWhite={targetWhiteNits:F1}nits " +
                         $"scale={scale:F3} bounds={segment.DestinationRectangle}");
                 }
+            }
+        }
+
+        private bool SourceSegmentsOverlap()
+        {
+            for (int firstIndex = 0; firstIndex < sourceSegments.Count; firstIndex++)
+            {
+                Rectangle first = sourceSegments[firstIndex].DestinationRectangle;
+                for (int secondIndex = firstIndex + 1; secondIndex < sourceSegments.Count; secondIndex++)
+                {
+                    if (first.IntersectsWith(sourceSegments[secondIndex].DestinationRectangle))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private void NormalizeNonOverlappingSdrSegments(
+            HdrCaptureSettings settings,
+            IReadOnlyList<HdrCaptureSourceSegment> hdrSegments)
+        {
+            HdrRgba16FloatBuffer pixels = MasterPixels;
+            Rectangle pixelBounds = new Rectangle(0, 0, pixels.Width, pixels.Height);
+
+            for (int segmentIndex = 0; segmentIndex < sourceSegments.Count; segmentIndex++)
+            {
+                HdrCaptureSourceSegment segment = sourceSegments[segmentIndex];
+                if (segment.WasHdrActive)
+                {
+                    continue;
+                }
+
+                Rectangle rectangle = Rectangle.Intersect(segment.DestinationRectangle, pixelBounds);
+                if (rectangle.Width <= 0 || rectangle.Height <= 0)
+                {
+                    continue;
+                }
+
+                float targetWhiteNits = settings.MixedMonitorBrightnessMode ==
+                    HdrMixedMonitorBrightnessMode.Custom
+                    ? settings.MixedMonitorCustomSdrWhiteNits
+                    : FindNearestHdrWhiteNits(segment.DestinationRectangle, hdrSegments);
+                float sourceWhiteNits = float.IsFinite(segment.SdrWhiteNits) &&
+                    segment.SdrWhiteNits > 0f
+                    ? segment.SdrWhiteNits
+                    : HdrRgba16FloatBuffer.ReferenceWhiteNits;
+                float scale = targetWhiteNits / sourceWhiteNits;
+
+                if (Math.Abs(scale - 1f) > 0.0001f)
+                {
+                    Parallel.For(rectangle.Top, rectangle.Bottom, y =>
+                    {
+                        Span<byte> row = pixels.GetWritableRowSpan(y);
+                        for (int x = rectangle.Left; x < rectangle.Right; x++)
+                        {
+                            int pixelOffset = x * HdrRgba16FloatBuffer.BytesPerPixel;
+                            WriteHalf(row, pixelOffset, ScaleFiniteHalf(ReadHalf(row, pixelOffset), scale));
+                            WriteHalf(row, pixelOffset + 2, ScaleFiniteHalf(ReadHalf(row, pixelOffset + 2), scale));
+                            WriteHalf(row, pixelOffset + 4, ScaleFiniteHalf(ReadHalf(row, pixelOffset + 4), scale));
+                        }
+                    });
+                }
+
+                sourceSegments[segmentIndex] = new HdrCaptureSourceSegment(
+                    segment.DestinationRectangle,
+                    segment.DisplayDeviceName,
+                    false,
+                    targetWhiteNits,
+                    segment.DisplayPeakNits);
+                DebugHelper.WriteLine(
+                    $"HDR mixed-monitor normalization | display={segment.DisplayDeviceName} " +
+                    $"sourceWhite={sourceWhiteNits:F1}nits targetWhite={targetWhiteNits:F1}nits " +
+                    $"scale={scale:F3} bounds={segment.DestinationRectangle} fastPath=True");
             }
         }
 
@@ -2337,25 +2424,38 @@ namespace ShareX.ScreenCaptureLib
             IntPtr segmentSource = (IntPtr)(sourceBase +
                 rectangle.Y * pixels.RowBytes +
                 rectangle.X * HdrRgba16FloatBuffer.BytesPerPixel);
-            IReadOnlyList<HdrWindowRegion> segmentWindowRegions = GetSegmentWindowRegions(rectangle);
+            IReadOnlyList<HdrWindowRegion> segmentWindowRegions = segment.WasHdrActive
+                ? GetSegmentWindowRegions(rectangle)
+                : null;
 
             Bitmap segmentPreview = null;
+            bool usedGpu = false;
+            Stopwatch segmentTimer = Stopwatch.StartNew();
 
             if (gpuSession != null)
             {
                 try
                 {
-                    segmentPreview = gpuSession.ToneMap(
-                        segmentSource,
-                        pixels.RowBytes,
-                        rectangle.Width,
-                        rectangle.Height,
-                        settings,
-                        segment.SdrWhiteNits,
-                        segment.DisplayPeakNits,
-                        preserveAlpha: true,
-                        segmentWindowRegions,
-                        out _);
+                    segmentPreview = segment.WasHdrActive
+                        ? gpuSession.ToneMap(
+                            segmentSource,
+                            pixels.RowBytes,
+                            rectangle.Width,
+                            rectangle.Height,
+                            settings,
+                            segment.SdrWhiteNits,
+                            segment.DisplayPeakNits,
+                            preserveAlpha: true,
+                            segmentWindowRegions,
+                            out _)
+                        : gpuSession.ToneMapKnownSdr(
+                            segmentSource,
+                            pixels.RowBytes,
+                            rectangle.Width,
+                            rectangle.Height,
+                            segment.SdrWhiteNits,
+                            preserveAlpha: true);
+                    usedGpu = true;
                 }
                 catch (Exception exception)
                 {
@@ -2367,21 +2467,35 @@ namespace ShareX.ScreenCaptureLib
                 }
             }
 
-            segmentPreview ??= HdrToSdrToneMapper.ToneMapRgba16Float(
-                segmentSource,
-                pixels.RowBytes,
-                rectangle.Width,
-                rectangle.Height,
-                settings,
-                segment.SdrWhiteNits,
-                segment.DisplayPeakNits,
-                preserveAlpha: true,
-                windowRegions: segmentWindowRegions);
+            segmentPreview ??= segment.WasHdrActive
+                ? HdrToSdrToneMapper.ToneMapRgba16Float(
+                    segmentSource,
+                    pixels.RowBytes,
+                    rectangle.Width,
+                    rectangle.Height,
+                    settings,
+                    segment.SdrWhiteNits,
+                    segment.DisplayPeakNits,
+                    preserveAlpha: true,
+                    windowRegions: segmentWindowRegions)
+                : HdrToSdrToneMapper.ToneMapKnownSdrRgba16Float(
+                    segmentSource,
+                    pixels.RowBytes,
+                    rectangle.Width,
+                    rectangle.Height,
+                    segment.SdrWhiteNits,
+                    preserveAlpha: true);
 
             using (segmentPreview)
             {
                 graphics.DrawImageUnscaled(segmentPreview, rectangle.Location);
             }
+
+            segmentTimer.Stop();
+            DebugHelper.WriteLine(
+                $"HDR preview segment | display={segment.DisplayDeviceName} hdr={segment.WasHdrActive} " +
+                $"backend={(usedGpu ? "GPU" : "CPU")} size={rectangle.Width}x{rectangle.Height} " +
+                $"elapsedMs={segmentTimer.Elapsed.TotalMilliseconds:F1}");
         }
 
         private IReadOnlyList<HdrWindowRegion> GetSegmentWindowRegions(Rectangle segmentRectangle)

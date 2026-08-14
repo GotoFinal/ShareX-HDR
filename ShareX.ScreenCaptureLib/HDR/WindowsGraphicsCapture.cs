@@ -30,6 +30,7 @@ using Windows.Graphics.DirectX;
 using Windows.Graphics.DirectX.Direct3D11;
 using WinRtDirect3DDevice = Windows.Graphics.DirectX.Direct3D11.IDirect3DDevice;
 using WinRtDirect3DSurface = Windows.Graphics.DirectX.Direct3D11.IDirect3DSurface;
+using D3DBox = Vortice.Mathematics.Box;
 using static Vortice.Direct3D11.D3D11;
 
 namespace ShareX.ScreenCaptureLib
@@ -137,6 +138,7 @@ namespace ShareX.ScreenCaptureLib
         {
             document = null;
             bool ownsCaptureContext = captureContext == null;
+            Stopwatch totalTimer = Stopwatch.StartNew();
 
             if (captureRectangle.Width <= 0 || captureRectangle.Height <= 0)
             {
@@ -145,15 +147,23 @@ namespace ShareX.ScreenCaptureLib
 
             try
             {
+                Stopwatch metadataTimer = Stopwatch.StartNew();
                 List<MonitorCaptureTarget> targets = GetCaptureTargets(captureRectangle);
+                metadataTimer.Stop();
 
                 if (!targets.Exists(target => target.IsHdrActive))
                 {
+                    Log(
+                        $"hdr-document fallback=GDI reason=no-active-hdr-display metadataMs={metadataTimer.Elapsed.TotalMilliseconds:F1} totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
                     return false;
                 }
 
                 captureContext ??= new CaptureContext(false);
+                Stopwatch captureTimer = Stopwatch.StartNew();
                 document = CaptureHdr(captureRectangle, targets, captureContext);
+                captureTimer.Stop();
+                Log(
+                    $"hdr-document success bounds={FormatRectangle(captureRectangle)} displays={targets.Count} reusable={captureContext.IsReusable} metadataMs={metadataTimer.Elapsed.TotalMilliseconds:F1} captureMs={captureTimer.Elapsed.TotalMilliseconds:F1} totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
                 return document != null;
             }
             catch (Exception e)
@@ -171,6 +181,8 @@ namespace ShareX.ScreenCaptureLib
                 }
 
                 DebugHelper.WriteException(e);
+                Log(
+                    $"hdr-document fallback=GDI reason={e.GetType().Name} hresult=0x{e.HResult:X8} totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
                 return false;
             }
             finally
@@ -250,6 +262,11 @@ namespace ShareX.ScreenCaptureLib
             IReadOnlyList<MonitorCaptureTarget> targets,
             CaptureContext captureContext)
         {
+            if (targets.Count == 1 && targets[0].Intersection == captureRectangle)
+            {
+                return CaptureSingleTargetHdr(captureRectangle, targets[0], captureContext);
+            }
+
             var canvas = new HdrRgba16FloatBuffer(captureRectangle.Width, captureRectangle.Height);
             var segments = new List<HdrCaptureSourceSegment>(targets.Count);
 
@@ -257,35 +274,20 @@ namespace ShareX.ScreenCaptureLib
             {
                 foreach (MonitorCaptureTarget target in targets)
                 {
-                    using HdrRgba16FloatBuffer monitorPixels = captureContext.CaptureMonitorHdr(target.Monitor);
-                    float sourceScaleX = monitorPixels.Width / (float)target.MonitorBounds.Width;
-                    float sourceScaleY = monitorPixels.Height / (float)target.MonitorBounds.Height;
-
-                    int sourceLeft = Math.Clamp(
-                        (int)MathF.Floor((target.Intersection.Left - target.MonitorBounds.Left) * sourceScaleX),
-                        0,
-                        monitorPixels.Width - 1);
-                    int sourceTop = Math.Clamp(
-                        (int)MathF.Floor((target.Intersection.Top - target.MonitorBounds.Top) * sourceScaleY),
-                        0,
-                        monitorPixels.Height - 1);
-                    int sourceRight = Math.Clamp(
-                        (int)MathF.Ceiling((target.Intersection.Right - target.MonitorBounds.Left) * sourceScaleX),
-                        sourceLeft + 1,
-                        monitorPixels.Width);
-                    int sourceBottom = Math.Clamp(
-                        (int)MathF.Ceiling((target.Intersection.Bottom - target.MonitorBounds.Top) * sourceScaleY),
-                        sourceTop + 1,
-                        monitorPixels.Height);
-
-                    var sourceRectangle = Rectangle.FromLTRB(sourceLeft, sourceTop, sourceRight, sourceBottom);
+                    using HdrRgba16FloatBuffer monitorPixels = captureContext.CaptureMonitorHdr(
+                        target.Monitor,
+                        target.MonitorBounds,
+                        target.Intersection);
                     var destinationRectangle = new Rectangle(
                         target.Intersection.X - captureRectangle.X,
                         target.Intersection.Y - captureRectangle.Y,
                         target.Intersection.Width,
                         target.Intersection.Height);
 
-                    canvas.CopyScaledRegionFrom(monitorPixels, sourceRectangle, destinationRectangle);
+                    canvas.CopyScaledRegionFrom(
+                        monitorPixels,
+                        new Rectangle(Point.Empty, new Size(monitorPixels.Width, monitorPixels.Height)),
+                        destinationRectangle);
                     segments.Add(new HdrCaptureSourceSegment(
                         destinationRectangle,
                         target.DeviceName,
@@ -300,6 +302,58 @@ namespace ShareX.ScreenCaptureLib
             {
                 canvas.Dispose();
                 throw;
+            }
+        }
+
+        private static HdrImageDocument CaptureSingleTargetHdr(
+            Rectangle captureRectangle,
+            MonitorCaptureTarget target,
+            CaptureContext captureContext)
+        {
+            HdrRgba16FloatBuffer capturedPixels = captureContext.CaptureMonitorHdr(
+                target.Monitor,
+                target.MonitorBounds,
+                target.Intersection);
+
+            try
+            {
+                HdrRgba16FloatBuffer documentPixels;
+                if (capturedPixels.Width == captureRectangle.Width &&
+                    capturedPixels.Height == captureRectangle.Height)
+                {
+                    documentPixels = capturedPixels;
+                    capturedPixels = null;
+                }
+                else
+                {
+                    documentPixels = new HdrRgba16FloatBuffer(
+                        captureRectangle.Width,
+                        captureRectangle.Height);
+                    try
+                    {
+                        documentPixels.CopyScaledRegionFrom(
+                            capturedPixels,
+                            new Rectangle(Point.Empty, new Size(capturedPixels.Width, capturedPixels.Height)),
+                            new Rectangle(Point.Empty, captureRectangle.Size));
+                    }
+                    catch
+                    {
+                        documentPixels.Dispose();
+                        throw;
+                    }
+                }
+
+                var segment = new HdrCaptureSourceSegment(
+                    new Rectangle(Point.Empty, captureRectangle.Size),
+                    target.DeviceName,
+                    target.IsHdrActive,
+                    target.SdrWhiteNits,
+                    target.MaxLuminanceNits);
+                return new HdrImageDocument(captureRectangle, documentPixels, new[] { segment });
+            }
+            finally
+            {
+                capturedPixels?.Dispose();
             }
         }
 
@@ -453,13 +507,16 @@ namespace ShareX.ScreenCaptureLib
                 return session.Capture(settings, sdrWhiteNits, maxLuminanceNits);
             }
 
-            public HdrRgba16FloatBuffer CaptureMonitorHdr(IntPtr monitor)
+            public HdrRgba16FloatBuffer CaptureMonitorHdr(
+                IntPtr monitor,
+                Rectangle monitorBounds,
+                Rectangle intersection)
             {
                 EnsureInitialized();
 
                 if (!IsReusable)
                 {
-                    return captureDevice.CaptureMonitorHdr(monitor);
+                    return captureDevice.CaptureMonitorHdr(monitor, monitorBounds, intersection);
                 }
 
                 if (!monitorSessions.TryGetValue(monitor, out D3D11CaptureDevice.MonitorCaptureSession session))
@@ -468,7 +525,7 @@ namespace ShareX.ScreenCaptureLib
                     monitorSessions.Add(monitor, session);
                 }
 
-                return session.CaptureHdr();
+                return session.CaptureHdr(monitorBounds, intersection);
             }
 
             public void ResetAfterFailure()
@@ -611,10 +668,13 @@ namespace ShareX.ScreenCaptureLib
                 return session.Capture(settings, sdrWhiteNits, maxLuminanceNits);
             }
 
-            public HdrRgba16FloatBuffer CaptureMonitorHdr(IntPtr monitor)
+            public HdrRgba16FloatBuffer CaptureMonitorHdr(
+                IntPtr monitor,
+                Rectangle monitorBounds,
+                Rectangle intersection)
             {
                 using MonitorCaptureSession session = CreateMonitorSession(monitor);
-                return session.CaptureHdr();
+                return session.CaptureHdr(monitorBounds, intersection);
             }
 
             public MonitorCaptureSession CreateMonitorSession(IntPtr monitor)
@@ -703,7 +763,10 @@ namespace ShareX.ScreenCaptureLib
                 }
             }
 
-            private HdrRgba16FloatBuffer CopyToHdrBuffer(Direct3D11CaptureFrame frame)
+            private HdrRgba16FloatBuffer CopyToHdrBuffer(
+                Direct3D11CaptureFrame frame,
+                Rectangle monitorBounds,
+                Rectangle intersection)
             {
                 using ID3D11Texture2D sourceTexture = GetTexture(frame.Surface);
                 Texture2DDescription sourceDescription = sourceTexture.Description;
@@ -713,12 +776,32 @@ namespace ShareX.ScreenCaptureLib
                     throw new InvalidOperationException();
                 }
 
-                int width = Math.Min(frame.ContentSize.Width, (int)sourceDescription.Width);
-                int height = Math.Min(frame.ContentSize.Height, (int)sourceDescription.Height);
+                int frameWidth = Math.Min(frame.ContentSize.Width, (int)sourceDescription.Width);
+                int frameHeight = Math.Min(frame.ContentSize.Height, (int)sourceDescription.Height);
+                float sourceScaleX = frameWidth / (float)monitorBounds.Width;
+                float sourceScaleY = frameHeight / (float)monitorBounds.Height;
+                int sourceLeft = Math.Clamp(
+                    (int)MathF.Floor((intersection.Left - monitorBounds.Left) * sourceScaleX),
+                    0,
+                    frameWidth - 1);
+                int sourceTop = Math.Clamp(
+                    (int)MathF.Floor((intersection.Top - monitorBounds.Top) * sourceScaleY),
+                    0,
+                    frameHeight - 1);
+                int sourceRight = Math.Clamp(
+                    (int)MathF.Ceiling((intersection.Right - monitorBounds.Left) * sourceScaleX),
+                    sourceLeft + 1,
+                    frameWidth);
+                int sourceBottom = Math.Clamp(
+                    (int)MathF.Ceiling((intersection.Bottom - monitorBounds.Top) * sourceScaleY),
+                    sourceTop + 1,
+                    frameHeight);
+                int width = sourceRight - sourceLeft;
+                int height = sourceBottom - sourceTop;
                 Texture2DDescription stagingDescription = new Texture2DDescription
                 {
-                    Width = sourceDescription.Width,
-                    Height = sourceDescription.Height,
+                    Width = (uint)width,
+                    Height = (uint)height,
                     MipLevels = 1,
                     ArraySize = 1,
                     Format = sourceDescription.Format,
@@ -730,20 +813,35 @@ namespace ShareX.ScreenCaptureLib
                 };
 
                 using ID3D11Texture2D stagingTexture = device.CreateTexture2D(stagingDescription);
-                context.CopyResource(stagingTexture, sourceTexture);
+                Stopwatch gpuReadbackTimer = Stopwatch.StartNew();
+                context.CopySubresourceRegion(
+                    stagingTexture,
+                    0,
+                    0,
+                    0,
+                    0,
+                    sourceTexture,
+                    0,
+                    new D3DBox(sourceLeft, sourceTop, 0, sourceRight, sourceBottom, 1));
                 MappedSubresource mapped = context.Map(
                     stagingTexture,
                     0,
                     MapMode.Read,
                     Vortice.Direct3D11.MapFlags.None);
+                gpuReadbackTimer.Stop();
 
                 try
                 {
-                    return HdrRgba16FloatBuffer.CopyFrom(
+                    Stopwatch cpuCopyTimer = Stopwatch.StartNew();
+                    HdrRgba16FloatBuffer result = HdrRgba16FloatBuffer.CopyFrom(
                         mapped.DataPointer,
                         (int)mapped.RowPitch,
                         width,
                         height);
+                    cpuCopyTimer.Stop();
+                    Log(
+                        $"hdr-readback frame={frameWidth}x{frameHeight} crop={sourceLeft},{sourceTop},{width}x{height} gpuWaitMs={gpuReadbackTimer.Elapsed.TotalMilliseconds:F1} cpuCopyMs={cpuCopyTimer.Elapsed.TotalMilliseconds:F1}");
+                    return result;
                 }
                 finally
                 {
@@ -819,12 +917,18 @@ namespace ShareX.ScreenCaptureLib
                     return owner.CopyAndToneMap(frame, settings, sdrWhiteNits, maxLuminanceNits);
                 }
 
-                public HdrRgba16FloatBuffer CaptureHdr()
+                public HdrRgba16FloatBuffer CaptureHdr(
+                    Rectangle monitorBounds,
+                    Rectangle intersection)
                 {
                     ObjectDisposedException.ThrowIf(session == null, this);
+                    Stopwatch acquisitionTimer = Stopwatch.StartNew();
                     using Direct3D11CaptureFrame frame = WaitForFrame(framePool, lastFrameTime);
                     lastFrameTime = frame.SystemRelativeTime;
-                    return owner.CopyToHdrBuffer(frame);
+                    acquisitionTimer.Stop();
+                    Log(
+                        $"hdr-frame size={frame.ContentSize.Width}x{frame.ContentSize.Height} acquisitionMs={acquisitionTimer.Elapsed.TotalMilliseconds:F1}");
+                    return owner.CopyToHdrBuffer(frame, monitorBounds, intersection);
                 }
 
                 public void Dispose()
