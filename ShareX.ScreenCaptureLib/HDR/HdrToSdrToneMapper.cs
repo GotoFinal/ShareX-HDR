@@ -351,19 +351,7 @@ namespace ShareX.ScreenCaptureLib
                 windowRegions,
                 mask);
 
-            Parallel.For(0, height, y =>
-            {
-                int rowOffset = y * width;
-
-                for (int x = 0; x < width; x++)
-                {
-                    int maskIndex = rowOffset + x;
-                    if (mask[maskIndex] != byte.MaxValue)
-                    {
-                        mask[maskIndex] = ToByte(analysis.GetToneMapAmount(x, y));
-                    }
-                }
-            });
+            analysis.ApplyToneMapAmounts(mask, width, height);
 
             ApplyWindowBoundaries(
                 width,
@@ -1712,21 +1700,40 @@ namespace ShareX.ScreenCaptureLib
                 this.regions = regions;
             }
 
-            public float GetToneMapAmount(int x, int y)
+            public void ApplyToneMapAmounts(byte[] mask, int width, int height)
             {
-                float amount = 0f;
-
-                foreach (ToneMapRegion region in regions)
+                if (regions.Count == 0)
                 {
-                    amount = Math.Max(amount, region.GetAmount(x, y));
-
-                    if (amount >= 1f)
-                    {
-                        break;
-                    }
+                    return;
                 }
 
-                return amount;
+                Parallel.For(0, height, y =>
+                {
+                    int rowOffset = y * width;
+
+                    foreach (ToneMapRegion region in regions)
+                    {
+                        if (y < region.OuterTop || y >= region.OuterBottom)
+                        {
+                            continue;
+                        }
+
+                        for (int x = region.OuterLeft; x < region.OuterRight; x++)
+                        {
+                            int maskIndex = rowOffset + x;
+                            if (mask[maskIndex] == byte.MaxValue)
+                            {
+                                continue;
+                            }
+
+                            byte amount = ToByte(region.GetAmountWithinOuterBounds(x, y));
+                            if (amount > mask[maskIndex])
+                            {
+                                mask[maskIndex] = amount;
+                            }
+                        }
+                    }
+                });
             }
         }
 
@@ -1791,6 +1798,11 @@ namespace ShareX.ScreenCaptureLib
             private readonly int innerTop;
             private readonly int innerRight;
             private readonly int innerBottom;
+
+            public int OuterLeft => outerLeft;
+            public int OuterTop => outerTop;
+            public int OuterRight => outerRight;
+            public int OuterBottom => outerBottom;
 
             private ToneMapRegion(
                 int outerLeft,
@@ -1874,13 +1886,8 @@ namespace ShareX.ScreenCaptureLib
                     innerBottom);
             }
 
-            public float GetAmount(int x, int y)
+            public float GetAmountWithinOuterBounds(int x, int y)
             {
-                if (x < outerLeft || x >= outerRight || y < outerTop || y >= outerBottom)
-                {
-                    return 0f;
-                }
-
                 float amount = 1f;
 
                 if (x < innerLeft)
