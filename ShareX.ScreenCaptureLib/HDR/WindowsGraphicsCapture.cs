@@ -39,6 +39,7 @@ namespace ShareX.ScreenCaptureLib
     internal static class WindowsGraphicsCapture
     {
         private const int CaptureTimeoutMilliseconds = 1500;
+        private const int FreshFrameGraceMilliseconds = 100;
         private const int NormalSessionIdleMilliseconds = 10000;
         private const int RpcEChangedMode = unchecked((int)0x80010106);
         private const uint MonitorDefaultToNearest = 2;
@@ -631,10 +632,14 @@ namespace ShareX.ScreenCaptureLib
             private bool disposed;
 
             public bool IsReusable { get; }
+            public bool AllowCachedFrameFallback { get; }
 
-            public CaptureContext(bool isReusable)
+            public CaptureContext(
+                bool isReusable,
+                bool allowCachedFrameFallback = false)
             {
                 IsReusable = isReusable;
+                AllowCachedFrameFallback = allowCachedFrameFallback;
             }
 
             public Bitmap CaptureMonitor(
@@ -682,7 +687,9 @@ namespace ShareX.ScreenCaptureLib
                     monitor,
                     out D3D11CaptureDevice.MonitorCaptureSession session))
                 {
-                    session = captureDevice.CreateMonitorSession(monitor);
+                    session = captureDevice.CreateMonitorSession(
+                        monitor,
+                        AllowCachedFrameFallback);
                     monitorSessions.Add(monitor, session);
                     Log(
                         $"session=create monitor=0x{monitor.ToInt64():X} reusable={IsReusable}");
@@ -854,7 +861,9 @@ namespace ShareX.ScreenCaptureLib
                         {
                             try
                             {
-                                captureContext ??= new CaptureContext(true);
+                                captureContext ??= new CaptureContext(
+                                    true,
+                                    allowCachedFrameFallback: true);
 
                                 if (request.PrewarmOnly)
                                 {
@@ -1011,7 +1020,17 @@ namespace ShareX.ScreenCaptureLib
 
             public MonitorCaptureSession CreateMonitorSession(IntPtr monitor)
             {
-                return new MonitorCaptureSession(this, monitor);
+                return CreateMonitorSession(monitor, allowCachedFrameFallback: false);
+            }
+
+            public MonitorCaptureSession CreateMonitorSession(
+                IntPtr monitor,
+                bool allowCachedFrameFallback)
+            {
+                return new MonitorCaptureSession(
+                    this,
+                    monitor,
+                    allowCachedFrameFallback);
             }
 
             private Bitmap CopyAndToneMap(
@@ -1113,6 +1132,34 @@ namespace ShareX.ScreenCaptureLib
 
                 int frameWidth = Math.Min(frame.ContentSize.Width, (int)sourceDescription.Width);
                 int frameHeight = Math.Min(frame.ContentSize.Height, (int)sourceDescription.Height);
+                return CopyToHdrBuffer(
+                    sourceTexture,
+                    frameWidth,
+                    frameHeight,
+                    monitorBounds,
+                    intersection,
+                    destination,
+                    destinationRectangle,
+                    rgbScale);
+            }
+
+            private HdrRgba16FloatBuffer CopyToHdrBuffer(
+                ID3D11Texture2D sourceTexture,
+                int frameWidth,
+                int frameHeight,
+                Rectangle monitorBounds,
+                Rectangle intersection,
+                HdrRgba16FloatBuffer destination = null,
+                Rectangle destinationRectangle = default,
+                float rgbScale = 1f)
+            {
+                Texture2DDescription sourceDescription = sourceTexture.Description;
+
+                if (sourceDescription.Format != Format.R16G16B16A16_Float)
+                {
+                    throw new InvalidOperationException();
+                }
+
                 float sourceScaleX = frameWidth / (float)monitorBounds.Width;
                 float sourceScaleY = frameHeight / (float)monitorBounds.Height;
                 int sourceLeft = Math.Clamp(
@@ -1221,14 +1268,22 @@ namespace ShareX.ScreenCaptureLib
             public sealed class MonitorCaptureSession : IDisposable
             {
                 private readonly D3D11CaptureDevice owner;
+                private readonly bool allowCachedFrameFallback;
                 private GraphicsCaptureItem item;
                 private Direct3D11CaptureFramePool framePool;
                 private GraphicsCaptureSession session;
                 private TimeSpan? lastFrameTime;
+                private ID3D11Texture2D cachedFrameTexture;
+                private int cachedFrameWidth;
+                private int cachedFrameHeight;
 
-                public MonitorCaptureSession(D3D11CaptureDevice owner, IntPtr monitor)
+                public MonitorCaptureSession(
+                    D3D11CaptureDevice owner,
+                    IntPtr monitor,
+                    bool allowCachedFrameFallback)
                 {
                     this.owner = owner;
+                    this.allowCachedFrameFallback = allowCachedFrameFallback;
 
                     try
                     {
@@ -1281,12 +1336,44 @@ namespace ShareX.ScreenCaptureLib
                 {
                     ObjectDisposedException.ThrowIf(session == null, this);
                     Stopwatch acquisitionTimer = Stopwatch.StartNew();
-                    using Direct3D11CaptureFrame frame = WaitForFrame(framePool, lastFrameTime);
-                    lastFrameTime = frame.SystemRelativeTime;
-                    acquisitionTimer.Stop();
-                    Log(
-                        $"hdr-frame size={frame.ContentSize.Width}x{frame.ContentSize.Height} acquisitionMs={acquisitionTimer.Elapsed.TotalMilliseconds:F1}");
-                    return owner.CopyToHdrBuffer(frame, monitorBounds, intersection);
+                    Direct3D11CaptureFrame frame = WaitForFrame(
+                        framePool,
+                        lastFrameTime,
+                        allowCachedFrameFallback && cachedFrameTexture != null);
+
+                    try
+                    {
+                        if (frame != null)
+                        {
+                            lastFrameTime = frame.SystemRelativeTime;
+                            using ID3D11Texture2D sourceTexture = GetTexture(frame.Surface);
+                            acquisitionTimer.Stop();
+                            Log(
+                                $"hdr-frame size={frame.ContentSize.Width}x{frame.ContentSize.Height} cached=False acquisitionMs={acquisitionTimer.Elapsed.TotalMilliseconds:F1}");
+                            HdrRgba16FloatBuffer result = owner.CopyToHdrBuffer(
+                                sourceTexture,
+                                Math.Min(frame.ContentSize.Width, (int)sourceTexture.Description.Width),
+                                Math.Min(frame.ContentSize.Height, (int)sourceTexture.Description.Height),
+                                monitorBounds,
+                                intersection);
+                            CacheFrame(sourceTexture, frame.ContentSize.Width, frame.ContentSize.Height);
+                            return result;
+                        }
+
+                        acquisitionTimer.Stop();
+                        Log(
+                            $"hdr-frame size={cachedFrameWidth}x{cachedFrameHeight} cached=True acquisitionMs={acquisitionTimer.Elapsed.TotalMilliseconds:F1}");
+                        return owner.CopyToHdrBuffer(
+                            cachedFrameTexture,
+                            cachedFrameWidth,
+                            cachedFrameHeight,
+                            monitorBounds,
+                            intersection);
+                    }
+                    finally
+                    {
+                        frame?.Dispose();
+                    }
                 }
 
                 public void CaptureHdrInto(
@@ -1299,30 +1386,109 @@ namespace ShareX.ScreenCaptureLib
                     ArgumentNullException.ThrowIfNull(destination);
                     ObjectDisposedException.ThrowIf(session == null, this);
                     Stopwatch acquisitionTimer = Stopwatch.StartNew();
-                    using Direct3D11CaptureFrame frame = WaitForFrame(framePool, lastFrameTime);
-                    lastFrameTime = frame.SystemRelativeTime;
-                    acquisitionTimer.Stop();
-                    Log(
-                        $"hdr-frame size={frame.ContentSize.Width}x{frame.ContentSize.Height} acquisitionMs={acquisitionTimer.Elapsed.TotalMilliseconds:F1}");
-                    using HdrRgba16FloatBuffer scaledSource = owner.CopyToHdrBuffer(
-                        frame,
-                        monitorBounds,
-                        intersection,
-                        destination,
-                        destinationRectangle,
-                        rgbScale);
+                    Direct3D11CaptureFrame frame = WaitForFrame(
+                        framePool,
+                        lastFrameTime,
+                        allowCachedFrameFallback && cachedFrameTexture != null);
+                    HdrRgba16FloatBuffer scaledSource;
 
-                    if (scaledSource != null)
+                    try
                     {
-                        destination.CopyScaledRegionFrom(
-                            scaledSource,
-                            new Rectangle(Point.Empty, new Size(scaledSource.Width, scaledSource.Height)),
-                            destinationRectangle);
+                        if (frame != null)
+                        {
+                            lastFrameTime = frame.SystemRelativeTime;
+                            using ID3D11Texture2D sourceTexture = GetTexture(frame.Surface);
+                            acquisitionTimer.Stop();
+                            Log(
+                                $"hdr-frame size={frame.ContentSize.Width}x{frame.ContentSize.Height} cached=False acquisitionMs={acquisitionTimer.Elapsed.TotalMilliseconds:F1}");
+                            scaledSource = owner.CopyToHdrBuffer(
+                                sourceTexture,
+                                Math.Min(frame.ContentSize.Width, (int)sourceTexture.Description.Width),
+                                Math.Min(frame.ContentSize.Height, (int)sourceTexture.Description.Height),
+                                monitorBounds,
+                                intersection,
+                                destination,
+                                destinationRectangle,
+                                rgbScale);
+                            CacheFrame(sourceTexture, frame.ContentSize.Width, frame.ContentSize.Height);
+                        }
+                        else
+                        {
+                            acquisitionTimer.Stop();
+                            Log(
+                                $"hdr-frame size={cachedFrameWidth}x{cachedFrameHeight} cached=True acquisitionMs={acquisitionTimer.Elapsed.TotalMilliseconds:F1}");
+                            scaledSource = owner.CopyToHdrBuffer(
+                                cachedFrameTexture,
+                                cachedFrameWidth,
+                                cachedFrameHeight,
+                                monitorBounds,
+                                intersection,
+                                destination,
+                                destinationRectangle,
+                                rgbScale);
+                        }
                     }
+                    finally
+                    {
+                        frame?.Dispose();
+                    }
+
+                    using (scaledSource)
+                    {
+                        if (scaledSource != null)
+                        {
+                            destination.CopyScaledRegionFrom(
+                                scaledSource,
+                                new Rectangle(Point.Empty, new Size(scaledSource.Width, scaledSource.Height)),
+                                destinationRectangle);
+                        }
+                    }
+                }
+
+                private void CacheFrame(
+                    ID3D11Texture2D sourceTexture,
+                    int contentWidth,
+                    int contentHeight)
+                {
+                    if (!allowCachedFrameFallback)
+                    {
+                        cachedFrameWidth = Math.Min(contentWidth, (int)sourceTexture.Description.Width);
+                        cachedFrameHeight = Math.Min(contentHeight, (int)sourceTexture.Description.Height);
+                        return;
+                    }
+
+                    Texture2DDescription sourceDescription = sourceTexture.Description;
+                    Texture2DDescription cachedDescription = cachedFrameTexture?.Description ?? default;
+                    if (cachedFrameTexture == null ||
+                        cachedDescription.Width != sourceDescription.Width ||
+                        cachedDescription.Height != sourceDescription.Height ||
+                        cachedDescription.Format != sourceDescription.Format)
+                    {
+                        cachedFrameTexture?.Dispose();
+                        cachedFrameTexture = owner.device.CreateTexture2D(new Texture2DDescription
+                        {
+                            Width = sourceDescription.Width,
+                            Height = sourceDescription.Height,
+                            MipLevels = 1,
+                            ArraySize = 1,
+                            Format = sourceDescription.Format,
+                            SampleDescription = sourceDescription.SampleDescription,
+                            Usage = ResourceUsage.Default,
+                            BindFlags = BindFlags.None,
+                            CPUAccessFlags = CpuAccessFlags.None,
+                            MiscFlags = ResourceOptionFlags.None
+                        });
+                    }
+
+                    owner.context.CopyResource(cachedFrameTexture, sourceTexture);
+                    cachedFrameWidth = Math.Min(contentWidth, (int)sourceDescription.Width);
+                    cachedFrameHeight = Math.Min(contentHeight, (int)sourceDescription.Height);
                 }
 
                 public void Dispose()
                 {
+                    cachedFrameTexture?.Dispose();
+                    cachedFrameTexture = null;
                     session?.Dispose();
                     session = null;
                     framePool?.Dispose();
@@ -1343,28 +1509,61 @@ namespace ShareX.ScreenCaptureLib
 
         private static Direct3D11CaptureFrame WaitForFrame(
             Direct3D11CaptureFramePool framePool,
-            TimeSpan? minimumExclusiveFrameTime = null)
+            TimeSpan? minimumExclusiveFrameTime = null,
+            bool allowCachedTextureFallback = false)
         {
             Stopwatch stopwatch = Stopwatch.StartNew();
+            Direct3D11CaptureFrame cachedFallback = null;
 
-            while (stopwatch.ElapsedMilliseconds < CaptureTimeoutMilliseconds)
+            try
             {
-                Direct3D11CaptureFrame frame = GetLatestAvailableFrame(framePool, minimumExclusiveFrameTime);
-
-                if (frame != null)
+                while (stopwatch.ElapsedMilliseconds < CaptureTimeoutMilliseconds)
                 {
-                    return frame;
+                    Direct3D11CaptureFrame frame = GetLatestAvailableFrame(
+                        framePool,
+                        minimumExclusiveFrameTime,
+                        ref cachedFallback);
+
+                    if (frame != null)
+                    {
+                        cachedFallback?.Dispose();
+                        cachedFallback = null;
+                        return frame;
+                    }
+
+                    if (cachedFallback != null &&
+                        stopwatch.ElapsedMilliseconds >= FreshFrameGraceMilliseconds)
+                    {
+                        Direct3D11CaptureFrame result = cachedFallback;
+                        cachedFallback = null;
+                        Log(
+                            $"frame=fallback-cached freshWaitMs={stopwatch.Elapsed.TotalMilliseconds:F1}");
+                        return result;
+                    }
+
+                    if (allowCachedTextureFallback &&
+                        stopwatch.ElapsedMilliseconds >= FreshFrameGraceMilliseconds)
+                    {
+                        Log(
+                            $"frame=fallback-texture freshWaitMs={stopwatch.Elapsed.TotalMilliseconds:F1}");
+                        return null;
+                    }
+
+                    Thread.Sleep(5);
                 }
 
-                Thread.Sleep(5);
+                throw new TimeoutException("Windows Graphics Capture did not provide a frame in time.");
             }
-
-            throw new TimeoutException("Windows Graphics Capture did not provide a frame in time.");
+            finally
+            {
+                cachedFallback?.Dispose();
+            }
         }
 
         private static Direct3D11CaptureFrame GetLatestAvailableFrame(
             Direct3D11CaptureFramePool framePool,
-            TimeSpan? minimumExclusiveFrameTime)
+            TimeSpan? minimumExclusiveFrameTime,
+            ref Direct3D11CaptureFrame cachedFallback)
         {
             Direct3D11CaptureFrame latest = null;
 
@@ -1385,7 +1584,8 @@ namespace ShareX.ScreenCaptureLib
                 if (minimumExclusiveFrameTime.HasValue &&
                     (!frameTime.HasValue || frameTime.Value <= minimumExclusiveFrameTime.Value))
                 {
-                    next.Dispose();
+                    cachedFallback?.Dispose();
+                    cachedFallback = next;
                     continue;
                 }
 
