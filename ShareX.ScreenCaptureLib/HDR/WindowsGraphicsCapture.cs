@@ -39,6 +39,7 @@ namespace ShareX.ScreenCaptureLib
     internal static class WindowsGraphicsCapture
     {
         private const int CaptureTimeoutMilliseconds = 1500;
+        private const int FreshFrameGraceMilliseconds = 100;
         private const int NormalSessionIdleMilliseconds = 10000;
         private const int RpcEChangedMode = unchecked((int)0x80010106);
         private const uint MonitorDefaultToNearest = 2;
@@ -631,10 +632,14 @@ namespace ShareX.ScreenCaptureLib
             private bool disposed;
 
             public bool IsReusable { get; }
+            public bool AllowStaleFrameFallback { get; }
 
-            public CaptureContext(bool isReusable)
+            public CaptureContext(
+                bool isReusable,
+                bool allowStaleFrameFallback = false)
             {
                 IsReusable = isReusable;
+                AllowStaleFrameFallback = allowStaleFrameFallback;
             }
 
             public Bitmap CaptureMonitor(
@@ -682,7 +687,9 @@ namespace ShareX.ScreenCaptureLib
                     monitor,
                     out D3D11CaptureDevice.MonitorCaptureSession session))
                 {
-                    session = captureDevice.CreateMonitorSession(monitor);
+                    session = captureDevice.CreateMonitorSession(
+                        monitor,
+                        AllowStaleFrameFallback);
                     monitorSessions.Add(monitor, session);
                     Log(
                         $"session=create monitor=0x{monitor.ToInt64():X} reusable={IsReusable}");
@@ -854,7 +861,9 @@ namespace ShareX.ScreenCaptureLib
                         {
                             try
                             {
-                                captureContext ??= new CaptureContext(true);
+                                captureContext ??= new CaptureContext(
+                                    true,
+                                    allowStaleFrameFallback: true);
 
                                 if (request.PrewarmOnly)
                                 {
@@ -1011,7 +1020,17 @@ namespace ShareX.ScreenCaptureLib
 
             public MonitorCaptureSession CreateMonitorSession(IntPtr monitor)
             {
-                return new MonitorCaptureSession(this, monitor);
+                return CreateMonitorSession(monitor, allowStaleFrameFallback: false);
+            }
+
+            public MonitorCaptureSession CreateMonitorSession(
+                IntPtr monitor,
+                bool allowStaleFrameFallback)
+            {
+                return new MonitorCaptureSession(
+                    this,
+                    monitor,
+                    allowStaleFrameFallback);
             }
 
             private Bitmap CopyAndToneMap(
@@ -1221,14 +1240,19 @@ namespace ShareX.ScreenCaptureLib
             public sealed class MonitorCaptureSession : IDisposable
             {
                 private readonly D3D11CaptureDevice owner;
+                private readonly bool allowStaleFrameFallback;
                 private GraphicsCaptureItem item;
                 private Direct3D11CaptureFramePool framePool;
                 private GraphicsCaptureSession session;
                 private TimeSpan? lastFrameTime;
 
-                public MonitorCaptureSession(D3D11CaptureDevice owner, IntPtr monitor)
+                public MonitorCaptureSession(
+                    D3D11CaptureDevice owner,
+                    IntPtr monitor,
+                    bool allowStaleFrameFallback)
                 {
                     this.owner = owner;
+                    this.allowStaleFrameFallback = allowStaleFrameFallback;
 
                     try
                     {
@@ -1267,7 +1291,10 @@ namespace ShareX.ScreenCaptureLib
                 {
                     ObjectDisposedException.ThrowIf(session == null, this);
                     Stopwatch acquisitionTimer = Stopwatch.StartNew();
-                    using Direct3D11CaptureFrame frame = WaitForFrame(framePool, lastFrameTime);
+                    using Direct3D11CaptureFrame frame = WaitForFrame(
+                        framePool,
+                        lastFrameTime,
+                        allowStaleFrameFallback);
                     lastFrameTime = frame.SystemRelativeTime;
                     acquisitionTimer.Stop();
                     Log(
@@ -1281,7 +1308,10 @@ namespace ShareX.ScreenCaptureLib
                 {
                     ObjectDisposedException.ThrowIf(session == null, this);
                     Stopwatch acquisitionTimer = Stopwatch.StartNew();
-                    using Direct3D11CaptureFrame frame = WaitForFrame(framePool, lastFrameTime);
+                    using Direct3D11CaptureFrame frame = WaitForFrame(
+                        framePool,
+                        lastFrameTime,
+                        allowStaleFrameFallback);
                     lastFrameTime = frame.SystemRelativeTime;
                     acquisitionTimer.Stop();
                     Log(
@@ -1299,7 +1329,10 @@ namespace ShareX.ScreenCaptureLib
                     ArgumentNullException.ThrowIfNull(destination);
                     ObjectDisposedException.ThrowIf(session == null, this);
                     Stopwatch acquisitionTimer = Stopwatch.StartNew();
-                    using Direct3D11CaptureFrame frame = WaitForFrame(framePool, lastFrameTime);
+                    using Direct3D11CaptureFrame frame = WaitForFrame(
+                        framePool,
+                        lastFrameTime,
+                        allowStaleFrameFallback);
                     lastFrameTime = frame.SystemRelativeTime;
                     acquisitionTimer.Stop();
                     Log(
@@ -1343,28 +1376,55 @@ namespace ShareX.ScreenCaptureLib
 
         private static Direct3D11CaptureFrame WaitForFrame(
             Direct3D11CaptureFramePool framePool,
-            TimeSpan? minimumExclusiveFrameTime = null)
+            TimeSpan? minimumExclusiveFrameTime = null,
+            bool allowStaleFrameFallback = false)
         {
             Stopwatch stopwatch = Stopwatch.StartNew();
+            Direct3D11CaptureFrame cachedFallback = null;
 
-            while (stopwatch.ElapsedMilliseconds < CaptureTimeoutMilliseconds)
+            try
             {
-                Direct3D11CaptureFrame frame = GetLatestAvailableFrame(framePool, minimumExclusiveFrameTime);
-
-                if (frame != null)
+                while (stopwatch.ElapsedMilliseconds < CaptureTimeoutMilliseconds)
                 {
-                    return frame;
+                    Direct3D11CaptureFrame frame = GetLatestAvailableFrame(
+                        framePool,
+                        minimumExclusiveFrameTime,
+                        allowStaleFrameFallback,
+                        ref cachedFallback);
+
+                    if (frame != null)
+                    {
+                        cachedFallback?.Dispose();
+                        cachedFallback = null;
+                        return frame;
+                    }
+
+                    if (cachedFallback != null &&
+                        stopwatch.ElapsedMilliseconds >= FreshFrameGraceMilliseconds)
+                    {
+                        Direct3D11CaptureFrame result = cachedFallback;
+                        cachedFallback = null;
+                        Log(
+                            $"frame=fallback-cached freshWaitMs={stopwatch.Elapsed.TotalMilliseconds:F1}");
+                        return result;
+                    }
+
+                    Thread.Sleep(5);
                 }
 
-                Thread.Sleep(5);
+                throw new TimeoutException("Windows Graphics Capture did not provide a frame in time.");
             }
-
-            throw new TimeoutException("Windows Graphics Capture did not provide a frame in time.");
+            finally
+            {
+                cachedFallback?.Dispose();
+            }
         }
 
         private static Direct3D11CaptureFrame GetLatestAvailableFrame(
             Direct3D11CaptureFramePool framePool,
-            TimeSpan? minimumExclusiveFrameTime)
+            TimeSpan? minimumExclusiveFrameTime,
+            bool allowStaleFrameFallback,
+            ref Direct3D11CaptureFrame cachedFallback)
         {
             Direct3D11CaptureFrame latest = null;
 
@@ -1385,7 +1445,15 @@ namespace ShareX.ScreenCaptureLib
                 if (minimumExclusiveFrameTime.HasValue &&
                     (!frameTime.HasValue || frameTime.Value <= minimumExclusiveFrameTime.Value))
                 {
-                    next.Dispose();
+                    if (allowStaleFrameFallback)
+                    {
+                        cachedFallback?.Dispose();
+                        cachedFallback = next;
+                    }
+                    else
+                    {
+                        next.Dispose();
+                    }
                     continue;
                 }
 
