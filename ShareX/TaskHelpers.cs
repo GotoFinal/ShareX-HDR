@@ -39,6 +39,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
@@ -709,6 +710,68 @@ namespace ShareX
             }
 
             return bmp;
+        }
+
+        internal static bool TryApplyHdrImageEffects(
+            HdrImageDocument source,
+            TaskSettings taskSettings,
+            out HdrImageDocument editedDocument,
+            out ImageEffectPreset selectedPreset,
+            out string unsupportedEffect)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+            ArgumentNullException.ThrowIfNull(taskSettings);
+            editedDocument = null;
+            selectedPreset = null;
+            unsupportedEffect = null;
+            TaskSettingsImage imageSettings = taskSettings.ImageSettingsReference;
+
+            if (imageSettings.ShowImageEffectsWindowAfterCapture)
+            {
+                Bitmap preview = source.CreateSdrPreview(
+                    taskSettings.CaptureSettings.HdrSettings ?? new HdrCaptureSettings());
+                using var imageEffectsForm = new ImageEffectsForm(
+                    preview,
+                    imageSettings.ImageEffectPresets,
+                    imageSettings.SelectedImageEffectPreset);
+                imageEffectsForm.ShowDialog();
+                imageSettings.SelectedImageEffectPreset = imageEffectsForm.SelectedPresetIndex;
+            }
+
+            if (imageSettings.UseRandomImageEffect)
+            {
+                selectedPreset = RandomFast.Pick(imageSettings.ImageEffectPresets);
+            }
+            else if (imageSettings.ImageEffectPresets.IsValidIndex(imageSettings.SelectedImageEffectPreset))
+            {
+                selectedPreset = imageSettings.ImageEffectPresets[imageSettings.SelectedImageEffectPreset];
+            }
+
+            if (selectedPreset == null)
+            {
+                editedDocument = source.Clone();
+                return true;
+            }
+
+            return LegacyHdrImageEffectReplayer.TryApply(
+                source,
+                selectedPreset,
+                GetHdrAnnotationWhiteNits(source),
+                out editedDocument,
+                out unsupportedEffect);
+        }
+
+        internal static Bitmap ApplyImageEffectPreset(Bitmap bitmap, ImageEffectPreset preset)
+        {
+            if (bitmap == null || preset == null)
+            {
+                return bitmap;
+            }
+
+            using (bitmap)
+            {
+                return preset.ApplyEffects(bitmap);
+            }
         }
 
         public static void AddDefaultExternalPrograms(TaskSettings taskSettings)
@@ -1946,6 +2009,217 @@ namespace ShareX
             }
 
             return null;
+        }
+
+        internal static HdrImageDocument BeautifyHdrImage(
+            HdrImageDocument source,
+            TaskSettings taskSettings)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+            taskSettings ??= TaskSettings.GetDefaultTaskSettings();
+            HdrCaptureSettings hdrSettings = taskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
+            float annotationWhiteNits = GetHdrAnnotationWhiteNits(source);
+            Bitmap preview = source.CreateSdrPreview(hdrSettings);
+
+            using var imageBeautifierForm = new ImageBeautifierForm(
+                preview,
+                taskSettings.ToolsSettingsReference.ImageBeautifierOptions);
+            imageBeautifierForm.UploadImageRequested += output => MainFormUploadImage(output, taskSettings);
+            imageBeautifierForm.PrintImageRequested += MainFormPrintImage;
+            imageBeautifierForm.ShowDialog();
+
+            if (imageBeautifierForm.PreviewImage == null)
+            {
+                return null;
+            }
+
+            ImageBeautifierOptions options = imageBeautifierForm.Options.Copy();
+            Bitmap sourcePreview = imageBeautifierForm.SourceImage;
+            Color paddingColor = sourcePreview.GetPixel(0, 0);
+            HdrImageDocument content = source.Clone();
+
+            try
+            {
+                if (options.SmartPadding)
+                {
+                    Rectangle sourceBounds = new Rectangle(0, 0, sourcePreview.Width, sourcePreview.Height);
+                    Rectangle cropRectangle = ImageHelpers.FindAutoCropRectangle(
+                        sourcePreview,
+                        true,
+                        AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right);
+                    if (cropRectangle != sourceBounds)
+                    {
+                        HdrImageDocument cropped = content.CropToLocalRectangle(cropRectangle);
+                        content.Dispose();
+                        content = cropped;
+                    }
+                }
+
+                if (options.Padding > 0)
+                {
+                    HdrImageDocument padded = content.ResizeCanvas(
+                        options.Padding,
+                        options.Padding,
+                        options.Padding,
+                        options.Padding,
+                        paddingColor.R,
+                        paddingColor.G,
+                        paddingColor.B,
+                        paddingColor.A,
+                        annotationWhiteNits);
+                    content.Dispose();
+                    content = padded;
+                }
+
+                if (options.RoundedCorner > 0)
+                {
+                    Bitmap maskSource = new Bitmap(
+                        content.MasterPixels.Width,
+                        content.MasterPixels.Height,
+                        PixelFormat.Format32bppArgb);
+                    using (Graphics graphics = Graphics.FromImage(maskSource))
+                    {
+                        graphics.Clear(Color.White);
+                    }
+
+                    using Bitmap roundedMask = ImageHelpers.RoundedCorners(maskSource, options.RoundedCorner);
+                    content.ApplyAlphaMask(roundedMask);
+                }
+
+                using Bitmap decorations = RenderHdrBeautifierDecorations(
+                    content.MasterPixels.Width,
+                    content.MasterPixels.Height,
+                    options);
+                if (decorations.Width != imageBeautifierForm.PreviewImage.Width ||
+                    decorations.Height != imageBeautifierForm.PreviewImage.Height)
+                {
+                    throw new InvalidOperationException(
+                        "The HDR beautifier decoration canvas does not match its SDR preview.");
+                }
+
+                HdrImageDocument result = HdrImageDocument.CreateFromSdrBitmap(
+                    decorations,
+                    annotationWhiteNits);
+                try
+                {
+                    if (options.Margin < 0 ||
+                        options.Margin + content.MasterPixels.Width > result.MasterPixels.Width ||
+                        options.Margin + content.MasterPixels.Height > result.MasterPixels.Height)
+                    {
+                        throw new InvalidOperationException(
+                            "The beautifier HDR content placement does not fit the rendered canvas.");
+                    }
+
+                    result.CompositeHdrDocument(content, options.Margin, options.Margin);
+                    return result;
+                }
+                catch
+                {
+                    result.Dispose();
+                    throw;
+                }
+            }
+            finally
+            {
+                content.Dispose();
+            }
+        }
+
+        private static Bitmap RenderHdrBeautifierDecorations(
+            int contentWidth,
+            int contentHeight,
+            ImageBeautifierOptions options)
+        {
+            Bitmap contentMask = new Bitmap(contentWidth, contentHeight, PixelFormat.Format32bppArgb);
+            using (Graphics graphics = Graphics.FromImage(contentMask))
+            {
+                graphics.Clear(Color.White);
+            }
+
+            if (options.RoundedCorner > 0)
+            {
+                contentMask = ImageHelpers.RoundedCorners(contentMask, options.RoundedCorner);
+            }
+
+            Bitmap decorations = contentMask;
+            if (options.Margin > 0)
+            {
+                Bitmap expanded = ImageHelpers.AddCanvas(decorations, options.Margin);
+                decorations.Dispose();
+                decorations = expanded;
+            }
+
+            if (options.ShadowOpacity > 0 &&
+                (options.ShadowRadius > 0 || options.ShadowDistance > 0))
+            {
+                float shadowOpacity = options.ShadowOpacity / 100f;
+                Point shadowOffset = (Point)MathHelpers.DegreeToVector2(
+                    options.ShadowAngle - 90,
+                    options.ShadowDistance);
+                decorations = ImageHelpers.AddShadow(
+                    decorations,
+                    shadowOpacity,
+                    options.ShadowRadius,
+                    0f,
+                    options.ShadowColor,
+                    shadowOffset,
+                    false);
+            }
+
+            using (Graphics graphics = Graphics.FromImage(decorations))
+            using (GraphicsPath path = new GraphicsPath())
+            using (Brush transparentBrush = new SolidBrush(Color.Transparent))
+            {
+                graphics.CompositingMode = CompositingMode.SourceCopy;
+                graphics.SmoothingMode = SmoothingMode.HighQuality;
+                graphics.PixelOffsetMode = PixelOffsetMode.Half;
+                RectangleF contentRectangle = new RectangleF(
+                    options.Margin,
+                    options.Margin,
+                    contentWidth,
+                    contentHeight);
+                if (options.RoundedCorner > 0)
+                {
+                    path.AddRoundedRectangleProper(contentRectangle, options.RoundedCorner, 0);
+                }
+                else
+                {
+                    path.AddRectangle(contentRectangle);
+                }
+                graphics.FillPath(transparentBrush, path);
+            }
+
+            switch (options.BackgroundType)
+            {
+                case ImageBeautifierBackgroundType.Gradient:
+                    if (options.BackgroundGradient != null && options.BackgroundGradient.IsVisible)
+                    {
+                        Bitmap background = ImageHelpers.FillBackground(decorations, options.BackgroundGradient);
+                        decorations.Dispose();
+                        decorations = background;
+                    }
+                    break;
+                case ImageBeautifierBackgroundType.Color:
+                    if (!options.BackgroundColor.IsTransparent())
+                    {
+                        Bitmap background = ImageHelpers.FillBackground(decorations, options.BackgroundColor);
+                        decorations.Dispose();
+                        decorations = background;
+                    }
+                    break;
+                case ImageBeautifierBackgroundType.Image:
+                    decorations = ImageHelpers.DrawBackgroundImage(
+                        decorations,
+                        options.BackgroundImageFilePath);
+                    break;
+                case ImageBeautifierBackgroundType.Desktop:
+                    decorations = ImageHelpers.DrawBackgroundImage(
+                        decorations,
+                        Helpers.GetDesktopWallpaperFilePath());
+                    break;
+            }
+
+            return decorations;
         }
 
         public static void OpenImageEffects(TaskSettings taskSettings = null)

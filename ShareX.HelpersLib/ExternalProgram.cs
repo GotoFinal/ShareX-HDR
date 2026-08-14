@@ -30,6 +30,13 @@ using System.Threading.Tasks;
 
 namespace ShareX.HelpersLib
 {
+    public enum ExternalProgramHdrPolicy
+    {
+        SdrOnly,
+        AllowHdrUnchecked,
+        RequireHdrPreserved
+    }
+
     public class ExternalProgram
     {
         public bool IsActive { get; set; }
@@ -40,6 +47,7 @@ namespace ShareX.HelpersLib
         public string Extensions { get; set; }
         public bool HiddenWindow { get; set; }
         public bool DeleteInputFile { get; set; }
+        public ExternalProgramHdrPolicy HdrPolicy { get; set; }
 
         private string pendingInputFilePath;
 

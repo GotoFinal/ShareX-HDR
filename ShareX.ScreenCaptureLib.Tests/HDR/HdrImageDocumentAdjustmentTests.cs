@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Drawing;
+using System.Drawing.Imaging;
 using ShareX.ScreenCaptureLib;
 
 namespace ShareX.ScreenCaptureLib.Tests.HDR;
@@ -91,6 +92,88 @@ public sealed class HdrImageDocumentAdjustmentTests
     {
         using HdrImageDocument document = CreateDocument(1f, 1f, 1f, 1f);
         Assert.Throws<ArgumentOutOfRangeException>(() => document.ApplySaturationAdjustment(saturation));
+    }
+
+    [Fact]
+    public void ApplyLinearColorMatrixAdjustment_UsesStraightColorAndSdrWhiteOffset()
+    {
+        using HdrImageDocument document = CreateDocument(2f, 1f, 0.5f, 0.5f);
+
+        document.ApplyLinearColorMatrixAdjustment(
+            new float[]
+            {
+                1f, 0f, 0f, 0.25f,
+                0f, 1f, 0f, 0f,
+                0f, 0f, 1f, 0f
+            },
+            160f);
+
+        ReadOnlySpan<byte> row = document.MasterPixels.GetRowSpan(0);
+        Assert.Equal(2.25f, ReadHalf(row, 0), 3);
+        Assert.Equal(1f, ReadHalf(row, 2), 3);
+        Assert.Equal(0.5f, ReadHalf(row, 4), 3);
+        Assert.Equal(0.5f, ReadHalf(row, 6), 3);
+    }
+
+    [Fact]
+    public void ApplyGammaAdjustment_PreservesHdrAndNegativeExcursions()
+    {
+        using HdrImageDocument document = CreateDocument(4f, -1f, 1f, 1f);
+
+        document.ApplyGammaAdjustment(2f, 80f);
+
+        ReadOnlySpan<byte> row = document.MasterPixels.GetRowSpan(0);
+        Assert.Equal(2f, ReadHalf(row, 0), 3);
+        Assert.Equal(-1f, ReadHalf(row, 2), 3);
+        Assert.Equal(1f, ReadHalf(row, 4), 3);
+    }
+
+    [Fact]
+    public void ApplyThresholdAdjustment_UsesConfiguredSdrWhite()
+    {
+        using HdrImageDocument document = CreateDocument(1.2f, 1.2f, 1.2f, 0.5f);
+
+        document.ApplyThresholdAdjustment(0.5f, 160f);
+
+        ReadOnlySpan<byte> row = document.MasterPixels.GetRowSpan(0);
+        Assert.Equal(1f, ReadHalf(row, 0), 3);
+        Assert.Equal(1f, ReadHalf(row, 2), 3);
+        Assert.Equal(1f, ReadHalf(row, 4), 3);
+        Assert.Equal(0.5f, ReadHalf(row, 6), 3);
+    }
+
+    [Fact]
+    public void CreateFromSdrBitmapAndCompositeHdrDocument_PreserveHdrSourceOverSdrDecoration()
+    {
+        using var background = new Bitmap(1, 1, PixelFormat.Format32bppArgb);
+        background.SetPixel(0, 0, Color.FromArgb(255, 0, 255, 0));
+        using HdrImageDocument destination = HdrImageDocument.CreateFromSdrBitmap(background, 80f);
+        using HdrImageDocument source = CreateDocument(2f, 0f, 0f, 0.5f);
+
+        destination.CompositeHdrDocument(source, 0, 0);
+
+        ReadOnlySpan<byte> row = destination.MasterPixels.GetRowSpan(0);
+        Assert.Equal(2f, ReadHalf(row, 0), 3);
+        Assert.Equal(0.5f, ReadHalf(row, 2), 3);
+        Assert.Equal(0f, ReadHalf(row, 4), 3);
+        Assert.Equal(1f, ReadHalf(row, 6), 3);
+    }
+
+    [Fact]
+    public void ApplyAlphaMask_ScalesPremultipliedHdrPixels()
+    {
+        using HdrImageDocument document = CreateDocument(4f, 2f, 1f, 0.5f);
+        using var mask = new Bitmap(1, 1, PixelFormat.Format32bppArgb);
+        mask.SetPixel(0, 0, Color.FromArgb(128, 255, 255, 255));
+
+        document.ApplyAlphaMask(mask);
+
+        float coverage = 128f / 255f;
+        ReadOnlySpan<byte> row = document.MasterPixels.GetRowSpan(0);
+        Assert.Equal(4f * coverage, ReadHalf(row, 0), 2);
+        Assert.Equal(2f * coverage, ReadHalf(row, 2), 2);
+        Assert.Equal(coverage, ReadHalf(row, 4), 2);
+        Assert.Equal(0.5f * coverage, ReadHalf(row, 6), 2);
     }
 
     private static HdrImageDocument CreateDocument(float red, float green, float blue, float alpha)

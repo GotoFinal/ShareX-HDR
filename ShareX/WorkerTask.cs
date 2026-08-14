@@ -25,6 +25,7 @@
 
 using ShareX.HelpersLib;
 using ShareX.HistoryLib;
+using ShareX.ImageEffectsLib;
 using ShareX.Properties;
 using ShareX.ScreenCaptureLib;
 using ShareX.UploadersLib;
@@ -600,7 +601,8 @@ namespace ShareX
 
             if (hdrImageDocument != null &&
                 Info.TaskSettings.AfterCaptureJob.HasFlag(AfterCaptureTasks.PerformActions) &&
-                Info.TaskSettings.ExternalPrograms?.Any(x => x.IsActive) == true &&
+                Info.TaskSettings.ExternalPrograms?.Any(x =>
+                    x.IsActive && x.HdrPolicy == ExternalProgramHdrPolicy.SdrOnly) == true &&
                 !ConfirmHdrToSdrFallback("External actions"))
             {
                 return false;
@@ -608,12 +610,28 @@ namespace ShareX
 
             if (Info.TaskSettings.AfterCaptureJob.HasFlag(AfterCaptureTasks.BeautifyImage))
             {
-                if (!ConfirmHdrToSdrFallback("Beautify image"))
+                if (hdrImageDocument != null)
                 {
-                    return false;
-                }
+                    HdrImageDocument beautifiedDocument = TaskHelpers.BeautifyHdrImage(
+                        hdrImageDocument,
+                        Info.TaskSettings);
+                    if (beautifiedDocument == null)
+                    {
+                        return false;
+                    }
 
-                Image = TaskHelpers.BeautifyImage(Image, Info.TaskSettings);
+                    hdrImageDocument.Dispose();
+                    hdrImageDocument = beautifiedDocument;
+
+                    Bitmap oldPreview = Image;
+                    Image = hdrImageDocument.CreateSdrPreview(
+                        Info.TaskSettings.CaptureSettings.HdrSettings ?? new HdrCaptureSettings());
+                    oldPreview?.Dispose();
+                }
+                else
+                {
+                    Image = TaskHelpers.BeautifyImage(Image, Info.TaskSettings);
+                }
 
                 if (Image == null)
                 {
@@ -623,12 +641,42 @@ namespace ShareX
 
             if (Info.TaskSettings.AfterCaptureJob.HasFlag(AfterCaptureTasks.AddImageEffects))
             {
-                if (!ConfirmHdrToSdrFallback("Image effects"))
+                if (hdrImageDocument != null)
                 {
-                    return false;
-                }
+                    bool applied = TaskHelpers.TryApplyHdrImageEffects(
+                        hdrImageDocument,
+                        Info.TaskSettings,
+                        out HdrImageDocument effectsDocument,
+                        out ImageEffectPreset selectedPreset,
+                        out string unsupportedEffect);
+                    if (applied)
+                    {
+                        hdrImageDocument.Dispose();
+                        hdrImageDocument = effectsDocument;
 
-                Image = TaskHelpers.ApplyImageEffects(Image, Info.TaskSettings.ImageSettingsReference);
+                        Bitmap oldPreview = Image;
+                        Image = hdrImageDocument.CreateSdrPreview(
+                            Info.TaskSettings.CaptureSettings.HdrSettings ?? new HdrCaptureSettings());
+                        oldPreview?.Dispose();
+                    }
+                    else
+                    {
+                        effectsDocument?.Dispose();
+                        string operation = string.IsNullOrWhiteSpace(unsupportedEffect)
+                            ? "Image effects"
+                            : $"Image effect '{unsupportedEffect}'";
+                        if (!ConfirmHdrToSdrFallback(operation))
+                        {
+                            return false;
+                        }
+
+                        Image = TaskHelpers.ApplyImageEffectPreset(Image, selectedPreset);
+                    }
+                }
+                else
+                {
+                    Image = TaskHelpers.ApplyImageEffects(Image, Info.TaskSettings.ImageSettingsReference);
+                }
 
                 if (Image == null)
                 {
@@ -986,7 +1034,7 @@ namespace ShareX
 
                         foreach (ExternalProgram fileAction in actions)
                         {
-                            string modifiedPath = fileAction.Run(Info.FilePath);
+                            string modifiedPath = RunExternalActionWithHdrPolicy(fileAction, Info.FilePath);
 
                             if (!string.IsNullOrEmpty(modifiedPath))
                             {
@@ -1059,6 +1107,89 @@ namespace ShareX
                         qrCodeForm.ShowDialog();
                     }
                 }
+            }
+        }
+
+        private string RunExternalActionWithHdrPolicy(ExternalProgram fileAction, string inputPath)
+        {
+            bool requireHdrValidation =
+                fileAction.HdrPolicy == ExternalProgramHdrPolicy.RequireHdrPreserved &&
+                hdrImageDocument != null &&
+                !string.IsNullOrWhiteSpace(Info.HdrFormat);
+            if (!requireHdrValidation)
+            {
+                return fileAction.Run(inputPath);
+            }
+
+            string extension = Path.GetExtension(inputPath);
+            string backupPath = Path.Combine(
+                Path.GetTempPath(),
+                $"ShareX-HDR-action-{Guid.NewGuid():N}{extension}");
+            File.Copy(inputPath, backupPath, true);
+
+            try
+            {
+                string outputPath = fileAction.Run(inputPath);
+                if (!string.IsNullOrWhiteSpace(outputPath) &&
+                    TryGetHdrFileFormat(outputPath, out HdrFileFormat format) &&
+                    HdrEncodedImageVerifier.VerifyFile(
+                        outputPath,
+                        format,
+                        hdrImageDocument.MasterPixels.Width,
+                        hdrImageDocument.MasterPixels.Height))
+                {
+                    return outputPath;
+                }
+
+                if (File.Exists(backupPath))
+                {
+                    File.Copy(backupPath, inputPath, true);
+                }
+
+                MessageBox.Show(
+                    $"The action '{fileAction.Name}' did not produce a verifiable HDR image. " +
+                    "The original HDR file was restored and the action output was ignored.",
+                    "ShareX - HDR action validation",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return null;
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(backupPath))
+                    {
+                        File.Delete(backupPath);
+                    }
+                }
+                catch (Exception e)
+                {
+                    DebugHelper.WriteException(e);
+                }
+            }
+        }
+
+        private static bool TryGetHdrFileFormat(string filePath, out HdrFileFormat format)
+        {
+            switch (Path.GetExtension(filePath).ToLowerInvariant())
+            {
+                case ".jpg":
+                case ".jpeg":
+                    format = HdrFileFormat.UltraHdrJpeg;
+                    return true;
+                case ".exr":
+                    format = HdrFileFormat.OpenExr;
+                    return true;
+                case ".png":
+                    format = HdrFileFormat.HdrPng;
+                    return true;
+                case ".avif":
+                    format = HdrFileFormat.Avif;
+                    return true;
+                default:
+                    format = default;
+                    return false;
             }
         }
 

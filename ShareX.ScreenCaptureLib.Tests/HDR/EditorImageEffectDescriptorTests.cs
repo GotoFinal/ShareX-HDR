@@ -27,7 +27,7 @@ public sealed class EditorImageEffectDescriptorTests
         Assert.Equal("amount", parameter.Key);
         Assert.Equal(EditorImageEffectParameterKind.Number, parameter.Kind);
         Assert.Equal(37.5, parameter.NumberValue);
-        Assert.Equal(EditorImageEffectReplayDeterminism.Unspecified, descriptor.ReplayDeterminism);
+        Assert.Equal(EditorImageEffectReplayDeterminism.Deterministic, descriptor.ReplayDeterminism);
         Assert.Null(descriptor.ReplaySeed);
     }
 
@@ -80,7 +80,26 @@ public sealed class EditorImageEffectDescriptorTests
     public void CatalogEffects_AreCapturedAndConservativelySdrOnlyUntilRegistered()
     {
         var nativeEffectIds = new HashSet<string>(
-            ["alpha", "exposure", "grayscale", "saturation"], StringComparer.OrdinalIgnoreCase);
+            [
+                "alpha",
+                "black_and_white",
+                "blur",
+                "brightness",
+                "contrast",
+                "exposure",
+                "gamma",
+                "gaussian_blur",
+                "grayscale",
+                "hue",
+                "invert",
+                "pixelate",
+                "saturation",
+                "sepia",
+                "temperature_tint",
+                "threshold",
+                "vibrance"
+            ],
+            StringComparer.OrdinalIgnoreCase);
         Assert.NotEmpty(ImageEffectCatalog.Definitions);
 
         foreach (EffectDefinition definition in ImageEffectCatalog.Definitions)

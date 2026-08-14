@@ -192,7 +192,7 @@ namespace ShareX
                             candidate,
                             document => document.FlipVertical()),
                         EditorSourceOperationKind.ImageEffect => ReplayImageEffect(
-                            candidate, operation.ImageEffectDescriptor),
+                            candidate, operation.ImageEffectDescriptor, annotationWhiteNits),
                         EditorSourceOperationKind.None => candidate,
                         _ => throw new InvalidOperationException(
                             "The editor returned an unsupported HDR source operation.")
@@ -210,7 +210,8 @@ namespace ShareX
 
         private static HdrImageDocument ReplayImageEffect(
             HdrImageDocument document,
-            EditorImageEffectDescriptor descriptor)
+            EditorImageEffectDescriptor descriptor,
+            float annotationWhiteNits)
         {
             if (descriptor == null ||
                 descriptor.SchemaVersion != EditorImageEffectDescriptor.CurrentSchemaVersion ||
@@ -231,8 +232,59 @@ namespace ShareX
 
                     document.ApplyAlphaAdjustment(alpha);
                     return document;
+                case "black_and_white":
+                    document.ApplyThresholdAdjustment(0.5f, annotationWhiteNits);
+                    return document;
+                case "blur":
+                    document.BlurRectangle(
+                        new Rectangle(0, 0, document.MasterPixels.Width, document.MasterPixels.Height),
+                        GetRequiredFiniteNumberInRange(
+                            descriptor,
+                            "radius",
+                            1f,
+                            HdrImageDocument.MaximumSupportedBlurSigma));
+                    return document;
+                case "brightness":
+                    float brightness = GetRequiredFiniteNumberInRange(descriptor, "amount", -100f, 100f) / 100f;
+                    document.ApplyLinearColorMatrixAdjustment(
+                        new float[]
+                        {
+                            1f, 0f, 0f, brightness,
+                            0f, 1f, 0f, brightness,
+                            0f, 0f, 1f, brightness
+                        },
+                        annotationWhiteNits);
+                    return document;
+                case "contrast":
+                    float contrastAmount = GetRequiredFiniteNumberInRange(descriptor, "amount", -100f, 100f);
+                    float contrastScale = MathF.Pow((100f + contrastAmount) / 100f, 2f);
+                    float contrastShift = 0.5f * (1f - contrastScale);
+                    document.ApplyLinearColorMatrixAdjustment(
+                        new float[]
+                        {
+                            contrastScale, 0f, 0f, contrastShift,
+                            0f, contrastScale, 0f, contrastShift,
+                            0f, 0f, contrastScale, contrastShift
+                        },
+                        annotationWhiteNits);
+                    return document;
                 case "exposure":
                     document.ApplyExposureAdjustment(GetRequiredFiniteNumber(descriptor, "amount"));
+                    return document;
+                case "gamma":
+                    document.ApplyGammaAdjustment(
+                        GetRequiredFiniteNumberInRange(descriptor, "amount", 0.1f, 5f),
+                        annotationWhiteNits);
+                    return document;
+                case "gaussian_blur":
+                    float radius = GetRequiredFiniteNumberInRange(
+                        descriptor,
+                        "radius",
+                        1f,
+                        HdrImageDocument.MaximumSupportedBlurSigma * 3f);
+                    document.BlurRectangle(
+                        new Rectangle(0, 0, document.MasterPixels.Width, document.MasterPixels.Height),
+                        radius / 3f);
                     return document;
                 case "grayscale":
                     float strength = GetRequiredFiniteNumber(descriptor, "strength");
@@ -243,6 +295,46 @@ namespace ShareX
 
                     document.ApplySaturationAdjustment(1f - strength / 100f);
                     return document;
+                case "hue":
+                    float hue = GetRequiredFiniteNumberInRange(descriptor, "amount", -180f, 180f);
+                    float radians = hue * MathF.PI / 180f;
+                    float cosine = MathF.Cos(radians);
+                    float sine = MathF.Sin(radians);
+                    document.ApplyLinearColorMatrixAdjustment(
+                        new float[]
+                        {
+                            0.213f + cosine * 0.787f - sine * 0.213f,
+                            0.715f - cosine * 0.715f - sine * 0.715f,
+                            0.072f - cosine * 0.072f + sine * 0.928f,
+                            0f,
+                            0.213f - cosine * 0.213f + sine * 0.143f,
+                            0.715f + cosine * 0.285f + sine * 0.140f,
+                            0.072f - cosine * 0.072f - sine * 0.283f,
+                            0f,
+                            0.213f - cosine * 0.213f - sine * 0.787f,
+                            0.715f - cosine * 0.715f + sine * 0.715f,
+                            0.072f + cosine * 0.928f + sine * 0.072f,
+                            0f
+                        },
+                        annotationWhiteNits);
+                    return document;
+                case "invert":
+                    document.ApplyLinearColorMatrixAdjustment(
+                        new float[]
+                        {
+                            -1f, 0f, 0f, 1f,
+                            0f, -1f, 0f, 1f,
+                            0f, 0f, -1f, 1f
+                        },
+                        annotationWhiteNits);
+                    return document;
+                case "pixelate":
+                    int pixelSize = checked((int)MathF.Round(
+                        GetRequiredFiniteNumberInRange(descriptor, "size", 1f, 200f)));
+                    document.PixelateRectangle(
+                        new Rectangle(0, 0, document.MasterPixels.Width, document.MasterPixels.Height),
+                        pixelSize);
+                    return document;
                 case "saturation":
                     float saturationAmount = GetRequiredFiniteNumber(descriptor, "amount");
                     if (saturationAmount < -100f || saturationAmount > 100f)
@@ -251,6 +343,42 @@ namespace ShareX
                     }
 
                     document.ApplySaturationAdjustment(1f + saturationAmount / 100f);
+                    return document;
+                case "sepia":
+                    float sepiaStrength = GetRequiredFiniteNumberInRange(descriptor, "strength", 0f, 100f) / 100f;
+                    float inverseSepiaStrength = 1f - sepiaStrength;
+                    document.ApplyLinearColorMatrixAdjustment(
+                        new float[]
+                        {
+                            inverseSepiaStrength + 0.393f * sepiaStrength, 0.769f * sepiaStrength, 0.189f * sepiaStrength, 0f,
+                            0.349f * sepiaStrength, inverseSepiaStrength + 0.686f * sepiaStrength, 0.168f * sepiaStrength, 0f,
+                            0.272f * sepiaStrength, 0.534f * sepiaStrength, inverseSepiaStrength + 0.131f * sepiaStrength, 0f
+                        },
+                        annotationWhiteNits);
+                    return document;
+                case "temperature_tint":
+                    float temperature = GetRequiredFiniteNumberInRange(descriptor, "temperature", -100f, 100f);
+                    float tint = GetRequiredFiniteNumberInRange(descriptor, "tint", -100f, 100f);
+                    float temperatureDelta = temperature / 100f * (64f / 255f);
+                    float tintDelta = tint / 100f * (64f / 255f);
+                    document.ApplyLinearColorMatrixAdjustment(
+                        new float[]
+                        {
+                            1f, 0f, 0f, temperatureDelta - tintDelta * 0.25f,
+                            0f, 1f, 0f, tintDelta,
+                            0f, 0f, 1f, -temperatureDelta - tintDelta * 0.25f
+                        },
+                        annotationWhiteNits);
+                    return document;
+                case "threshold":
+                    document.ApplyThresholdAdjustment(
+                        GetRequiredFiniteNumberInRange(descriptor, "value", 0f, 255f) / 255f,
+                        annotationWhiteNits);
+                    return document;
+                case "vibrance":
+                    document.ApplyVibranceAdjustment(
+                        GetRequiredFiniteNumberInRange(descriptor, "amount", -100f, 100f) / 100f,
+                        annotationWhiteNits);
                     return document;
                 default:
                     throw new InvalidOperationException($"HDR replay is not implemented for image effect '{descriptor.EffectId}'.");
@@ -271,6 +399,22 @@ namespace ShareX
             }
 
             return (float)value;
+        }
+
+        private static float GetRequiredFiniteNumberInRange(
+            EditorImageEffectDescriptor descriptor,
+            string key,
+            float minimum,
+            float maximum)
+        {
+            float value = GetRequiredFiniteNumber(descriptor, key);
+            if (value < minimum || value > maximum)
+            {
+                throw new InvalidOperationException(
+                    $"The '{key}' parameter for HDR image effect '{descriptor.EffectId}' is outside its supported range.");
+            }
+
+            return value;
         }
 
         private static Rectangle ToRectangle(EditorSourceOperation operation) =>
@@ -377,7 +521,10 @@ namespace ShareX
             bounds.Height >= 1f;
 
         private static bool IsMaskedGlobalEffect(BaseEffectAnnotation effect) =>
-            !effect.IsFreehand &&
+            // The editor exports the final antialiased coverage mask for both
+            // geometric and freehand effects. HDR replay must use that mask as
+            // the authority instead of trying to reconstruct the stroke from
+            // the annotation's coarse bounds.
             float.IsFinite(effect.RotationAngle) &&
             HasFiniteIntegerBounds(effect.GetBounds());
 

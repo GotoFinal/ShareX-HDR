@@ -249,9 +249,22 @@ public static class EditorImageEffectHdrCapabilities
             new Dictionary<string, EditorImageEffectHdrCapability>(StringComparer.OrdinalIgnoreCase)
             {
                 ["alpha"] = EditorImageEffectHdrCapability.NativeFp16,
+                ["black_and_white"] = EditorImageEffectHdrCapability.NativeFp16,
+                ["blur"] = EditorImageEffectHdrCapability.NativeFp16,
+                ["brightness"] = EditorImageEffectHdrCapability.NativeFp16,
+                ["contrast"] = EditorImageEffectHdrCapability.NativeFp16,
                 ["exposure"] = EditorImageEffectHdrCapability.NativeFp16,
+                ["gamma"] = EditorImageEffectHdrCapability.NativeFp16,
+                ["gaussian_blur"] = EditorImageEffectHdrCapability.NativeFp16,
                 ["grayscale"] = EditorImageEffectHdrCapability.NativeFp16,
-                ["saturation"] = EditorImageEffectHdrCapability.NativeFp16
+                ["hue"] = EditorImageEffectHdrCapability.NativeFp16,
+                ["invert"] = EditorImageEffectHdrCapability.NativeFp16,
+                ["pixelate"] = EditorImageEffectHdrCapability.NativeFp16,
+                ["saturation"] = EditorImageEffectHdrCapability.NativeFp16,
+                ["sepia"] = EditorImageEffectHdrCapability.NativeFp16,
+                ["temperature_tint"] = EditorImageEffectHdrCapability.NativeFp16,
+                ["threshold"] = EditorImageEffectHdrCapability.NativeFp16,
+                ["vibrance"] = EditorImageEffectHdrCapability.NativeFp16
             });
 
     public static EditorImageEffectHdrCapability GetCapability(string effectId)

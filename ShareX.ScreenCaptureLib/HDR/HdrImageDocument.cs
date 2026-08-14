@@ -2517,6 +2517,188 @@ namespace ShareX.ScreenCaptureLib
             Revision = checked(Revision + 1);
         }
 
+        /// <summary>
+        /// Applies a three-channel affine color transform to straight linear
+        /// scRGB while retaining premultiplied storage. The matrix is three rows
+        /// of red, green, blue and an SDR-white-relative offset.
+        /// </summary>
+        public void ApplyLinearColorMatrixAdjustment(float[] matrix, float sdrWhiteNits)
+        {
+            ArgumentNullException.ThrowIfNull(matrix);
+            if (matrix.Length != 12)
+            {
+                throw new ArgumentException("A finite 3x4 color matrix is required.", nameof(matrix));
+            }
+
+            for (int index = 0; index < matrix.Length; index++)
+            {
+                if (!float.IsFinite(matrix[index]))
+                {
+                    throw new ArgumentException("A finite 3x4 color matrix is required.", nameof(matrix));
+                }
+            }
+
+            if (!float.IsFinite(sdrWhiteNits) || sdrWhiteNits <= 0f || sdrWhiteNits > 10000f)
+            {
+                throw new ArgumentOutOfRangeException(nameof(sdrWhiteNits));
+            }
+
+            float[] ownedMatrix = (float[])matrix.Clone();
+            float whiteScale = sdrWhiteNits / 80f;
+            HdrRgba16FloatBuffer pixels = MasterPixels;
+            Parallel.For(0, pixels.Height, y =>
+            {
+                Span<byte> row = pixels.GetWritableRowSpan(y);
+                for (int x = 0; x < pixels.Width; x++)
+                {
+                    int offset = x * HdrRgba16FloatBuffer.BytesPerPixel;
+                    float alpha = Math.Clamp(ReadHalf(row, offset + 6), 0f, 1f);
+                    if (alpha <= 0f)
+                    {
+                        WriteHalf(row, offset, 0f);
+                        WriteHalf(row, offset + 2, 0f);
+                        WriteHalf(row, offset + 4, 0f);
+                        continue;
+                    }
+
+                    float inverseAlpha = 1f / alpha;
+                    float red = ReadHalf(row, offset) * inverseAlpha;
+                    float green = ReadHalf(row, offset + 2) * inverseAlpha;
+                    float blue = ReadHalf(row, offset + 4) * inverseAlpha;
+                    float transformedRed =
+                        ownedMatrix[0] * red + ownedMatrix[1] * green + ownedMatrix[2] * blue + ownedMatrix[3] * whiteScale;
+                    float transformedGreen =
+                        ownedMatrix[4] * red + ownedMatrix[5] * green + ownedMatrix[6] * blue + ownedMatrix[7] * whiteScale;
+                    float transformedBlue =
+                        ownedMatrix[8] * red + ownedMatrix[9] * green + ownedMatrix[10] * blue + ownedMatrix[11] * whiteScale;
+
+                    WriteHalf(row, offset, transformedRed * alpha);
+                    WriteHalf(row, offset + 2, transformedGreen * alpha);
+                    WriteHalf(row, offset + 4, transformedBlue * alpha);
+                }
+            });
+
+            Revision = checked(Revision + 1);
+        }
+
+        /// <summary>
+        /// Applies gamma to straight linear scRGB relative to the configured SDR
+        /// white. Sign-preserving power keeps legal negative scRGB excursions.
+        /// </summary>
+        public void ApplyGammaAdjustment(float gamma, float sdrWhiteNits)
+        {
+            if (!float.IsFinite(gamma) || gamma < 0.1f || gamma > 5f)
+            {
+                throw new ArgumentOutOfRangeException(nameof(gamma));
+            }
+
+            ApplyStraightRgbAdjustment(
+                sdrWhiteNits,
+                (red, green, blue, whiteScale) =>
+                {
+                    float exponent = 1f / gamma;
+                    return (
+                        ApplySignedPower(red / whiteScale, exponent) * whiteScale,
+                        ApplySignedPower(green / whiteScale, exponent) * whiteScale,
+                        ApplySignedPower(blue / whiteScale, exponent) * whiteScale);
+                });
+        }
+
+        /// <summary>
+        /// Applies a luminance threshold relative to SDR white. This effect is
+        /// intentionally clipping because that is the operation selected by the user.
+        /// </summary>
+        public void ApplyThresholdAdjustment(float threshold, float sdrWhiteNits)
+        {
+            if (!float.IsFinite(threshold) || threshold < 0f || threshold > 1f)
+            {
+                throw new ArgumentOutOfRangeException(nameof(threshold));
+            }
+
+            ApplyStraightRgbAdjustment(
+                sdrWhiteNits,
+                (red, green, blue, whiteScale) =>
+                {
+                    float luminance = red * 0.2126f + green * 0.7152f + blue * 0.0722f;
+                    float output = luminance >= threshold * whiteScale ? whiteScale : 0f;
+                    return (output, output, output);
+                });
+        }
+
+        /// <summary>
+        /// Boosts less saturated colors more strongly, using straight linear scRGB
+        /// and retaining above-white values rather than quantizing through BGRA8.
+        /// </summary>
+        public void ApplyVibranceAdjustment(float amount, float sdrWhiteNits)
+        {
+            if (!float.IsFinite(amount) || amount < -1f || amount > 1f)
+            {
+                throw new ArgumentOutOfRangeException(nameof(amount));
+            }
+
+            ApplyStraightRgbAdjustment(
+                sdrWhiteNits,
+                (red, green, blue, whiteScale) =>
+                {
+                    float maximum = MathF.Max(red, MathF.Max(green, blue));
+                    float minimum = MathF.Min(red, MathF.Min(green, blue));
+                    float saturation = Math.Clamp((maximum - minimum) / whiteScale, 0f, 1f);
+                    float gray = (red + green + blue) / 3f;
+                    float factor = amount >= 0f
+                        ? 1f + amount * (1f - saturation)
+                        : 1f + amount;
+                    return (
+                        gray + (red - gray) * factor,
+                        gray + (green - gray) * factor,
+                        gray + (blue - gray) * factor);
+                });
+        }
+
+        private void ApplyStraightRgbAdjustment(
+            float sdrWhiteNits,
+            Func<float, float, float, float, (float Red, float Green, float Blue)> transform)
+        {
+            if (!float.IsFinite(sdrWhiteNits) || sdrWhiteNits <= 0f || sdrWhiteNits > 10000f)
+            {
+                throw new ArgumentOutOfRangeException(nameof(sdrWhiteNits));
+            }
+
+            ArgumentNullException.ThrowIfNull(transform);
+            float whiteScale = sdrWhiteNits / 80f;
+            HdrRgba16FloatBuffer pixels = MasterPixels;
+            Parallel.For(0, pixels.Height, y =>
+            {
+                Span<byte> row = pixels.GetWritableRowSpan(y);
+                for (int x = 0; x < pixels.Width; x++)
+                {
+                    int offset = x * HdrRgba16FloatBuffer.BytesPerPixel;
+                    float alpha = Math.Clamp(ReadHalf(row, offset + 6), 0f, 1f);
+                    if (alpha <= 0f)
+                    {
+                        WriteHalf(row, offset, 0f);
+                        WriteHalf(row, offset + 2, 0f);
+                        WriteHalf(row, offset + 4, 0f);
+                        continue;
+                    }
+
+                    float inverseAlpha = 1f / alpha;
+                    (float red, float green, float blue) = transform(
+                        ReadHalf(row, offset) * inverseAlpha,
+                        ReadHalf(row, offset + 2) * inverseAlpha,
+                        ReadHalf(row, offset + 4) * inverseAlpha,
+                        whiteScale);
+                    WriteHalf(row, offset, red * alpha);
+                    WriteHalf(row, offset + 2, green * alpha);
+                    WriteHalf(row, offset + 4, blue * alpha);
+                }
+            });
+
+            Revision = checked(Revision + 1);
+        }
+
+        private static float ApplySignedPower(float value, float exponent) =>
+            MathF.CopySign(MathF.Pow(MathF.Abs(value), exponent), value);
+
 
         public void CompositeSdrAnnotationOverlay(
             ReadOnlySpan<byte> overlayBgra8,
@@ -2615,6 +2797,181 @@ namespace ShareX.ScreenCaptureLib
                 destinationY,
                 assetWhiteNits);
             Revision++;
+        }
+
+        /// <summary>
+        /// Creates a retained FP16 document from an ordinary SDR bitmap. This is
+        /// intended for SDR-only decorations such as editor chrome, backgrounds,
+        /// shadows and margins which are later combined with an HDR source.
+        /// </summary>
+        public static HdrImageDocument CreateFromSdrBitmap(Bitmap bitmap, float sdrWhiteNits)
+        {
+            ArgumentNullException.ThrowIfNull(bitmap);
+            if (!float.IsFinite(sdrWhiteNits) || sdrWhiteNits <= 0f || sdrWhiteNits > 10000f)
+            {
+                throw new ArgumentOutOfRangeException(nameof(sdrWhiteNits));
+            }
+
+            var pixels = new HdrRgba16FloatBuffer(bitmap.Width, bitmap.Height);
+            var document = new HdrImageDocument(
+                new Rectangle(0, 0, bitmap.Width, bitmap.Height),
+                pixels,
+                new[]
+                {
+                    new HdrCaptureSourceSegment(
+                        new Rectangle(0, 0, bitmap.Width, bitmap.Height),
+                        string.Empty,
+                        false,
+                        sdrWhiteNits,
+                        sdrWhiteNits)
+                });
+
+            try
+            {
+                document.CompositeSdrAnnotationOverlay(bitmap, sdrWhiteNits);
+                return document;
+            }
+            catch
+            {
+                document.Dispose();
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Multiplies premultiplied FP16 pixels by an 8-bit bitmap alpha mask.
+        /// </summary>
+        public unsafe void ApplyAlphaMask(Bitmap mask)
+        {
+            ArgumentNullException.ThrowIfNull(mask);
+            if (mask.Width != MasterPixels.Width || mask.Height != MasterPixels.Height)
+            {
+                throw new ArgumentException("The alpha mask dimensions must match the HDR document.", nameof(mask));
+            }
+
+            Bitmap convertedMask = null;
+            Bitmap readableMask = mask;
+            if (mask.PixelFormat != PixelFormat.Format32bppArgb &&
+                mask.PixelFormat != PixelFormat.Format32bppPArgb)
+            {
+                convertedMask = new Bitmap(mask.Width, mask.Height, PixelFormat.Format32bppArgb);
+                using Graphics graphics = Graphics.FromImage(convertedMask);
+                graphics.DrawImageUnscaled(mask, Point.Empty);
+                readableMask = convertedMask;
+            }
+
+            BitmapData bitmapData = null;
+            try
+            {
+                bitmapData = readableMask.LockBits(
+                    new Rectangle(0, 0, readableMask.Width, readableMask.Height),
+                    ImageLockMode.ReadOnly,
+                    readableMask.PixelFormat);
+                if (bitmapData.Stride <= 0)
+                {
+                    throw new InvalidOperationException("The alpha mask has an unsupported row layout.");
+                }
+
+                HdrRgba16FloatBuffer pixels = MasterPixels;
+                Parallel.For(0, pixels.Height, y =>
+                {
+                    ReadOnlySpan<byte> maskRow = new ReadOnlySpan<byte>(
+                        (byte*)bitmapData.Scan0 + y * bitmapData.Stride,
+                        pixels.Width * 4);
+                    Span<byte> destinationRow = pixels.GetWritableRowSpan(y);
+                    for (int x = 0; x < pixels.Width; x++)
+                    {
+                        float coverage = maskRow[x * 4 + 3] / 255f;
+                        int offset = x * HdrRgba16FloatBuffer.BytesPerPixel;
+                        WriteHalf(destinationRow, offset, ReadHalf(destinationRow, offset) * coverage);
+                        WriteHalf(destinationRow, offset + 2, ReadHalf(destinationRow, offset + 2) * coverage);
+                        WriteHalf(destinationRow, offset + 4, ReadHalf(destinationRow, offset + 4) * coverage);
+                        WriteHalf(destinationRow, offset + 6, ReadHalf(destinationRow, offset + 6) * coverage);
+                    }
+                });
+            }
+            finally
+            {
+                if (bitmapData != null)
+                {
+                    readableMask.UnlockBits(bitmapData);
+                }
+
+                convertedMask?.Dispose();
+            }
+
+            Revision = checked(Revision + 1);
+        }
+
+        /// <summary>
+        /// Source-over composites another premultiplied FP16 document at a local
+        /// destination offset without converting either document through SDR.
+        /// </summary>
+        public void CompositeHdrDocument(HdrImageDocument source, int destinationX, int destinationY)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+            Rectangle destinationBounds = new Rectangle(
+                destinationX,
+                destinationY,
+                source.MasterPixels.Width,
+                source.MasterPixels.Height);
+            Rectangle intersection = Rectangle.Intersect(
+                new Rectangle(0, 0, MasterPixels.Width, MasterPixels.Height),
+                destinationBounds);
+            if (intersection.Width <= 0 || intersection.Height <= 0)
+            {
+                return;
+            }
+
+            int sourceStartX = intersection.X - destinationX;
+            int sourceStartY = intersection.Y - destinationY;
+            Parallel.For(0, intersection.Height, relativeY =>
+            {
+                ReadOnlySpan<byte> sourceRow = source.MasterPixels.GetRowSpan(sourceStartY + relativeY);
+                Span<byte> destinationRow = MasterPixels.GetWritableRowSpan(intersection.Y + relativeY);
+                for (int relativeX = 0; relativeX < intersection.Width; relativeX++)
+                {
+                    int sourceOffset = (sourceStartX + relativeX) * HdrRgba16FloatBuffer.BytesPerPixel;
+                    int destinationOffset = (intersection.X + relativeX) * HdrRgba16FloatBuffer.BytesPerPixel;
+                    float sourceAlpha = Math.Clamp(ReadHalf(sourceRow, sourceOffset + 6), 0f, 1f);
+                    float inverseSourceAlpha = 1f - sourceAlpha;
+                    WriteHalf(
+                        destinationRow,
+                        destinationOffset,
+                        ReadHalf(sourceRow, sourceOffset) + ReadHalf(destinationRow, destinationOffset) * inverseSourceAlpha);
+                    WriteHalf(
+                        destinationRow,
+                        destinationOffset + 2,
+                        ReadHalf(sourceRow, sourceOffset + 2) + ReadHalf(destinationRow, destinationOffset + 2) * inverseSourceAlpha);
+                    WriteHalf(
+                        destinationRow,
+                        destinationOffset + 4,
+                        ReadHalf(sourceRow, sourceOffset + 4) + ReadHalf(destinationRow, destinationOffset + 4) * inverseSourceAlpha);
+                    WriteHalf(
+                        destinationRow,
+                        destinationOffset + 6,
+                        sourceAlpha + Math.Clamp(ReadHalf(destinationRow, destinationOffset + 6), 0f, 1f) * inverseSourceAlpha);
+                }
+            });
+
+            foreach (HdrCaptureSourceSegment segment in source.SourceSegments)
+            {
+                Rectangle adjusted = segment.DestinationRectangle;
+                adjusted.Offset(destinationX, destinationY);
+                adjusted = Rectangle.Intersect(adjusted, intersection);
+                if (adjusted.Width > 0 && adjusted.Height > 0)
+                {
+                    sourceSegments.Add(new HdrCaptureSourceSegment(
+                        adjusted,
+                        segment.DisplayDeviceName,
+                        segment.WasHdrActive,
+                        segment.SdrWhiteNits,
+                        segment.DisplayPeakNits));
+                }
+            }
+
+            CaptureTimestamp = source.CaptureTimestamp;
+            Revision = checked(Revision + 1);
         }
 
         public void Dispose()

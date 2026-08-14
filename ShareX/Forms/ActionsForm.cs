@@ -26,6 +26,7 @@
 using ShareX.HelpersLib;
 using ShareX.Properties;
 using System;
+using System.Drawing;
 using System.Windows.Forms;
 
 namespace ShareX
@@ -34,6 +35,9 @@ namespace ShareX
     {
         public ExternalProgram FileAction { get; private set; }
 
+        private Label lblHdrPolicy;
+        private ComboBox cbHdrPolicy;
+
         public ActionsForm() : this(new ExternalProgram())
         {
         }
@@ -41,6 +45,7 @@ namespace ShareX
         public ActionsForm(ExternalProgram fileAction)
         {
             InitializeComponent();
+            InitializeHdrPolicyControls();
             ShareXResources.ApplyTheme(this, true);
 
             FileAction = fileAction;
@@ -52,6 +57,43 @@ namespace ShareX
             txtExtensions.Text = fileAction.Extensions ?? "";
             cbHiddenWindow.Checked = fileAction.HiddenWindow;
             cbDeleteInputFile.Checked = fileAction.DeleteInputFile;
+            cbHdrPolicy.SelectedIndex = Math.Clamp(
+                (int)fileAction.HdrPolicy,
+                0,
+                cbHdrPolicy.Items.Count - 1);
+        }
+
+        private void InitializeHdrPolicyControls()
+        {
+            const int additionalHeight = 38;
+            int controlTop = cbDeleteInputFile.Bottom + 10;
+
+            lblHdrPolicy = new Label
+            {
+                AutoSize = true,
+                Left = lblOutputExtension.Left,
+                Top = controlTop + 4,
+                Text = "HDR files:"
+            };
+            cbHdrPolicy = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Left = txtOutputExtension.Left,
+                Top = controlTop,
+                Width = txtOutputExtension.Width
+            };
+            cbHdrPolicy.Items.AddRange(new object[]
+            {
+                "Convert to SDR before running (default)",
+                "Allow HDR without validation",
+                "Require verifiable HDR output"
+            });
+
+            btnOK.Top += additionalHeight;
+            btnCancel.Top += additionalHeight;
+            ClientSize = new Size(ClientSize.Width, ClientSize.Height + additionalHeight);
+            Controls.Add(lblHdrPolicy);
+            Controls.Add(cbHdrPolicy);
         }
 
         private void btnPathBrowse_Click(object sender, EventArgs e)
@@ -85,6 +127,7 @@ namespace ShareX
             FileAction.OutputExtension = txtOutputExtension.Text;
             FileAction.HiddenWindow = cbHiddenWindow.Checked;
             FileAction.DeleteInputFile = cbDeleteInputFile.Checked;
+            FileAction.HdrPolicy = (ExternalProgramHdrPolicy)Math.Max(0, cbHdrPolicy.SelectedIndex);
 
             DialogResult = DialogResult.OK;
             Close();
