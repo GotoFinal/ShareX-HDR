@@ -59,12 +59,26 @@ namespace ShareX.ScreenCaptureLib
 
         public bool TryCaptureHdr(Rectangle rect, out HdrImageDocument document)
         {
+            return TryCaptureHdr(rect, captureContext: null, captureScope: null, out document);
+        }
+
+        private bool TryCaptureHdr(
+            Rectangle rect,
+            WindowsGraphicsCapture.CaptureContext captureContext,
+            ObsGameCaptureCaptureScope captureScope,
+            out HdrImageDocument document)
+        {
             if (RemoveOutsideScreenArea)
             {
                 rect = Rectangle.Intersect(CaptureHelpers.GetScreenBounds(), rect);
             }
 
-            if (TryCaptureObsGame(rect, IntPtr.Zero, out document, out ObsGameCaptureAttempt obsAttempt))
+            if (TryCaptureObsGame(
+                rect,
+                IntPtr.Zero,
+                captureScope,
+                out document,
+                out ObsGameCaptureAttempt obsAttempt))
             {
                 document.NormalizeMixedMonitorBrightness(HdrSettings);
 
@@ -78,7 +92,7 @@ namespace ShareX.ScreenCaptureLib
 
             bool captured = WindowsGraphicsCapture.TryCaptureHdr(
                 rect,
-                null,
+                captureContext,
                 HdrSettings,
                 out document);
 
@@ -425,6 +439,13 @@ namespace ShareX.ScreenCaptureLib
             return new CaptureSession(this);
         }
 
+        public bool ShouldUseHdrFrameCapture(Rectangle rect)
+        {
+            return UseHDRSupport &&
+                (HdrSettings?.ObsGameCapture?.Enabled == true ||
+                    WindowsGraphicsCapture.HasActiveHdrDisplay(rect));
+        }
+
         internal sealed class CaptureSession : IDisposable
         {
             private Screenshot screenshot;
@@ -446,6 +467,12 @@ namespace ShareX.ScreenCaptureLib
             {
                 ObjectDisposedException.ThrowIf(screenshot == null, this);
                 return screenshot.CaptureRectangle(rect, captureContext, obsGameCaptureScope);
+            }
+
+            public bool TryCaptureHdr(Rectangle rect, out HdrImageDocument document)
+            {
+                ObjectDisposedException.ThrowIf(screenshot == null, this);
+                return screenshot.TryCaptureHdr(rect, captureContext, obsGameCaptureScope, out document);
             }
 
             public void Dispose()

@@ -81,6 +81,9 @@ namespace ShareX
         private ComboBox cbHdrPaperWhiteMode;
         private NumericUpDown nudHdrPaperWhiteNits;
         private Label lblHdrPaperWhiteNits;
+        private Label lblScreenRecordingHdrMode;
+        private ComboBox cbScreenRecordingHdrMode;
+        private Label lblScreenRecordingHdrInfo;
 
         private sealed class HdrFileFormatItem
         {
@@ -129,6 +132,7 @@ namespace ShareX
             InitializeComponent();
             TaskSettings = hotkeySetting;
             IsDefault = isDefault;
+            InitializeHdrScreenRecordingControls();
             InitializeHdrToneMappingControls();
             InitializeObsGameCaptureControls();
             InitializeHdrFileOutputControls();
@@ -452,6 +456,7 @@ namespace ShareX
             cbScreenRecordAutoStart.Checked = nudScreenRecorderStartDelay.Enabled = TaskSettings.CaptureSettings.ScreenRecordAutoStart;
             nudScreenRecorderStartDelay.SetValue((decimal)TaskSettings.CaptureSettings.ScreenRecordStartDelay);
             cbScreenRecorderShowCursor.Checked = TaskSettings.CaptureSettings.ScreenRecordShowCursor;
+            cbScreenRecordingHdrMode.SelectedIndex = (int)GetScreenRecordingHdrMode();
             cbScreenRecordTwoPassEncoding.Checked = TaskSettings.CaptureSettings.ScreenRecordTwoPassEncoding;
             cbScreenRecordTransparentRegion.Checked = TaskSettings.CaptureSettings.ScreenRecordTransparentRegion;
             cbScreenRecordConfirmAbort.Checked = TaskSettings.CaptureSettings.ScreenRecordAskConfirmationOnAbort;
@@ -623,6 +628,60 @@ namespace ShareX
             {
                 tttvMain.SelectChildNode();
             }
+        }
+
+        private void InitializeHdrScreenRecordingControls()
+        {
+            lblScreenRecordingHdrMode = new Label
+            {
+                AutoSize = true,
+                Location = new Point(8, 252),
+                Text = "HDR desktop recording:",
+                Enabled = TaskSettings.CaptureSettings.UseHDRSupport
+            };
+            cbScreenRecordingHdrMode = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Location = new Point(170, 247),
+                Size = new Size(360, 23),
+                Enabled = TaskSettings.CaptureSettings.UseHDRSupport
+            };
+            cbScreenRecordingHdrMode.Items.AddRange(Helpers.GetEnumDescriptions<ScreenRecordingHdrMode>());
+            cbScreenRecordingHdrMode.SelectedIndex = (int)GetScreenRecordingHdrMode();
+            cbScreenRecordingHdrMode.SelectedIndexChanged += (_, _) =>
+            {
+                if (cbScreenRecordingHdrMode.SelectedIndex >= 0)
+                {
+                    ScreenRecordingHdrMode mode =
+                        (ScreenRecordingHdrMode)cbScreenRecordingHdrMode.SelectedIndex;
+                    TaskSettings.CaptureSettings.ScreenRecordHdrMode = mode;
+                    TaskSettings.CaptureSettings.ScreenRecordUseHdrCapture =
+                        mode != ScreenRecordingHdrMode.Disabled;
+                }
+            };
+            lblScreenRecordingHdrInfo = new Label
+            {
+                AutoSize = false,
+                Location = new Point(8, 278),
+                Size = new Size(522, 45),
+                Text = "Native HDR10 records HEVC Main10 MP4 using the HDR output mastering luminance. " +
+                    "H.264 NVENC/QSV selections are promoted to HEVC; other incompatible codecs use x265.",
+                Enabled = TaskSettings.CaptureSettings.UseHDRSupport
+            };
+            tpScreenRecorder.Controls.Add(lblScreenRecordingHdrMode);
+            tpScreenRecorder.Controls.Add(cbScreenRecordingHdrMode);
+            tpScreenRecorder.Controls.Add(lblScreenRecordingHdrInfo);
+        }
+
+        private ScreenRecordingHdrMode GetScreenRecordingHdrMode()
+        {
+            if (!TaskSettings.CaptureSettings.ScreenRecordUseHdrCapture)
+            {
+                return ScreenRecordingHdrMode.Disabled;
+            }
+
+            ScreenRecordingHdrMode mode = TaskSettings.CaptureSettings.ScreenRecordHdrMode;
+            return Enum.IsDefined(mode) ? mode : ScreenRecordingHdrMode.ToneMapToSdr;
         }
 
         private void UpdateWindowTitle()
@@ -2626,6 +2685,9 @@ namespace ShareX
             UpdateHdrToneMappingControlsEnabled();
             pObsGameCapture.Enabled = enabled;
             pHdrFileOutput.Enabled = enabled;
+            lblScreenRecordingHdrMode.Enabled = enabled;
+            cbScreenRecordingHdrMode.Enabled = enabled;
+            lblScreenRecordingHdrInfo.Enabled = enabled;
             UpdateHdrFileOutputControlsEnabled();
         }
 

@@ -35,6 +35,18 @@ namespace ShareX.ScreenCaptureLib
         GIF
     }
 
+    public enum ScreenRecordingHdrMode
+    {
+        [Description("Disabled (use FFmpeg desktop capture)")]
+        Disabled,
+
+        [Description("Tone map HDR to SDR (recommended)")]
+        ToneMapToSdr,
+
+        [Description("Record native HDR10 (HEVC Main10)")]
+        NativeHdr10
+    }
+
     public enum ScreenRecordGIFEncoding // Localized
     {
         FFmpeg,

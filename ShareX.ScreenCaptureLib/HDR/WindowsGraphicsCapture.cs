@@ -52,6 +52,24 @@ namespace ShareX.ScreenCaptureLib
         private static NormalCaptureWorker normalCaptureWorker;
         internal static Action<string> PerformanceLogSink { get; set; }
 
+        internal static bool HasActiveHdrDisplay(Rectangle captureRectangle)
+        {
+            if (captureRectangle.Width <= 0 || captureRectangle.Height <= 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                return GetCaptureTargets(captureRectangle).Exists(target => target.IsHdrActive);
+            }
+            catch (Exception e)
+            {
+                DebugHelper.WriteException(e, "HDR display detection failed.");
+                return false;
+            }
+        }
+
         public static bool TryCapture(Rectangle captureRectangle, HdrCaptureSettings settings, out Bitmap bitmap)
         {
             return TryCapture(captureRectangle, settings, null, out bitmap);

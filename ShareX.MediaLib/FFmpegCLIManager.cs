@@ -84,10 +84,23 @@ namespace ShareX.MediaLib
             return Run(FFmpegPath, args);
         }
 
+        public bool RunWithStandardInput(string args, Action<Stream> standardInputWriter)
+        {
+            ArgumentNullException.ThrowIfNull(standardInputWriter);
+            return Run(FFmpegPath, args, standardInputWriter);
+        }
+
         protected bool Run(string path, string args)
         {
+            return Run(path, args, null);
+        }
+
+        private bool Run(string path, string args, Action<Stream> standardInputWriter)
+        {
             StopRequested = false;
-            int errorCode = Open(path, args);
+            int errorCode = standardInputWriter == null
+                ? Open(path, args)
+                : Open(path, args, standardInputWriter);
             IsEncoding = false;
             bool result = errorCode == 0;
             if (!result && ShowError)

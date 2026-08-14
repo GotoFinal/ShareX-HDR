@@ -3604,7 +3604,7 @@
     <value>23</value>
   </data>
   <data name="cbUseHDRSupport.Text" xml:space="preserve">
-    <value>Enable HDR screenshot support</value>
+    <value>Enable HDR capture support</value>
   </data>
   <data name="&gt;&gt;cbUseHDRSupport.Name" xml:space="preserve">
     <value>cbUseHDRSupport</value>

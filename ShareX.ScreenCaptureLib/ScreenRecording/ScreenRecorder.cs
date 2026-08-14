@@ -28,6 +28,9 @@ using ShareX.MediaLib;
 using System;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 
@@ -101,7 +104,9 @@ namespace ShareX.ScreenCaptureLib
         private Rectangle captureRectangle;
         private ImageCache imgCache;
         private FFmpegCLIManager ffmpeg;
-        private bool stopRequested;
+        private volatile bool stopRequested;
+        private ShareXFrameInputMode frameInputMode;
+        private int recordingStartedRaised;
 
         public ScreenRecorder(ScreenRecordOutput outputType, ScreenRecordingOptions options, Screenshot screenshot, Rectangle captureRectangle)
         {
@@ -148,30 +153,331 @@ namespace ShareX.ScreenCaptureLib
             {
                 IsRecording = true;
                 stopRequested = false;
+                recordingStartedRaised = 0;
 
-                if (OutputType == ScreenRecordOutput.FFmpeg)
+                try
                 {
-                    ffmpeg.Run(Options.GetFFmpegCommands());
+                    if (OutputType == ScreenRecordOutput.FFmpeg)
+                    {
+                        frameInputMode = ResolveShareXFrameInputMode();
+
+                        if (frameInputMode != ShareXFrameInputMode.None)
+                        {
+                            string commands = Options.GetFFmpegCommands(frameInputMode);
+                            ffmpeg.RunWithStandardInput(
+                                commands,
+                                frameInputMode == ShareXFrameInputMode.Hdr10P010
+                                    ? RecordUsingHdr10FrameInput
+                                    : RecordUsingToneMappedFrameInput);
+                        }
+                        else
+                        {
+                            ffmpeg.Run(Options.GetFFmpegCommands());
+                        }
+                    }
+                    else
+                    {
+                        OnRecordingStarted();
+                        RecordUsingCache();
+                    }
+                }
+                finally
+                {
+                    IsRecording = false;
+                }
+            }
+        }
+
+        private ShareXFrameInputMode ResolveShareXFrameInputMode()
+        {
+            bool shouldCheckHdrRegion =
+                Options.HdrMode != ScreenRecordingHdrMode.Disabled &&
+                screenshot.UseHDRSupport &&
+                Options.SupportsShareXFrameInput;
+            bool hdrCaptureRequired = shouldCheckHdrRegion &&
+                screenshot.ShouldUseHdrFrameCapture(CaptureRectangle);
+            ShareXFrameInputMode resolvedMode = Options.ResolveShareXFrameInputMode(
+                screenshot.UseHDRSupport,
+                hdrCaptureRequired,
+                out string fallbackReason);
+
+            if (!string.IsNullOrEmpty(fallbackReason))
+            {
+                DebugHelper.WriteLine(
+                    $"HDR video capture fallback | requested={Options.HdrMode} " +
+                    $"effective={resolvedMode} reason={fallbackReason}");
+            }
+
+            DebugHelper.WriteLine(
+                $"HDR video capture | mode={Options.HdrMode} frameInput={resolvedMode} " +
+                $"bounds={CaptureRectangle} fps={FPS} source={Options.FFmpeg.VideoSource} " +
+                $"encoder={Options.GetEffectiveVideoCodec(resolvedMode)}");
+            return resolvedMode;
+        }
+
+        private void RecordUsingToneMappedFrameInput(Stream input)
+        {
+            int packedStride = checked(CaptureRectangle.Width * 4);
+            byte[] pixels = new byte[checked(packedStride * CaptureRectangle.Height)];
+            int capturedFrames = 0;
+            int writtenFrames = 0;
+            Stopwatch recordingTimer = Stopwatch.StartNew();
+
+            OnRecordingStarted();
+
+            try
+            {
+                using Screenshot.CaptureSession captureSession = screenshot.CreateCaptureSession();
+
+                while (!stopRequested && (frameCount == 0 || writtenFrames < frameCount))
+                {
+                    WaitForNextFrame(recordingTimer, writtenFrames);
+
+                    if (stopRequested)
+                    {
+                        break;
+                    }
+
+                    using Bitmap frame = captureSession.CaptureRectangle(CaptureRectangle);
+                    CopyFramePixels(frame, pixels, packedStride, CaptureRectangle.Size);
+                    capturedFrames++;
+
+                    int desiredFrameCount = GetDesiredFrameCount(recordingTimer.ElapsedTicks, writtenFrames);
+                    if (frameCount > 0)
+                    {
+                        desiredFrameCount = Math.Min(desiredFrameCount, frameCount);
+                    }
+
+                    do
+                    {
+                        input.Write(pixels, 0, pixels.Length);
+                        writtenFrames++;
+                    }
+                    while (!stopRequested && writtenFrames < desiredFrameCount);
+                }
+            }
+            catch (IOException) when (stopRequested)
+            {
+            }
+            catch (ObjectDisposedException) when (stopRequested)
+            {
+            }
+            finally
+            {
+                recordingTimer.Stop();
+                DebugHelper.WriteLine(
+                    $"HDR video capture complete | capturedFrames={capturedFrames} writtenFrames={writtenFrames} " +
+                    $"elapsedMs={recordingTimer.Elapsed.TotalMilliseconds:F1} effectiveCaptureFps=" +
+                    $"{(recordingTimer.Elapsed.TotalSeconds > 0 ? capturedFrames / recordingTimer.Elapsed.TotalSeconds : 0):F1}");
+            }
+        }
+
+        private void RecordUsingHdr10FrameInput(Stream input)
+        {
+            float masteringMaximumNits = Math.Clamp(
+                Options.HdrMasteringMaximumNits,
+                HdrFileOutputSettings.MinimumMasteringDisplayNits,
+                HdrFileOutputSettings.MaximumMasteringDisplayNits);
+            var converter = new HdrP010FrameConverter(
+                CaptureRectangle.Width,
+                CaptureRectangle.Height,
+                masteringMaximumNits);
+            byte[] pixels = new byte[converter.FrameByteCount];
+            byte[] sdrPixels = null;
+            int sdrPackedStride = checked(CaptureRectangle.Width * 4);
+            int capturedFrames = 0;
+            int writtenFrames = 0;
+            int sdrFallbackFrames = 0;
+            bool usingSdrFallback = false;
+            float measuredMaxCll = 0f;
+            float measuredMaxFall = 0f;
+            double conversionMilliseconds = 0d;
+            Stopwatch recordingTimer = Stopwatch.StartNew();
+
+            OnRecordingStarted();
+
+            try
+            {
+                using Screenshot.CaptureSession captureSession = screenshot.CreateCaptureSession();
+
+                while (!stopRequested && (frameCount == 0 || writtenFrames < frameCount))
+                {
+                    WaitForNextFrame(recordingTimer, writtenFrames);
+
+                    if (stopRequested)
+                    {
+                        break;
+                    }
+
+                    HdrVideoFrameLightLevels lightLevels;
+                    Stopwatch conversionTimer = Stopwatch.StartNew();
+
+                    if (captureSession.TryCaptureHdr(CaptureRectangle, out HdrImageDocument document))
+                    {
+                        if (usingSdrFallback)
+                        {
+                            DebugHelper.WriteLine("HDR10 video capture recovered native HDR frames.");
+                            usingSdrFallback = false;
+                        }
+
+                        using (document)
+                        {
+                            lightLevels = converter.Convert(document.MasterPixels, pixels);
+                        }
+                    }
+                    else
+                    {
+                        if (!usingSdrFallback)
+                        {
+                            DebugHelper.WriteLine(
+                                "HDR10 video capture fallback | native HDR frame unavailable; " +
+                                "embedding the SDR capture in the HDR10 stream");
+                            usingSdrFallback = true;
+                        }
+
+                        sdrPixels ??= new byte[checked(sdrPackedStride * CaptureRectangle.Height)];
+                        using Bitmap sdrFrame = captureSession.CaptureRectangle(CaptureRectangle);
+                        CopyFramePixels(sdrFrame, sdrPixels, sdrPackedStride, CaptureRectangle.Size);
+                        lightLevels = converter.ConvertSdrBgra(
+                            sdrPixels,
+                            sdrPackedStride,
+                            pixels);
+                        sdrFallbackFrames++;
+                    }
+
+                    conversionTimer.Stop();
+                    conversionMilliseconds += conversionTimer.Elapsed.TotalMilliseconds;
+                    measuredMaxCll = Math.Max(measuredMaxCll, lightLevels.MaxCll);
+                    measuredMaxFall = Math.Max(measuredMaxFall, lightLevels.MaxFall);
+                    capturedFrames++;
+
+                    int desiredFrameCount = GetDesiredFrameCount(recordingTimer.ElapsedTicks, writtenFrames);
+                    if (frameCount > 0)
+                    {
+                        desiredFrameCount = Math.Min(desiredFrameCount, frameCount);
+                    }
+
+                    do
+                    {
+                        input.Write(pixels, 0, pixels.Length);
+                        writtenFrames++;
+                    }
+                    while (!stopRequested && writtenFrames < desiredFrameCount);
+                }
+            }
+            catch (IOException) when (stopRequested)
+            {
+            }
+            catch (ObjectDisposedException) when (stopRequested)
+            {
+            }
+            finally
+            {
+                recordingTimer.Stop();
+                DebugHelper.WriteLine(
+                    $"HDR10 video capture complete | capturedFrames={capturedFrames} writtenFrames={writtenFrames} " +
+                    $"elapsedMs={recordingTimer.Elapsed.TotalMilliseconds:F1} effectiveCaptureFps=" +
+                    $"{(recordingTimer.Elapsed.TotalSeconds > 0 ? capturedFrames / recordingTimer.Elapsed.TotalSeconds : 0):F1} " +
+                    $"averageP010Ms={(capturedFrames > 0 ? conversionMilliseconds / capturedFrames : 0):F1} " +
+                    $"sdrFallbackFrames={sdrFallbackFrames} " +
+                    $"measuredMaxCll={measuredMaxCll:F1}nits measuredMaxFall={measuredMaxFall:F1}nits " +
+                    $"masteringPeak={masteringMaximumNits:F1}nits");
+            }
+        }
+
+        private int GetDesiredFrameCount(long elapsedTicks, int writtenFrames)
+        {
+            long desired = (elapsedTicks * FPS + Stopwatch.Frequency - 1) / Stopwatch.Frequency;
+            desired = Math.Max(desired, (long)writtenFrames + 1);
+            return (int)Math.Min(desired, int.MaxValue);
+        }
+
+        private void WaitForNextFrame(Stopwatch recordingTimer, int writtenFrames)
+        {
+            long targetTicks = writtenFrames * Stopwatch.Frequency / FPS;
+
+            while (!stopRequested)
+            {
+                long remainingTicks = targetTicks - recordingTimer.ElapsedTicks;
+                if (remainingTicks <= 0)
+                {
+                    return;
+                }
+
+                int sleepMilliseconds = (int)(remainingTicks * 1000 / Stopwatch.Frequency);
+                if (sleepMilliseconds > 1)
+                {
+                    Thread.Sleep(sleepMilliseconds - 1);
                 }
                 else
                 {
-                    OnRecordingStarted();
-                    RecordUsingCache();
+                    Thread.Yield();
                 }
             }
+        }
 
-            IsRecording = false;
+        internal static void CopyFramePixels(Bitmap frame, byte[] destination, int packedStride, Size expectedSize)
+        {
+            ArgumentNullException.ThrowIfNull(frame);
+            ArgumentNullException.ThrowIfNull(destination);
+
+            if (frame.Size != expectedSize)
+            {
+                throw new InvalidDataException(
+                    $"Captured frame size {frame.Width}x{frame.Height} did not match " +
+                    $"the FFmpeg input size {expectedSize.Width}x{expectedSize.Height}.");
+            }
+
+            int requiredLength = checked(packedStride * expectedSize.Height);
+            if (destination.Length < requiredLength)
+            {
+                throw new ArgumentException("The destination frame buffer is too small.", nameof(destination));
+            }
+
+            using Bitmap converted = frame.PixelFormat == PixelFormat.Format32bppArgb
+                ? null
+                : frame.Clone(new Rectangle(Point.Empty, frame.Size), PixelFormat.Format32bppArgb);
+            Bitmap source = converted ?? frame;
+            BitmapData bitmapData = source.LockBits(
+                new Rectangle(Point.Empty, source.Size),
+                ImageLockMode.ReadOnly,
+                PixelFormat.Format32bppArgb);
+
+            try
+            {
+                if (bitmapData.Stride == packedStride)
+                {
+                    Marshal.Copy(bitmapData.Scan0, destination, 0, requiredLength);
+                }
+                else
+                {
+                    for (int y = 0; y < expectedSize.Height; y++)
+                    {
+                        Marshal.Copy(
+                            IntPtr.Add(bitmapData.Scan0, y * bitmapData.Stride),
+                            destination,
+                            y * packedStride,
+                            packedStride);
+                    }
+                }
+            }
+            finally
+            {
+                source.UnlockBits(bitmapData);
+            }
         }
 
         private void RecordUsingCache()
         {
             try
             {
+                using Screenshot.CaptureSession captureSession = screenshot.CreateCaptureSession();
+
                 for (int i = 0; !stopRequested && (frameCount == 0 || i < frameCount); i++)
                 {
                     Stopwatch timer = Stopwatch.StartNew();
 
-                    Image img = screenshot.CaptureRectangle(CaptureRectangle);
+                    Image img = captureSession.CaptureRectangle(CaptureRectangle);
                     //DebugHelper.WriteLine("Screen capture: " + (int)timer.ElapsedMilliseconds);
 
                     imgCache.AddImageAsync(img);
@@ -203,7 +509,14 @@ namespace ShareX.ScreenCaptureLib
 
             if (ffmpeg != null)
             {
-                ffmpeg.Close();
+                if (frameInputMode != ShareXFrameInputMode.None)
+                {
+                    ffmpeg.CloseInput();
+                }
+                else
+                {
+                    ffmpeg.Close();
+                }
             }
         }
 
@@ -297,7 +610,10 @@ namespace ShareX.ScreenCaptureLib
 
         protected void OnRecordingStarted()
         {
-            RecordingStarted?.Invoke();
+            if (Interlocked.Exchange(ref recordingStartedRaised, 1) == 0)
+            {
+                RecordingStarted?.Invoke();
+            }
         }
 
         protected void OnEncodingProgressChanged(float progress)

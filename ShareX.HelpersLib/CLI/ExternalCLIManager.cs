@@ -26,6 +26,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.ExceptionServices;
 using System.Text;
 
 namespace ShareX.HelpersLib
@@ -40,6 +41,11 @@ namespace ShareX.HelpersLib
         protected Process process;
 
         public virtual int Open(string path, string args = null)
+        {
+            return Open(path, args, null);
+        }
+
+        public virtual int Open(string path, string args, Action<Stream> standardInputWriter)
         {
             if (File.Exists(path))
             {
@@ -73,7 +79,35 @@ namespace ShareX.HelpersLib
                     try
                     {
                         IsProcessRunning = true;
-                        process.WaitForExit();
+
+                        if (standardInputWriter != null)
+                        {
+                            Exception writerException = null;
+
+                            try
+                            {
+                                standardInputWriter(process.StandardInput.BaseStream);
+                            }
+                            catch (Exception e)
+                            {
+                                writerException = e;
+                            }
+                            finally
+                            {
+                                CloseInput();
+                            }
+
+                            process.WaitForExit();
+
+                            if (writerException != null)
+                            {
+                                ExceptionDispatchInfo.Capture(writerException).Throw();
+                            }
+                        }
+                        else
+                        {
+                            process.WaitForExit();
+                        }
                     }
                     finally
                     {
@@ -108,6 +142,20 @@ namespace ShareX.HelpersLib
             if (IsProcessRunning && process != null && process.StartInfo != null && process.StartInfo.RedirectStandardInput)
             {
                 process.StandardInput.WriteLine(input);
+            }
+        }
+
+        public void CloseInput()
+        {
+            if (IsProcessRunning && process != null && process.StartInfo != null && process.StartInfo.RedirectStandardInput)
+            {
+                try
+                {
+                    process.StandardInput.Close();
+                }
+                catch (InvalidOperationException)
+                {
+                }
             }
         }
 

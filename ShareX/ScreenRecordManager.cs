@@ -83,9 +83,36 @@ namespace ShareX
 
         private static void StartRecording(ScreenRecordOutput outputType, TaskSettings taskSettings, ScreenRecordStartMethod startMethod = ScreenRecordStartMethod.Region)
         {
+            ScreenRecordingHdrMode hdrMode = taskSettings.CaptureSettings.ScreenRecordUseHdrCapture
+                ? taskSettings.CaptureSettings.ScreenRecordHdrMode
+                : ScreenRecordingHdrMode.Disabled;
+
+            if (!Enum.IsDefined(hdrMode))
+            {
+                hdrMode = ScreenRecordingHdrMode.ToneMapToSdr;
+            }
+
             if (outputType == ScreenRecordOutput.GIF)
             {
                 taskSettings.CaptureSettings.FFmpegOptions.VideoCodec = FFmpegVideoCodec.gif;
+            }
+
+            if (hdrMode == ScreenRecordingHdrMode.NativeHdr10 &&
+                taskSettings.CaptureSettings.FFmpegOptions.IsAnimatedImage)
+            {
+                DebugHelper.WriteLine(
+                    "HDR video mode fallback | requested=NativeHdr10 effective=ToneMapToSdr " +
+                    "reason=animated image outputs cannot retain HDR");
+                hdrMode = ScreenRecordingHdrMode.ToneMapToSdr;
+            }
+
+            if (hdrMode == ScreenRecordingHdrMode.NativeHdr10 &&
+                taskSettings.CaptureSettings.ScreenRecordTwoPassEncoding)
+            {
+                DebugHelper.WriteLine(
+                    "HDR video mode fallback | requested=NativeHdr10 effective=ToneMapToSdr " +
+                    "reason=legacy two-pass encoding is SDR-only");
+                hdrMode = ScreenRecordingHdrMode.ToneMapToSdr;
             }
 
             if (taskSettings.CaptureSettings.FFmpegOptions.IsAnimatedImage)
@@ -104,8 +131,8 @@ namespace ShareX
                 fps = taskSettings.CaptureSettings.ScreenRecordFPS;
             }
 
-            DebugHelper.WriteLine("Starting screen recording. Video encoder: \"{0}\", Audio encoder: \"{1}\", FPS: {2}",
-                taskSettings.CaptureSettings.FFmpegOptions.VideoCodec.GetDescription(), taskSettings.CaptureSettings.FFmpegOptions.AudioCodec.GetDescription(), fps);
+            DebugHelper.WriteLine("Starting screen recording. Video encoder: \"{0}\", Audio encoder: \"{1}\", FPS: {2}, HDR mode: {3}",
+                taskSettings.CaptureSettings.FFmpegOptions.VideoCodec.GetDescription(), taskSettings.CaptureSettings.FFmpegOptions.AudioCodec.GetDescription(), fps, hdrMode);
 
             if (!TaskHelpers.CheckFFmpeg(taskSettings))
             {
@@ -177,6 +204,42 @@ namespace ShareX
                 return;
             }
 
+            Screenshot screenshot = TaskHelpers.GetScreenshot(taskSettings);
+            screenshot.CaptureCursor = taskSettings.CaptureSettings.ScreenRecordShowCursor;
+
+            if (hdrMode == ScreenRecordingHdrMode.NativeHdr10)
+            {
+                var compatibilityOptions = new ScreenRecordingOptions
+                {
+                    IsRecording = true,
+                    FFmpeg = taskSettings.CaptureSettings.FFmpegOptions
+                };
+                string fallbackReason = null;
+
+                if (!screenshot.UseHDRSupport)
+                {
+                    fallbackReason = "ShareX HDR capture support is disabled";
+                }
+                else if (!compatibilityOptions.SupportsShareXFrameInput)
+                {
+                    fallbackReason = taskSettings.CaptureSettings.FFmpegOptions.UseCustomCommands
+                        ? "custom FFmpeg commands are enabled"
+                        : "the selected source is not a built-in desktop capture source";
+                }
+                else if (!screenshot.ShouldUseHdrFrameCapture(captureRectangle))
+                {
+                    fallbackReason = "the selected region does not currently contain an active HDR display";
+                }
+
+                if (!string.IsNullOrEmpty(fallbackReason))
+                {
+                    DebugHelper.WriteLine(
+                        $"HDR video mode fallback | requested=NativeHdr10 effective=Disabled " +
+                        $"reason={fallbackReason}");
+                    hdrMode = ScreenRecordingHdrMode.Disabled;
+                }
+            }
+
             Program.Settings.ScreenRecordRegion = captureRectangle;
 
             IsRecording = true;
@@ -203,7 +266,11 @@ namespace ShareX
                 try
                 {
                     string extension;
-                    if (taskSettings.CaptureSettings.ScreenRecordTwoPassEncoding)
+                    if (hdrMode == ScreenRecordingHdrMode.NativeHdr10)
+                    {
+                        extension = "mp4";
+                    }
+                    else if (taskSettings.CaptureSettings.ScreenRecordTwoPassEncoding)
                     {
                         extension = "mp4";
                     }
@@ -272,11 +339,15 @@ namespace ShareX
                                 Duration = duration,
                                 OutputPath = path,
                                 CaptureArea = captureRectangle,
-                                DrawCursor = taskSettings.CaptureSettings.ScreenRecordShowCursor
+                                DrawCursor = taskSettings.CaptureSettings.ScreenRecordShowCursor,
+                                HdrMode = hdrMode,
+                                HdrMasteringMaximumNits = taskSettings.CaptureSettings.HdrSettings?
+                                    .FileOutput?.MasteringDisplayMaximumNits ??
+                                    HdrFileOutputSettings.DefaultMasteringDisplayMaximumNits,
+                                HdrMasteringMinimumNits = taskSettings.CaptureSettings.HdrSettings?
+                                    .FileOutput?.MasteringDisplayMinimumNits ??
+                                    HdrFileOutputSettings.DefaultMasteringDisplayMinimumNits
                             };
-
-                            Screenshot screenshot = TaskHelpers.GetScreenshot(taskSettings);
-                            screenshot.CaptureCursor = taskSettings.CaptureSettings.ScreenRecordShowCursor;
 
                             screenRecorder?.Dispose();
                             screenRecorder = new ScreenRecorder(ScreenRecordOutput.FFmpeg, options, screenshot, captureRectangle);
@@ -307,6 +378,15 @@ namespace ShareX
                 catch (Exception e)
                 {
                     DebugHelper.WriteException(e);
+
+                    if (hdrMode == ScreenRecordingHdrMode.NativeHdr10)
+                    {
+                        MessageBox.Show(
+                            e.Message,
+                            "ShareX - HDR video recording failed",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Error);
+                    }
                 }
 
                 if (taskSettings.CaptureSettings.ScreenRecordTwoPassEncoding && !abortRequested && screenRecorder != null && File.Exists(path))

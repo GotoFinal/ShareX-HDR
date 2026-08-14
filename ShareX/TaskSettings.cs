@@ -399,6 +399,8 @@ namespace ShareX
         public int ScreenRecordFPS = 30;
         public int GIFFPS = 15;
         public bool ScreenRecordShowCursor = true;
+        public bool ScreenRecordUseHdrCapture = true;
+        public ScreenRecordingHdrMode ScreenRecordHdrMode = ScreenRecordingHdrMode.ToneMapToSdr;
         public bool ScreenRecordAutoStart = true;
         public float ScreenRecordStartDelay = 0f;
         public bool ScreenRecordFixedDuration = false;
