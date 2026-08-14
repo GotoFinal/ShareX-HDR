@@ -28,6 +28,11 @@ public sealed class HdrCapturePerformanceTests
             return;
         }
 
+        // ShareX performs this asynchronously at startup. Keep shader/device
+        // initialization out of the capture-path numbers while retaining the
+        // first allocation and analysis cost for each captured size.
+        WindowsGraphicsCapture.Prewarm();
+
         Rectangle virtualScreen = SystemInformation.VirtualScreen;
         Rectangle monitor = Screen.PrimaryScreen?.Bounds ?? virtualScreen;
         Rectangle region = CenterRectangle(
@@ -103,17 +108,28 @@ public sealed class HdrCapturePerformanceTests
             var previewTimes = new List<double>();
             IReadOnlyList<PreviewSegmentProbe> previewContent =
                 Array.Empty<PreviewSegmentProbe>();
-            for (int previewIndex = 0; previewIndex < 3; previewIndex++)
+            Action<string> previousPerformanceSink =
+                GpuHdrToSdrToneMapper.PerformanceLogSink;
+            GpuHdrToSdrToneMapper.PerformanceLogSink = message =>
+                output.WriteLine(message);
+            try
             {
-                var previewTimer = Stopwatch.StartNew();
-                using Bitmap preview = document.CreateSdrPreview(settings);
-                previewTimer.Stop();
-                previewTimes.Add(previewTimer.Elapsed.TotalMilliseconds);
-
-                if (previewIndex == 2)
+                for (int previewIndex = 0; previewIndex < 3; previewIndex++)
                 {
-                    previewContent = MeasurePreviewSegments(preview, document.SourceSegments);
+                    var previewTimer = Stopwatch.StartNew();
+                    using Bitmap preview = document.CreateSdrPreview(settings);
+                    previewTimer.Stop();
+                    previewTimes.Add(previewTimer.Elapsed.TotalMilliseconds);
+
+                    if (previewIndex == 2)
+                    {
+                        previewContent = MeasurePreviewSegments(preview, document.SourceSegments);
+                    }
                 }
+            }
+            finally
+            {
+                GpuHdrToSdrToneMapper.PerformanceLogSink = previousPerformanceSink;
             }
 
             foreach (PreviewSegmentProbe segment in previewContent)
@@ -130,6 +146,95 @@ public sealed class HdrCapturePerformanceTests
                 $"normalize={normalizeTimer.Elapsed.TotalMilliseconds:F1} ms, " +
                 $"preview=[{string.Join(", ", previewTimes.Select(x => $"{x:F1}"))}] ms, " +
                 $"warmTotal={captureTimer.Elapsed.TotalMilliseconds + normalizeTimer.Elapsed.TotalMilliseconds + previewTimes[^1]:F1} ms.");
+
+            MeasureBackendComparison(document);
+        }
+    }
+
+    private void MeasureBackendComparison(HdrImageDocument source)
+    {
+        using HdrImageDocument cpuDocument = source.Clone();
+        using HdrImageDocument gpuDocument = source.Clone();
+        var cpuSettings = new HdrCaptureSettings
+        {
+            ProcessingBackend = HdrProcessingBackend.Cpu
+        };
+        var gpuSettings = new HdrCaptureSettings
+        {
+            ProcessingBackend = HdrProcessingBackend.Gpu
+        };
+
+        var cpuTimer = Stopwatch.StartNew();
+        using Bitmap cpuPreview = cpuDocument.CreateSdrPreview(cpuSettings);
+        cpuTimer.Stop();
+
+        var gpuTimer = Stopwatch.StartNew();
+        using Bitmap gpuPreview = gpuDocument.CreateSdrPreview(gpuSettings);
+        gpuTimer.Stop();
+
+        PreviewDifference difference = MeasurePreviewDifference(cpuPreview, gpuPreview);
+        output.WriteLine(
+            $"HDR backend comparison: cpuFirst={cpuTimer.Elapsed.TotalMilliseconds:F1} ms, " +
+            $"gpuFirst={gpuTimer.Elapsed.TotalMilliseconds:F1} ms, " +
+            $"sampledChannels={difference.SampleCount}, " +
+            $"meanAbsDifference={difference.MeanAbsoluteDifference:F3}, " +
+            $"maxAbsDifference={difference.MaximumAbsoluteDifference}.");
+    }
+
+    private static PreviewDifference MeasurePreviewDifference(Bitmap first, Bitmap second)
+    {
+        Assert.Equal(first.Size, second.Size);
+        const int sampleStep = 4;
+        Rectangle bounds = new Rectangle(Point.Empty, first.Size);
+        BitmapData firstData = first.LockBits(bounds, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        BitmapData secondData = second.LockBits(bounds, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+
+        try
+        {
+            int rowLength = checked(first.Width * 4);
+            byte[] firstRow = new byte[rowLength];
+            byte[] secondRow = new byte[rowLength];
+            long sampleCount = 0;
+            long absoluteDifference = 0;
+            int maximumDifference = 0;
+
+            for (int y = 0; y < first.Height; y += sampleStep)
+            {
+                int firstY = firstData.Stride >= 0 ? y : first.Height - 1 - y;
+                int secondY = secondData.Stride >= 0 ? y : second.Height - 1 - y;
+                Marshal.Copy(
+                    IntPtr.Add(firstData.Scan0, firstY * Math.Abs(firstData.Stride)),
+                    firstRow,
+                    0,
+                    rowLength);
+                Marshal.Copy(
+                    IntPtr.Add(secondData.Scan0, secondY * Math.Abs(secondData.Stride)),
+                    secondRow,
+                    0,
+                    rowLength);
+
+                for (int x = 0; x < first.Width; x += sampleStep)
+                {
+                    int offset = x * 4;
+                    for (int channel = 0; channel < 4; channel++)
+                    {
+                        int difference = Math.Abs(firstRow[offset + channel] - secondRow[offset + channel]);
+                        absoluteDifference += difference;
+                        maximumDifference = Math.Max(maximumDifference, difference);
+                        sampleCount++;
+                    }
+                }
+            }
+
+            return new PreviewDifference(
+                sampleCount,
+                sampleCount > 0 ? absoluteDifference / (double)sampleCount : 0d,
+                maximumDifference);
+        }
+        finally
+        {
+            second.UnlockBits(secondData);
+            first.UnlockBits(firstData);
         }
     }
 
@@ -272,6 +377,11 @@ public sealed class HdrCapturePerformanceTests
         long SampleCount,
         double MeanLuma,
         double NearWhitePercentage);
+
+    private readonly record struct PreviewDifference(
+        long SampleCount,
+        double MeanAbsoluteDifference,
+        int MaximumAbsoluteDifference);
 
     private static Rectangle CenterRectangle(Rectangle bounds, int width, int height)
     {

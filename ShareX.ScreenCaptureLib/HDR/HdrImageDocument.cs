@@ -2614,75 +2614,16 @@ namespace ShareX.ScreenCaptureLib
             HdrCaptureSettings settings,
             ref GpuHdrToSdrToneMapper.Session gpuSession)
         {
-            var analysisTasks = new Dictionary<int, Task<HdrToSdrToneMapper.ToneMapInputAnalysis>>();
-
-            if (gpuSession != null)
+            for (int segmentIndex = 0; segmentIndex < sourceSegments.Count; segmentIndex++)
             {
-                for (int segmentIndex = 0; segmentIndex < sourceSegments.Count; segmentIndex++)
-                {
-                    HdrCaptureSourceSegment segment = sourceSegments[segmentIndex];
-                    if (!segment.WasHdrActive)
-                    {
-                        continue;
-                    }
-
-                    int capturedSegmentIndex = segmentIndex;
-                    Rectangle rectangle = segment.DestinationRectangle;
-                    IntPtr segmentSource = (IntPtr)(sourceBase +
-                        rectangle.Y * pixels.RowBytes +
-                        rectangle.X * HdrRgba16FloatBuffer.BytesPerPixel);
-                    IReadOnlyList<HdrWindowRegion> segmentWindowRegions =
-                        GetSegmentWindowRegions(rectangle);
-                    analysisTasks.Add(
-                        segmentIndex,
-                        Task.Run(() => GetOrCreatePreviewAnalysis(
-                            capturedSegmentIndex,
-                            segmentSource,
-                            pixels.RowBytes,
-                            rectangle,
-                            segment,
-                            settings,
-                            segmentWindowRegions)));
-                }
-            }
-
-            Exception renderException = null;
-
-            try
-            {
-                for (int segmentIndex = 0; segmentIndex < sourceSegments.Count; segmentIndex++)
-                {
-                    HdrToSdrToneMapper.ToneMapInputAnalysis? analysis =
-                        analysisTasks.TryGetValue(segmentIndex, out Task<HdrToSdrToneMapper.ToneMapInputAnalysis> task)
-                            ? task.GetAwaiter().GetResult()
-                            : (HdrToSdrToneMapper.ToneMapInputAnalysis?)null;
-                    RenderSdrSegment(
-                        graphics,
-                        sourceBase,
-                        pixels,
-                        settings,
-                        sourceSegments[segmentIndex],
-                        analysis,
-                        ref gpuSession);
-                }
-            }
-            catch (Exception exception)
-            {
-                renderException = exception;
-                throw;
-            }
-            finally
-            {
-                try
-                {
-                    Task.WaitAll(new List<Task<HdrToSdrToneMapper.ToneMapInputAnalysis>>(
-                        analysisTasks.Values).ToArray());
-                }
-                catch when (renderException != null)
-                {
-                    // Preserve the original render failure, but do not leave a
-                    // task reading from the fixed source buffer after it unpins.
-                }
+                RenderSdrSegment(
+                    graphics,
+                    sourceBase,
+                    pixels,
+                    settings,
+                    segmentIndex,
+                    sourceSegments[segmentIndex],
+                    ref gpuSession);
             }
         }
 
@@ -2691,8 +2632,8 @@ namespace ShareX.ScreenCaptureLib
             byte* sourceBase,
             HdrRgba16FloatBuffer pixels,
             HdrCaptureSettings settings,
+            int segmentIndex,
             HdrCaptureSourceSegment segment,
-            HdrToSdrToneMapper.ToneMapInputAnalysis? analysis,
             ref GpuHdrToSdrToneMapper.Session gpuSession)
         {
             Rectangle rectangle = segment.DestinationRectangle;
@@ -2702,6 +2643,15 @@ namespace ShareX.ScreenCaptureLib
             IReadOnlyList<HdrWindowRegion> segmentWindowRegions = segment.WasHdrActive
                 ? GetSegmentWindowRegions(rectangle)
                 : null;
+            PreviewAnalysisCacheKey? analysisKey = segment.WasHdrActive
+                ? CreatePreviewAnalysisCacheKey(segmentIndex, rectangle, segment, settings)
+                : null;
+            HdrToSdrToneMapper.ToneMapInputAnalysis? analysis = null;
+            if (analysisKey.HasValue &&
+                TryGetPreviewAnalysis(analysisKey.Value, segment, out HdrToSdrToneMapper.ToneMapInputAnalysis cached))
+            {
+                analysis = cached;
+            }
 
             Bitmap segmentPreview = null;
             bool usedGpu = false;
@@ -2712,25 +2662,34 @@ namespace ShareX.ScreenCaptureLib
             {
                 try
                 {
-                    if (segment.WasHdrActive && analysis.HasValue)
+                    if (!segment.WasHdrActive)
+                    {
+                        segmentPreview = gpuSession.ToneMapKnownSdr(
+                            segmentSource,
+                            pixels.RowBytes,
+                            rectangle.Width,
+                            rectangle.Height,
+                            segment.SdrWhiteNits,
+                            preserveAlpha: true);
+                    }
+                    else if (analysis.HasValue)
                     {
                         HdrToSdrToneMapper.LogAnalysis(
                             "GPU",
                             settings,
                             analysis.Value,
                             segment.DisplayPeakNits);
-                    }
-
-                    segmentPreview = segment.WasHdrActive
-                        ? analysis.HasValue
-                            ? gpuSession.ToneMapAnalyzed(
+                        segmentPreview = gpuSession.ToneMapAnalyzed(
                                 segmentSource,
                                 pixels.RowBytes,
                                 rectangle.Width,
                                 rectangle.Height,
                                 analysis.Value,
-                                preserveAlpha: true)
-                            : gpuSession.ToneMap(
+                                preserveAlpha: true);
+                    }
+                    else
+                    {
+                        segmentPreview = gpuSession.ToneMap(
                             segmentSource,
                             pixels.RowBytes,
                             rectangle.Width,
@@ -2740,14 +2699,10 @@ namespace ShareX.ScreenCaptureLib
                             segment.DisplayPeakNits,
                             preserveAlpha: true,
                             segmentWindowRegions,
-                            out _)
-                        : gpuSession.ToneMapKnownSdr(
-                            segmentSource,
-                            pixels.RowBytes,
-                            rectangle.Width,
-                            rectangle.Height,
-                            segment.SdrWhiteNits,
-                            preserveAlpha: true);
+                            out HdrToSdrToneMapper.ToneMapInputAnalysis gpuAnalysis);
+                        analysis = gpuAnalysis;
+                        StorePreviewAnalysis(analysisKey.Value, gpuAnalysis, segment);
+                    }
                     usedGpu = true;
                 }
                 catch (Exception exception)
@@ -2758,6 +2713,18 @@ namespace ShareX.ScreenCaptureLib
                     gpuSession.Dispose();
                     gpuSession = null;
                 }
+            }
+
+            if (segmentPreview == null && segment.WasHdrActive && !analysis.HasValue)
+            {
+                analysis = GetOrCreatePreviewAnalysis(
+                    segmentIndex,
+                    segmentSource,
+                    pixels.RowBytes,
+                    rectangle,
+                    segment,
+                    settings,
+                    segmentWindowRegions);
             }
 
             if (segmentPreview == null && segment.WasHdrActive && analysis.HasValue)
@@ -2822,28 +2789,17 @@ namespace ShareX.ScreenCaptureLib
             HdrCaptureSettings settings,
             IReadOnlyList<HdrWindowRegion> segmentWindowRegions)
         {
-            var key = new PreviewAnalysisCacheKey(
-                Revision,
-                previewAnalysisGeneration,
+            PreviewAnalysisCacheKey key = CreatePreviewAnalysisCacheKey(
                 segmentIndex,
                 rectangle,
-                segment.SdrWhiteNits,
-                segment.DisplayPeakNits,
-                settings.HdrBrightnessNits,
-                settings.PeakBrightnessMode,
-                settings.ToneMappingMode,
-                settings.PaperWhiteMode,
-                settings.PaperWhiteNits);
-
-            lock (previewAnalysisSync)
+                segment,
+                settings);
+            if (TryGetPreviewAnalysis(
+                key,
+                segment,
+                out HdrToSdrToneMapper.ToneMapInputAnalysis cached))
             {
-                PreparePreviewAnalysisCache(key);
-                if (previewAnalysisCache.TryGetValue(key, out HdrToSdrToneMapper.ToneMapInputAnalysis cached))
-                {
-                    DebugHelper.WriteLine(
-                        $"HDR preview analysis cache | display={segment.DisplayDeviceName} hit=True");
-                    return cached;
-                }
+                return cached;
             }
 
             HdrToSdrToneMapper.ToneMapInputAnalysis analysis =
@@ -2858,6 +2814,50 @@ namespace ShareX.ScreenCaptureLib
                     preserveAlpha: true,
                     segmentWindowRegions);
 
+            StorePreviewAnalysis(key, analysis, segment);
+            return analysis;
+        }
+
+        private PreviewAnalysisCacheKey CreatePreviewAnalysisCacheKey(
+            int segmentIndex,
+            Rectangle rectangle,
+            HdrCaptureSourceSegment segment,
+            HdrCaptureSettings settings) => new PreviewAnalysisCacheKey(
+                Revision,
+                previewAnalysisGeneration,
+                segmentIndex,
+                rectangle,
+                segment.SdrWhiteNits,
+                segment.DisplayPeakNits,
+                settings.HdrBrightnessNits,
+                settings.PeakBrightnessMode,
+                settings.ToneMappingMode,
+                settings.PaperWhiteMode,
+                settings.PaperWhiteNits);
+
+        private bool TryGetPreviewAnalysis(
+            PreviewAnalysisCacheKey key,
+            HdrCaptureSourceSegment segment,
+            out HdrToSdrToneMapper.ToneMapInputAnalysis analysis)
+        {
+            lock (previewAnalysisSync)
+            {
+                PreparePreviewAnalysisCache(key);
+                bool hit = previewAnalysisCache.TryGetValue(key, out analysis);
+                if (hit)
+                {
+                    DebugHelper.WriteLine(
+                        $"HDR preview analysis cache | display={segment.DisplayDeviceName} hit=True");
+                }
+                return hit;
+            }
+        }
+
+        private void StorePreviewAnalysis(
+            PreviewAnalysisCacheKey key,
+            HdrToSdrToneMapper.ToneMapInputAnalysis analysis,
+            HdrCaptureSourceSegment segment)
+        {
             lock (previewAnalysisSync)
             {
                 PreparePreviewAnalysisCache(key);
@@ -2874,7 +2874,6 @@ namespace ShareX.ScreenCaptureLib
 
             DebugHelper.WriteLine(
                 $"HDR preview analysis cache | display={segment.DisplayDeviceName} hit=False");
-            return analysis;
         }
 
         private void PreparePreviewAnalysisCache(PreviewAnalysisCacheKey key)

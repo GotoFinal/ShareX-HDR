@@ -19,6 +19,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Numerics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -33,6 +34,7 @@ namespace ShareX.ScreenCaptureLib
     internal static unsafe class GpuHdrToSdrToneMapper
     {
         private const string ShaderResourceName = "ShareX.ScreenCaptureLib.HDR.HdrToneMap.hlsl";
+        private const string AnalysisShaderResourceName = "ShareX.ScreenCaptureLib.HDR.HdrAnalyze.hlsl";
         private const uint D3DCompileOptimizationLevel3 = 1u << 15;
         private const int MaximumCachedPreviewSizes = 2;
         private const int SharedSessionIdleMilliseconds = 10000;
@@ -40,6 +42,7 @@ namespace ShareX.ScreenCaptureLib
         private static readonly object sharedSessionSync = new object();
         private static Session sharedSession;
         private static System.Threading.Timer sharedSessionExpirationTimer;
+        internal static Action<string> PerformanceLogSink { get; set; }
 
         public static void PrewarmShaders()
         {
@@ -322,9 +325,10 @@ namespace ShareX.ScreenCaptureLib
             return (end - start) * 1000d / disjoint.Frequency;
         }
 
-        private static void LogPerformance(string message)
+        internal static void LogPerformance(string message)
         {
             DebugHelper.WriteLine(message);
+            PerformanceLogSink?.Invoke(message);
             if (string.Equals(
                 Environment.GetEnvironmentVariable("SHAREX_RUN_HDR_CAPTURE_PERFORMANCE_TESTS"),
                 "1",
@@ -340,12 +344,17 @@ namespace ShareX.ScreenCaptureLib
             public ID3D11Texture2D ToneMapMask { get; private set; }
             public ID3D11Texture2D Output { get; private set; }
             public ID3D11Texture2D StagingOutput { get; private set; }
+            public ID3D11Texture2D HeadroomBits { get; private set; }
+            public ID3D11Texture2D StagingHeadroomBits { get; private set; }
             public ID3D11VertexShader VertexShader { get; private set; }
             public ID3D11PixelShader PixelShader { get; private set; }
+            public ID3D11ComputeShader HeadroomShader { get; private set; }
             public ID3D11Buffer Constants { get; private set; }
+            public ID3D11Buffer HeadroomConstants { get; private set; }
             public ID3D11ShaderResourceView SourceView { get; private set; }
             public ID3D11ShaderResourceView MaskView { get; private set; }
             public ID3D11RenderTargetView OutputView { get; private set; }
+            public ID3D11UnorderedAccessView HeadroomBitsView { get; private set; }
             public ID3D11Query TimestampDisjoint { get; private set; }
             public ID3D11Query ShaderStartTimestamp { get; private set; }
             public ID3D11Query ShaderEndTimestamp { get; private set; }
@@ -378,14 +387,31 @@ namespace ShareX.ScreenCaptureLib
                         (uint)width,
                         (uint)height,
                         Format.B8G8R8A8_UNorm);
+                    uint headroomWordWidth = ((uint)width + 31u) / 32u;
+                    HeadroomBits = CreateTexture(
+                        device,
+                        headroomWordWidth,
+                        (uint)height,
+                        Format.R32_UInt,
+                        BindFlags.UnorderedAccess);
+                    StagingHeadroomBits = CreateStagingTexture(
+                        device,
+                        headroomWordWidth,
+                        (uint)height,
+                        Format.R32_UInt);
                     VertexShader = device.CreateVertexShader(shaders.Vertex);
                     PixelShader = device.CreatePixelShader(shaders.Pixel);
+                    HeadroomShader = device.CreateComputeShader(shaders.Headroom);
                     Constants = device.CreateBuffer(
                         new GpuToneMapConstants[1],
+                        BindFlags.ConstantBuffer);
+                    HeadroomConstants = device.CreateBuffer(
+                        new GpuHeadroomConstants[1],
                         BindFlags.ConstantBuffer);
                     SourceView = device.CreateShaderResourceView(ShaderInput);
                     MaskView = device.CreateShaderResourceView(ToneMapMask);
                     OutputView = device.CreateRenderTargetView(Output);
+                    HeadroomBitsView = device.CreateUnorderedAccessView(HeadroomBits);
                     TimestampDisjoint = device.CreateQuery(
                         new QueryDescription(QueryType.TimestampDisjoint, QueryFlags.None));
                     ShaderStartTimestamp = device.CreateQuery(
@@ -410,18 +436,28 @@ namespace ShareX.ScreenCaptureLib
                 TimestampDisjoint = null;
                 OutputView?.Dispose();
                 OutputView = null;
+                HeadroomBitsView?.Dispose();
+                HeadroomBitsView = null;
                 MaskView?.Dispose();
                 MaskView = null;
                 SourceView?.Dispose();
                 SourceView = null;
                 Constants?.Dispose();
                 Constants = null;
+                HeadroomConstants?.Dispose();
+                HeadroomConstants = null;
+                HeadroomShader?.Dispose();
+                HeadroomShader = null;
                 PixelShader?.Dispose();
                 PixelShader = null;
                 VertexShader?.Dispose();
                 VertexShader = null;
                 StagingOutput?.Dispose();
                 StagingOutput = null;
+                StagingHeadroomBits?.Dispose();
+                StagingHeadroomBits = null;
+                HeadroomBits?.Dispose();
+                HeadroomBits = null;
                 Output?.Dispose();
                 Output = null;
                 ToneMapMask?.Dispose();
@@ -466,26 +502,62 @@ namespace ShareX.ScreenCaptureLib
                 out HdrToSdrToneMapper.ToneMapInputAnalysis analysis)
             {
                 ObjectDisposedException.ThrowIf(disposed, this);
-                Stopwatch analysisTimer = Stopwatch.StartNew();
-                analysis = HdrToSdrToneMapper.AnalyzeToneMapInput(
-                    source,
-                    sourceRowPitch,
+                ToneMapResources resources = GetResources(
                     width,
                     height,
-                    settings,
-                    sdrWhiteNits,
-                    displayMaxLuminanceNits,
-                    preserveAlpha,
-                    windowRegions);
+                    out double resourceCreationMilliseconds);
+                Stopwatch uploadTimer = Stopwatch.StartNew();
+                context.UpdateSubresource(
+                    resources.ShaderInput,
+                    0,
+                    null,
+                    source,
+                    (uint)sourceRowPitch,
+                    0);
+                uploadTimer.Stop();
+                Stopwatch analysisTimer = Stopwatch.StartNew();
+                if (settings.ToneMappingMode == HdrToneMappingMode.Uniform)
+                {
+                    analysis = HdrToSdrToneMapper.AnalyzeToneMapInput(
+                        source,
+                        sourceRowPitch,
+                        width,
+                        height,
+                        settings,
+                        sdrWhiteNits,
+                        displayMaxLuminanceNits,
+                        preserveAlpha,
+                        windowRegions);
+                }
+                else
+                {
+                    byte[] headroomMask = CreateHeadroomMask(
+                        resources,
+                        width,
+                        height,
+                        HdrToSdrToneMapper.GetHeadroomThresholdScRgb(settings, sdrWhiteNits));
+                    analysis = HdrToSdrToneMapper.AnalyzeToneMapInputWithHeadroomMask(
+                        source,
+                        sourceRowPitch,
+                        width,
+                        height,
+                        settings,
+                        sdrWhiteNits,
+                        displayMaxLuminanceNits,
+                        headroomMask,
+                        preserveAlpha,
+                        windowRegions);
+                }
                 analysisTimer.Stop();
                 HdrToSdrToneMapper.LogAnalysis("GPU", settings, analysis, displayMaxLuminanceNits);
-                return ToneMapAnalyzedInput(
-                    source,
-                    sourceRowPitch,
+                return ToneMapUploadedAnalyzed(
                     width,
                     height,
                     analysis,
                     preserveAlpha,
+                    resources,
+                    resourceCreationMilliseconds,
+                    uploadTimer.Elapsed.TotalMilliseconds,
                     analysisTimer.Elapsed.TotalMilliseconds);
             }
 
@@ -529,6 +601,27 @@ namespace ShareX.ScreenCaptureLib
                     (uint)sourceRowPitch,
                     0);
                 uploadTimer.Stop();
+                return ToneMapUploadedAnalyzed(
+                    width,
+                    height,
+                    analysis,
+                    preserveAlpha,
+                    resources,
+                    resourceCreationMilliseconds,
+                    uploadTimer.Elapsed.TotalMilliseconds,
+                    analysisMilliseconds);
+            }
+
+            private Bitmap ToneMapUploadedAnalyzed(
+                int width,
+                int height,
+                HdrToSdrToneMapper.ToneMapInputAnalysis analysis,
+                bool preserveAlpha,
+                ToneMapResources resources,
+                double resourceCreationMilliseconds,
+                double uploadMilliseconds,
+                double analysisMilliseconds)
+            {
                 Stopwatch renderTimer = Stopwatch.StartNew();
                 Bitmap bitmap = GpuHdrToSdrToneMapper.ToneMapAnalyzed(
                     device,
@@ -541,14 +634,128 @@ namespace ShareX.ScreenCaptureLib
                     resources,
                     sourceAlreadyUploaded: true,
                     resourceCreationMilliseconds: resourceCreationMilliseconds,
-                    sourceUploadMilliseconds: uploadTimer.Elapsed.TotalMilliseconds);
+                    sourceUploadMilliseconds: uploadMilliseconds);
                 renderTimer.Stop();
                 LogPerformance(
                     $"HDR GPU preview input | size={width}x{height} " +
                     $"analysisMs={analysisMilliseconds:F1} " +
-                    $"uploadMs={uploadTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"uploadMs={uploadMilliseconds:F1} " +
                     $"renderMs={renderTimer.Elapsed.TotalMilliseconds:F1}");
                 return bitmap;
+            }
+
+            private byte[] CreateHeadroomMask(
+                ToneMapResources resources,
+                int width,
+                int height,
+                float headroomThreshold)
+            {
+                uint wordsPerRow = ((uint)width + 31u) / 32u;
+                var constants = new GpuHeadroomConstants(
+                    headroomThreshold,
+                    width,
+                    height);
+                Stopwatch dispatchTimer = Stopwatch.StartNew();
+                context.UpdateSubresource(
+                    resources.HeadroomConstants,
+                    0,
+                    null,
+                    (IntPtr)(&constants),
+                    0,
+                    0);
+                context.CSSetShader(resources.HeadroomShader);
+                context.CSSetConstantBuffer(0, resources.HeadroomConstants);
+                context.CSSetShaderResource(0, resources.SourceView);
+                context.CSSetUnorderedAccessView(0, resources.HeadroomBitsView);
+                context.Dispatch(
+                    (wordsPerRow + 7u) / 8u,
+                    ((uint)height + 7u) / 8u,
+                    1);
+                context.CSSetUnorderedAccessView(0, null);
+                context.CSSetShaderResource(0, null);
+                context.CSSetConstantBuffer(0, null);
+                context.CSSetShader(null);
+                context.CopyResource(resources.StagingHeadroomBits, resources.HeadroomBits);
+                dispatchTimer.Stop();
+
+                Stopwatch mapTimer = Stopwatch.StartNew();
+                MappedSubresource mapped = context.Map(
+                    resources.StagingHeadroomBits,
+                    0,
+                    MapMode.Read,
+                    Vortice.Direct3D11.MapFlags.None);
+                mapTimer.Stop();
+
+                try
+                {
+                    Stopwatch expandTimer = Stopwatch.StartNew();
+                    byte[] mask = new byte[checked(width * height)];
+
+                    for (int y = 0; y < height; y++)
+                    {
+                        uint* words = (uint*)((byte*)mapped.DataPointer + y * mapped.RowPitch);
+                        int rowOffset = y * width;
+
+                        for (uint wordX = 0; wordX < wordsPerRow; wordX++)
+                        {
+                            uint bits = words[wordX];
+                            int firstX = checked((int)wordX * 32);
+
+                            while (bits != 0)
+                            {
+                                int bit = BitOperations.TrailingZeroCount(bits);
+                                int x = firstX + bit;
+                                if (x < width)
+                                {
+                                    mask[rowOffset + x] = byte.MaxValue;
+                                }
+
+                                bits &= bits - 1;
+                            }
+                        }
+                    }
+
+                    expandTimer.Stop();
+                    LogPerformance(
+                        $"HDR GPU headroom mask | size={width}x{height} " +
+                        $"dispatchCopyMs={dispatchTimer.Elapsed.TotalMilliseconds:F1} " +
+                        $"mapWaitMs={mapTimer.Elapsed.TotalMilliseconds:F1} " +
+                        $"expandMs={expandTimer.Elapsed.TotalMilliseconds:F1}");
+                    return mask;
+                }
+                finally
+                {
+                    context.Unmap(resources.StagingHeadroomBits, 0);
+                }
+            }
+
+            internal byte[] CreateHeadroomMaskForTests(
+                HdrRgba16FloatBuffer source,
+                float headroomThreshold)
+            {
+                ArgumentNullException.ThrowIfNull(source);
+                ObjectDisposedException.ThrowIf(disposed, this);
+                ToneMapResources resources = GetResources(
+                    source.Width,
+                    source.Height,
+                    out _);
+
+                fixed (byte* sourcePointer = source.GetWritablePixelSpan())
+                {
+                    context.UpdateSubresource(
+                        resources.ShaderInput,
+                        0,
+                        null,
+                        (IntPtr)sourcePointer,
+                        (uint)source.RowBytes,
+                        0);
+                }
+
+                return CreateHeadroomMask(
+                    resources,
+                    source.Width,
+                    source.Height,
+                    headroomThreshold);
             }
 
             public Bitmap ToneMapKnownSdr(
@@ -802,17 +1009,28 @@ namespace ShareX.ScreenCaptureLib
         private static CompiledShaders CompileShaders()
         {
             Assembly assembly = typeof(GpuHdrToSdrToneMapper).Assembly;
-            using Stream stream = assembly.GetManifestResourceStream(ShaderResourceName)
-                ?? throw new InvalidOperationException("The embedded HDR GPU shader was not found.");
-            using StreamReader reader = new StreamReader(stream, Encoding.UTF8);
-            string source = reader.ReadToEnd();
+            string source = ReadEmbeddedShader(assembly, ShaderResourceName);
+            string analysisSource = ReadEmbeddedShader(assembly, AnalysisShaderResourceName);
 
             return new CompiledShaders(
-                CompileShader(source, "VertexMain", "vs_5_0"),
-                CompileShader(source, "PixelMain", "ps_5_0"));
+                CompileShader(source, ShaderResourceName, "VertexMain", "vs_5_0"),
+                CompileShader(source, ShaderResourceName, "PixelMain", "ps_5_0"),
+                CompileShader(analysisSource, AnalysisShaderResourceName, "HeadroomMain", "cs_5_0"));
         }
 
-        private static byte[] CompileShader(string source, string entryPoint, string target)
+        private static string ReadEmbeddedShader(Assembly assembly, string resourceName)
+        {
+            using Stream stream = assembly.GetManifestResourceStream(resourceName)
+                ?? throw new InvalidOperationException($"The embedded GPU shader '{resourceName}' was not found.");
+            using StreamReader reader = new StreamReader(stream, Encoding.UTF8);
+            return reader.ReadToEnd();
+        }
+
+        private static byte[] CompileShader(
+            string source,
+            string sourceName,
+            string entryPoint,
+            string target)
         {
             byte[] sourceBytes = Encoding.UTF8.GetBytes(source);
             IntPtr code = IntPtr.Zero;
@@ -823,7 +1041,7 @@ namespace ShareX.ScreenCaptureLib
                 int result = D3DCompile(
                     (IntPtr)sourcePointer,
                     (UIntPtr)sourceBytes.Length,
-                    ShaderResourceName,
+                    sourceName,
                     IntPtr.Zero,
                     IntPtr.Zero,
                     entryPoint,
@@ -904,15 +1122,37 @@ namespace ShareX.ScreenCaptureLib
             }
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        private readonly struct GpuHeadroomConstants
+        {
+            public readonly float HeadroomThreshold;
+            public readonly uint ImageWidth;
+            public readonly uint ImageHeight;
+            public readonly uint WordsPerRow;
+
+            public GpuHeadroomConstants(
+                float headroomThreshold,
+                int imageWidth,
+                int imageHeight)
+            {
+                HeadroomThreshold = headroomThreshold;
+                ImageWidth = checked((uint)imageWidth);
+                ImageHeight = checked((uint)imageHeight);
+                WordsPerRow = (ImageWidth + 31u) / 32u;
+            }
+        }
+
         private sealed class CompiledShaders
         {
             public byte[] Vertex { get; }
             public byte[] Pixel { get; }
+            public byte[] Headroom { get; }
 
-            public CompiledShaders(byte[] vertex, byte[] pixel)
+            public CompiledShaders(byte[] vertex, byte[] pixel, byte[] headroom)
             {
                 Vertex = vertex;
                 Pixel = pixel;
+                Headroom = headroom;
             }
         }
 

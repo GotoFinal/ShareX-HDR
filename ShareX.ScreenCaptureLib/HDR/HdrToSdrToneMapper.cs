@@ -14,8 +14,10 @@
 
 using ShareX.HelpersLib;
 using System;
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Linq;
@@ -306,7 +308,8 @@ namespace ShareX.ScreenCaptureLib
                 paperWhiteScRgb,
                 toneMappingMode,
                 windowRegions,
-                peakSamples: null);
+                peakSamples: null,
+                headroomMask: null);
         }
 
         private static byte[] CreateToneMapMaskR8WithWindowRegionsCore(
@@ -317,7 +320,8 @@ namespace ShareX.ScreenCaptureLib
             float paperWhiteScRgb,
             HdrToneMappingMode toneMappingMode,
             IReadOnlyList<HdrWindowRegion> windowRegions,
-            PeakSampleGrid peakSamples)
+            PeakSampleGrid peakSamples,
+            byte[] headroomMask)
         {
             if (source == IntPtr.Zero)
             {
@@ -329,35 +333,67 @@ namespace ShareX.ScreenCaptureLib
                 throw new ArgumentOutOfRangeException(nameof(sourceRowPitch));
             }
 
-            byte[] mask = new byte[checked(width * height)];
+            int maskLength = checked(width * height);
+            byte[] mask = headroomMask ?? new byte[maskLength];
+            if (mask.Length < maskLength)
+            {
+                throw new ArgumentException("The headroom mask is too small.", nameof(headroomMask));
+            }
+
             if (toneMappingMode == HdrToneMappingMode.Uniform)
             {
                 Array.Fill(mask, byte.MaxValue);
                 return mask;
             }
 
-            HdrFrameAnalysis analysis = AnalyzeFrame(
-                (byte*)source,
-                sourceRowPitch,
-                width,
-                height,
-                paperWhiteScRgb,
-                mask,
-                peakSamples);
+            Stopwatch frameAnalysisTimer = Stopwatch.StartNew();
+            HdrFrameAnalysis analysis = headroomMask == null
+                ? AnalyzeFrame(
+                    (byte*)source,
+                    sourceRowPitch,
+                    width,
+                    height,
+                    paperWhiteScRgb,
+                    mask,
+                    peakSamples)
+                : AnalyzeFrameFromHeadroomMask(
+                    (byte*)source,
+                    sourceRowPitch,
+                    width,
+                    height,
+                    paperWhiteScRgb,
+                    mask);
+            frameAnalysisTimer.Stop();
+            Stopwatch windowAnalysisTimer = Stopwatch.StartNew();
             List<WindowToneMapDecision> windowDecisions = AnalyzeWindowBoundaries(
                 width,
                 height,
                 toneMappingMode,
                 windowRegions,
-                mask);
+                mask,
+                logGpuPerformance: headroomMask != null);
+            windowAnalysisTimer.Stop();
 
+            Stopwatch maskSynthesisTimer = Stopwatch.StartNew();
             analysis.ApplyToneMapAmounts(mask, width, height);
+            maskSynthesisTimer.Stop();
 
+            Stopwatch windowApplyTimer = Stopwatch.StartNew();
             ApplyWindowBoundaries(
                 width,
                 toneMappingMode,
                 windowDecisions,
                 mask);
+            windowApplyTimer.Stop();
+            if (headroomMask != null)
+            {
+                GpuHdrToSdrToneMapper.LogPerformance(
+                    $"HDR GPU analysis postprocess | size={width}x{height} " +
+                    $"frameMs={frameAnalysisTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"windowsMs={windowAnalysisTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"maskMs={maskSynthesisTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"windowApplyMs={windowApplyTimer.Elapsed.TotalMilliseconds:F1}");
+            }
             return mask;
         }
 
@@ -510,6 +546,20 @@ namespace ShareX.ScreenCaptureLib
             return HdrCaptureSettings.DefaultCustomPeakBrightnessNits;
         }
 
+        internal static float GetHeadroomThresholdScRgb(
+            HdrCaptureSettings settings,
+            float sdrWhiteNits)
+        {
+            ArgumentNullException.ThrowIfNull(settings);
+            float paperWhiteNits = Math.Clamp(
+                settings.PaperWhiteMode == HdrPaperWhiteMode.Custom
+                    ? settings.PaperWhiteNits
+                    : sdrWhiteNits,
+                HdrCaptureSettings.MinimumBrightnessNits,
+                HdrCaptureSettings.MaximumPaperWhiteNits);
+            return paperWhiteNits / ScRgbNitsPerUnit * HdrDetectionMargin;
+        }
+
         internal static ToneMapInputAnalysis AnalyzeToneMapInput(
             IntPtr source,
             int sourceRowPitch,
@@ -520,6 +570,57 @@ namespace ShareX.ScreenCaptureLib
             float displayMaxLuminanceNits,
             bool preserveAlpha = false,
             IReadOnlyList<HdrWindowRegion> windowRegions = null)
+        {
+            return AnalyzeToneMapInputCore(
+                source,
+                sourceRowPitch,
+                width,
+                height,
+                settings,
+                sdrWhiteNits,
+                displayMaxLuminanceNits,
+                preserveAlpha,
+                windowRegions,
+                headroomMask: null);
+        }
+
+        internal static ToneMapInputAnalysis AnalyzeToneMapInputWithHeadroomMask(
+            IntPtr source,
+            int sourceRowPitch,
+            int width,
+            int height,
+            HdrCaptureSettings settings,
+            float sdrWhiteNits,
+            float displayMaxLuminanceNits,
+            byte[] headroomMask,
+            bool preserveAlpha = false,
+            IReadOnlyList<HdrWindowRegion> windowRegions = null)
+        {
+            ArgumentNullException.ThrowIfNull(headroomMask);
+            return AnalyzeToneMapInputCore(
+                source,
+                sourceRowPitch,
+                width,
+                height,
+                settings,
+                sdrWhiteNits,
+                displayMaxLuminanceNits,
+                preserveAlpha,
+                windowRegions,
+                headroomMask);
+        }
+
+        private static ToneMapInputAnalysis AnalyzeToneMapInputCore(
+            IntPtr source,
+            int sourceRowPitch,
+            int width,
+            int height,
+            HdrCaptureSettings settings,
+            float sdrWhiteNits,
+            float displayMaxLuminanceNits,
+            bool preserveAlpha,
+            IReadOnlyList<HdrWindowRegion> windowRegions,
+            byte[] headroomMask)
         {
             ArgumentNullException.ThrowIfNull(settings);
 
@@ -537,13 +638,15 @@ namespace ShareX.ScreenCaptureLib
                 HdrCaptureSettings.MaximumPaperWhiteNits);
             float paperWhiteScRgb = paperWhiteNits / ScRgbNitsPerUnit;
             PeakSampleGrid peakSamples = settings.PeakBrightnessMode == HdrPeakBrightnessMode.Automatic &&
-                settings.ToneMappingMode != HdrToneMappingMode.Uniform
+                settings.ToneMappingMode != HdrToneMappingMode.Uniform &&
+                headroomMask == null
                 ? new PeakSampleGrid(
                     width,
                     height,
                     paperWhiteNits,
                     preserveAlpha)
                 : null;
+            Stopwatch maskTimer = Stopwatch.StartNew();
             byte[] toneMapMask = settings.ToneMappingMode != HdrToneMappingMode.Uniform
                 ? CreateToneMapMaskR8WithWindowRegionsCore(
                     source,
@@ -553,8 +656,11 @@ namespace ShareX.ScreenCaptureLib
                     paperWhiteScRgb,
                     settings.ToneMappingMode,
                     windowRegions,
-                    peakSamples)
+                    peakSamples,
+                    headroomMask)
                 : null;
+            maskTimer.Stop();
+            Stopwatch peakTimer = Stopwatch.StartNew();
             ContentPeakMeasurement measurement = settings.PeakBrightnessMode == HdrPeakBrightnessMode.Automatic
                 ? peakSamples != null
                     ? MeasureContentPeak(
@@ -571,6 +677,7 @@ namespace ShareX.ScreenCaptureLib
                         settings.ToneMappingMode,
                         preserveAlpha)
                 : ContentPeakMeasurement.NotMeasured;
+            peakTimer.Stop();
             ToneMapParameters parameters = CreateToneMapParameters(
                 settings.HdrBrightnessNits,
                 settings.PeakBrightnessMode,
@@ -580,6 +687,13 @@ namespace ShareX.ScreenCaptureLib
                 measurement.EffectivePeakNits,
                 settings.PaperWhiteMode,
                 settings.PaperWhiteNits);
+            if (headroomMask != null)
+            {
+                GpuHdrToSdrToneMapper.LogPerformance(
+                    $"HDR GPU analysis stages | size={width}x{height} " +
+                    $"maskMs={maskTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"peakMs={peakTimer.Elapsed.TotalMilliseconds:F1}");
+            }
             return new ToneMapInputAnalysis(parameters, toneMapMask, measurement);
         }
 
@@ -942,12 +1056,82 @@ namespace ShareX.ScreenCaptureLib
                 tilesY));
         }
 
+        private static HdrFrameAnalysis AnalyzeFrameFromHeadroomMask(
+            byte* source,
+            int sourceRowPitch,
+            int width,
+            int height,
+            float paperWhiteScRgb,
+            byte[] headroomMask)
+        {
+            ArgumentNullException.ThrowIfNull(headroomMask);
+            if (headroomMask.Length < checked(width * height))
+            {
+                throw new ArgumentException("The headroom mask is too small.", nameof(headroomMask));
+            }
+
+            int tilesX = (width + TileSize - 1) / TileSize;
+            int tilesY = (height + TileSize - 1) / TileSize;
+            bool[] seedTiles = new bool[tilesX * tilesY];
+
+            Stopwatch seedTimer = Stopwatch.StartNew();
+            Parallel.For(0, tilesY, tileY =>
+            {
+                int top = tileY * TileSize;
+                int bottom = Math.Min(height, top + TileSize);
+
+                for (int tileX = 0; tileX < tilesX; tileX++)
+                {
+                    int left = tileX * TileSize;
+                    int right = Math.Min(width, left + TileSize);
+                    int headroomPixelCount = 0;
+
+                    for (int y = top; y < bottom; y++)
+                    {
+                        int maskIndex = y * width + left;
+                        for (int x = left; x < right; x++)
+                        {
+                            if (headroomMask[maskIndex++] == byte.MaxValue)
+                            {
+                                headroomPixelCount++;
+                            }
+                        }
+                    }
+
+                    int tilePixels = (right - left) * (bottom - top);
+                    int minimumHeadroomPixels = Math.Max(2, (tilePixels + 99) / 100);
+                    seedTiles[tileY * tilesX + tileX] =
+                        headroomPixelCount >= minimumHeadroomPixels;
+                }
+            });
+            seedTimer.Stop();
+
+            Stopwatch regionTimer = Stopwatch.StartNew();
+            List<ToneMapRegion> regions = BuildToneMapRegions(
+                source,
+                sourceRowPitch,
+                width,
+                height,
+                paperWhiteScRgb,
+                seedTiles,
+                tilesX,
+                tilesY);
+            regionTimer.Stop();
+            GpuHdrToSdrToneMapper.LogPerformance(
+                $"HDR GPU frame analysis | size={width}x{height} " +
+                $"seedMs={seedTimer.Elapsed.TotalMilliseconds:F1} " +
+                $"regionsMs={regionTimer.Elapsed.TotalMilliseconds:F1} " +
+                $"regions={regions.Count}");
+            return new HdrFrameAnalysis(regions);
+        }
+
         private static List<WindowToneMapDecision> AnalyzeWindowBoundaries(
             int width,
             int height,
             HdrToneMappingMode toneMappingMode,
             IReadOnlyList<HdrWindowRegion> windowRegions,
-            byte[] headroomMask)
+            byte[] headroomMask,
+            bool logGpuPerformance)
         {
             var decisions = new List<WindowToneMapDecision>();
             if (windowRegions == null || windowRegions.Count == 0)
@@ -955,11 +1139,14 @@ namespace ShareX.ScreenCaptureLib
                 return decisions;
             }
 
+            Stopwatch visibleTimer = Stopwatch.StartNew();
             List<VisibleWindowRegion> visibleWindows = BuildVisibleWindowRegions(
                 width,
                 height,
                 windowRegions);
+            visibleTimer.Stop();
 
+            Stopwatch decisionTimer = Stopwatch.StartNew();
             foreach (VisibleWindowRegion window in visibleWindows)
             {
                 bool forceHdr = window.Region.PromotionKind == HdrWindowPromotionKind.ForceHdr;
@@ -983,6 +1170,14 @@ namespace ShareX.ScreenCaptureLib
                     window.Rectangles,
                     toneMappingMode == HdrToneMappingMode.PerWindow);
                 decisions.Add(new WindowToneMapDecision(window, forceHdr, isHdr));
+            }
+            decisionTimer.Stop();
+            if (logGpuPerformance)
+            {
+                GpuHdrToSdrToneMapper.LogPerformance(
+                    $"HDR GPU window analysis | windows={visibleWindows.Count} " +
+                    $"visibleMs={visibleTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"decisionMs={decisionTimer.Elapsed.TotalMilliseconds:F1}");
             }
 
             return decisions;
@@ -1197,15 +1392,48 @@ namespace ShareX.ScreenCaptureLib
             IReadOnlyList<Rectangle> rectangles,
             bool requireWindowCoverage)
         {
+            if (!requireWindowCoverage)
+            {
+                int remainingHeadroomPixels = 2;
+
+                foreach (Rectangle rectangle in rectangles)
+                {
+                    for (int y = rectangle.Top; y < rectangle.Bottom; y++)
+                    {
+                        ReadOnlySpan<byte> row = headroomMask.AsSpan(
+                            y * width + rectangle.Left,
+                            rectangle.Width);
+
+                        while (row.Length > 0)
+                        {
+                            int headroomIndex = row.IndexOf(byte.MaxValue);
+                            if (headroomIndex < 0)
+                            {
+                                break;
+                            }
+
+                            if (--remainingHeadroomPixels == 0)
+                            {
+                                return true;
+                            }
+
+                            row = row[(headroomIndex + 1)..];
+                        }
+                    }
+                }
+
+                return false;
+            }
+
             long pixelCount = 0;
             foreach (Rectangle rectangle in rectangles)
             {
                 pixelCount += (long)rectangle.Width * rectangle.Height;
             }
 
-            int requiredPixels = requireWindowCoverage
-                ? (int)Math.Min(int.MaxValue, Math.Max(2L, (pixelCount + 99L) / 100L))
-                : 2;
+            int requiredPixels = (int)Math.Min(
+                int.MaxValue,
+                Math.Max(2L, (pixelCount + 99L) / 100L));
             int headroomPixels = 0;
 
             foreach (Rectangle rectangle in rectangles)
@@ -1407,23 +1635,33 @@ namespace ShareX.ScreenCaptureLib
             List<float> strengths = new List<float>(Math.Max(0, searchEnd - searchStart + 1));
             float strongest = 0f;
             int strongestPosition = searchStart;
+            float[] differenceBuffer = ArrayPool<float>.Shared.Rent(
+                Math.Max(1, (right - left + 1) / 2));
 
-            for (int y = searchStart; y <= searchEnd; y++)
+            try
             {
-                float strength = GetHorizontalBoundaryStrength(
-                    source,
-                    sourceRowPitch,
-                    paperWhiteScRgb,
-                    left,
-                    right,
-                    y);
-                strengths.Add(strength);
-
-                if (strength > strongest)
+                for (int y = searchStart; y <= searchEnd; y++)
                 {
-                    strongest = strength;
-                    strongestPosition = y;
+                    float strength = GetHorizontalBoundaryStrength(
+                        source,
+                        sourceRowPitch,
+                        paperWhiteScRgb,
+                        left,
+                        right,
+                        y,
+                        differenceBuffer);
+                    strengths.Add(strength);
+
+                    if (strength > strongest)
+                    {
+                        strongest = strength;
+                        strongestPosition = y;
+                    }
                 }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(differenceBuffer);
             }
 
             return CreateBoundaryResult(strengths, strongest, strongestPosition);
@@ -1441,23 +1679,33 @@ namespace ShareX.ScreenCaptureLib
             List<float> strengths = new List<float>(Math.Max(0, searchEnd - searchStart + 1));
             float strongest = 0f;
             int strongestPosition = searchStart;
+            float[] differenceBuffer = ArrayPool<float>.Shared.Rent(
+                Math.Max(1, (bottom - top + 1) / 2));
 
-            for (int x = searchStart; x <= searchEnd; x++)
+            try
             {
-                float strength = GetVerticalBoundaryStrength(
-                    source,
-                    sourceRowPitch,
-                    paperWhiteScRgb,
-                    top,
-                    bottom,
-                    x);
-                strengths.Add(strength);
-
-                if (strength > strongest)
+                for (int x = searchStart; x <= searchEnd; x++)
                 {
-                    strongest = strength;
-                    strongestPosition = x;
+                    float strength = GetVerticalBoundaryStrength(
+                        source,
+                        sourceRowPitch,
+                        paperWhiteScRgb,
+                        top,
+                        bottom,
+                        x,
+                        differenceBuffer);
+                    strengths.Add(strength);
+
+                    if (strength > strongest)
+                    {
+                        strongest = strength;
+                        strongestPosition = x;
+                    }
                 }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(differenceBuffer);
             }
 
             return CreateBoundaryResult(strengths, strongest, strongestPosition);
@@ -1482,20 +1730,22 @@ namespace ShareX.ScreenCaptureLib
             float paperWhiteScRgb,
             int left,
             int right,
-            int y)
+            int y,
+            float[] differences)
         {
             ushort* previous = (ushort*)(source + (y - 1) * sourceRowPitch) + left * 4;
             ushort* current = (ushort*)(source + y * sourceRowPitch) + left * 4;
-            List<float> differences = new List<float>((right - left + 1) / 2);
+            int differenceCount = 0;
 
             for (int x = left; x < right; x += 2)
             {
-                differences.Add(GetPixelDifference(previous, current) / paperWhiteScRgb);
+                differences[differenceCount++] =
+                    GetPixelDifference(previous, current) / paperWhiteScRgb;
                 previous += 8;
                 current += 8;
             }
 
-            return GetMedian(differences);
+            return GetMedian(differences.AsSpan(0, differenceCount));
         }
 
         private static float GetVerticalBoundaryStrength(
@@ -1504,29 +1754,80 @@ namespace ShareX.ScreenCaptureLib
             float paperWhiteScRgb,
             int top,
             int bottom,
-            int x)
+            int x,
+            float[] differences)
         {
-            List<float> differences = new List<float>((bottom - top + 1) / 2);
+            int differenceCount = 0;
 
             for (int y = top; y < bottom; y += 2)
             {
                 ushort* previous = (ushort*)(source + y * sourceRowPitch) + (x - 1) * 4;
                 ushort* current = previous + 4;
-                differences.Add(GetPixelDifference(previous, current) / paperWhiteScRgb);
+                differences[differenceCount++] =
+                    GetPixelDifference(previous, current) / paperWhiteScRgb;
             }
 
-            return GetMedian(differences);
+            return GetMedian(differences.AsSpan(0, differenceCount));
         }
 
-        private static float GetMedian(List<float> values)
+        private static float GetMedian(Span<float> values)
         {
-            if (values.Count == 0)
+            if (values.Length == 0)
             {
                 return 0f;
             }
 
-            values.Sort();
-            return values[values.Count / 2];
+            int target = values.Length / 2;
+            int left = 0;
+            int right = values.Length - 1;
+
+            while (left < right)
+            {
+                float pivot = values[left + (right - left) / 2];
+                int lower = left;
+                int upper = right;
+
+                while (lower <= upper)
+                {
+                    while (values[lower] < pivot)
+                    {
+                        lower++;
+                    }
+
+                    while (values[upper] > pivot)
+                    {
+                        upper--;
+                    }
+
+                    if (lower <= upper)
+                    {
+                        (values[lower], values[upper]) = (values[upper], values[lower]);
+                        lower++;
+                        upper--;
+                    }
+                }
+
+                if (target <= upper)
+                {
+                    right = upper;
+                }
+                else if (target >= lower)
+                {
+                    left = lower;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            return values[target];
+        }
+
+        internal static float SelectMedianForTests(float[] values)
+        {
+            ArgumentNullException.ThrowIfNull(values);
+            return GetMedian(values.AsSpan());
         }
 
         private static float GetPixelDifference(ushort* first, ushort* second)
