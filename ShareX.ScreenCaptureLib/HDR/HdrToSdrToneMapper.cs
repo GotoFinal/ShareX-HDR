@@ -249,6 +249,27 @@ namespace ShareX.ScreenCaptureLib
             HdrToneMappingMode toneMappingMode,
             IReadOnlyList<HdrWindowRegion> windowRegions)
         {
+            return CreateToneMapMaskR8WithWindowRegionsCore(
+                source,
+                sourceRowPitch,
+                width,
+                height,
+                paperWhiteScRgb,
+                toneMappingMode,
+                windowRegions,
+                peakSamples: null);
+        }
+
+        private static byte[] CreateToneMapMaskR8WithWindowRegionsCore(
+            IntPtr source,
+            int sourceRowPitch,
+            int width,
+            int height,
+            float paperWhiteScRgb,
+            HdrToneMappingMode toneMappingMode,
+            IReadOnlyList<HdrWindowRegion> windowRegions,
+            PeakSampleGrid peakSamples)
+        {
             if (source == IntPtr.Zero)
             {
                 throw new ArgumentException(nameof(source));
@@ -272,7 +293,8 @@ namespace ShareX.ScreenCaptureLib
                 width,
                 height,
                 paperWhiteScRgb,
-                mask);
+                mask,
+                peakSamples);
 
             Parallel.For(0, height, y =>
             {
@@ -475,26 +497,40 @@ namespace ShareX.ScreenCaptureLib
                 HdrCaptureSettings.MinimumBrightnessNits,
                 HdrCaptureSettings.MaximumPaperWhiteNits);
             float paperWhiteScRgb = paperWhiteNits / ScRgbNitsPerUnit;
+            PeakSampleGrid peakSamples = settings.PeakBrightnessMode == HdrPeakBrightnessMode.Automatic &&
+                settings.ToneMappingMode != HdrToneMappingMode.Uniform
+                ? new PeakSampleGrid(
+                    width,
+                    height,
+                    paperWhiteNits,
+                    preserveAlpha)
+                : null;
             byte[] toneMapMask = settings.ToneMappingMode != HdrToneMappingMode.Uniform
-                ? CreateToneMapMaskR8WithWindowRegions(
+                ? CreateToneMapMaskR8WithWindowRegionsCore(
                     source,
                     sourceRowPitch,
                     width,
                     height,
                     paperWhiteScRgb,
                     settings.ToneMappingMode,
-                    windowRegions)
+                    windowRegions,
+                    peakSamples)
                 : null;
             ContentPeakMeasurement measurement = settings.PeakBrightnessMode == HdrPeakBrightnessMode.Automatic
-                ? MeasureContentPeak(
-                    (byte*)source,
-                    sourceRowPitch,
-                    width,
-                    height,
-                    paperWhiteNits,
-                    toneMapMask,
-                    settings.ToneMappingMode,
-                    preserveAlpha)
+                ? peakSamples != null
+                    ? MeasureContentPeak(
+                        peakSamples,
+                        toneMapMask,
+                        settings.ToneMappingMode)
+                    : MeasureContentPeak(
+                        (byte*)source,
+                        sourceRowPitch,
+                        width,
+                        height,
+                        paperWhiteNits,
+                        toneMapMask,
+                        settings.ToneMappingMode,
+                        preserveAlpha)
                 : ContentPeakMeasurement.NotMeasured;
             ToneMapParameters parameters = CreateToneMapParameters(
                 settings.HdrBrightnessNits,
@@ -553,6 +589,59 @@ namespace ShareX.ScreenCaptureLib
                 $"observedPeak={peak.ObservedMaximumNits:F1}nits samples={peak.SampleCount} " +
                 $"sampleStep={peak.SampleStep} displayPeak={displayMaxLuminanceNits:F1}nits " +
                 $"reason={peak.Reason}");
+        }
+
+        private static ContentPeakMeasurement MeasureContentPeak(
+            PeakSampleGrid samples,
+            byte[] toneMapMask,
+            HdrToneMappingMode toneMappingMode)
+        {
+            int[] histogram = new int[ContentPeakHistogramBins];
+            int sampleCount = 0;
+            float observedMaximumNits = 0f;
+            double logarithmicRange = Math.Log(
+                samples.MaximumNits / samples.ThresholdNits);
+
+            for (int sampleY = 0; sampleY < samples.SamplesY; sampleY++)
+            {
+                int y = sampleY * samples.SampleStep;
+                for (int sampleX = 0; sampleX < samples.SamplesX; sampleX++)
+                {
+                    int x = sampleX * samples.SampleStep;
+                    if (toneMapMask != null && toneMapMask[y * samples.Width + x] < 128)
+                    {
+                        continue;
+                    }
+
+                    float peakNits = samples.Get(sampleX, sampleY);
+                    if (peakNits <= 0f)
+                    {
+                        continue;
+                    }
+
+                    observedMaximumNits = Math.Max(observedMaximumNits, peakNits);
+                    double normalized = logarithmicRange > 0d
+                        ? Math.Log(peakNits / samples.ThresholdNits) / logarithmicRange
+                        : 0d;
+                    int bin = Math.Clamp(
+                        (int)(normalized * ContentPeakHistogramBins),
+                        0,
+                        ContentPeakHistogramBins - 1);
+                    histogram[bin]++;
+                    sampleCount++;
+                }
+            }
+
+            return CreateContentPeakMeasurement(
+                histogram,
+                sampleCount,
+                observedMaximumNits,
+                samples.SampleStep,
+                samples.PaperWhiteNits,
+                toneMappingMode,
+                logarithmicRange,
+                samples.ThresholdNits,
+                samples.MaximumNits);
         }
 
         private static ContentPeakMeasurement MeasureContentPeak(
@@ -629,6 +718,29 @@ namespace ShareX.ScreenCaptureLib
                 }
             }
 
+            return CreateContentPeakMeasurement(
+                histogram,
+                sampleCount,
+                observedMaximumNits,
+                sampleStep,
+                paperWhiteNits,
+                toneMappingMode,
+                logarithmicRange,
+                thresholdNits,
+                maximumNits);
+        }
+
+        private static ContentPeakMeasurement CreateContentPeakMeasurement(
+            int[] histogram,
+            int sampleCount,
+            float observedMaximumNits,
+            int sampleStep,
+            float paperWhiteNits,
+            HdrToneMappingMode toneMappingMode,
+            double logarithmicRange,
+            float thresholdNits,
+            float maximumNits)
+        {
             if (sampleCount == 0)
             {
                 return new ContentPeakMeasurement(
@@ -716,7 +828,8 @@ namespace ShareX.ScreenCaptureLib
             int width,
             int height,
             float paperWhiteScRgb,
-            byte[] headroomMask)
+            byte[] headroomMask,
+            PeakSampleGrid peakSamples)
         {
             ArgumentNullException.ThrowIfNull(headroomMask);
             if (headroomMask.Length < checked(width * height))
@@ -744,12 +857,23 @@ namespace ShareX.ScreenCaptureLib
                     for (int y = top; y < bottom; y++)
                     {
                         ushort* sourcePixel = (ushort*)((byte*)sourceAddress + y * sourceRowPitch) + left * 4;
+                        int nextSampleX = peakSamples?.GetFirstSampleX(left, y) ?? int.MaxValue;
 
                         for (int x = left; x < right; x++)
                         {
                             float red = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[0]));
                             float green = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[1]));
                             float blue = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[2]));
+
+                            if (x == nextSampleX)
+                            {
+                                float alpha = Math.Clamp(
+                                    SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[3])),
+                                    0f,
+                                    1f);
+                                peakSamples.Set(x, y, red, green, blue, alpha);
+                                nextSampleX += peakSamples.SampleStep;
+                            }
 
                             if (GetRec2020Max(red, green, blue) > headroomThreshold)
                             {
@@ -1443,6 +1567,85 @@ namespace ShareX.ScreenCaptureLib
             float rec2020Blue = red * 0.0163914f + green * 0.0880133f + blue * 0.8955953f;
 
             return Math.Max(rec2020Red, Math.Max(rec2020Green, rec2020Blue));
+        }
+
+        private sealed class PeakSampleGrid
+        {
+            private readonly float[] peakNits;
+            private readonly bool preserveAlpha;
+
+            public int Width { get; }
+            public int SamplesX { get; }
+            public int SamplesY { get; }
+            public int SampleStep { get; }
+            public float PaperWhiteNits { get; }
+            public float ThresholdNits { get; }
+            public float MaximumNits { get; }
+
+            public PeakSampleGrid(
+                int width,
+                int height,
+                float paperWhiteNits,
+                bool preserveAlpha)
+            {
+                long totalPixels = (long)width * height;
+                Width = width;
+                SampleStep = Math.Max(
+                    1,
+                    (int)Math.Ceiling(Math.Sqrt(
+                        totalPixels / (double)MaximumPeakAnalysisSamples)));
+                SamplesX = (width + SampleStep - 1) / SampleStep;
+                SamplesY = (height + SampleStep - 1) / SampleStep;
+                PaperWhiteNits = paperWhiteNits;
+                ThresholdNits = paperWhiteNits * HdrDetectionMargin;
+                MaximumNits = HdrCaptureSettings.MaximumBrightnessNits;
+                this.preserveAlpha = preserveAlpha;
+                peakNits = new float[checked(SamplesX * SamplesY)];
+            }
+
+            public int GetFirstSampleX(int left, int y)
+            {
+                if (y % SampleStep != 0)
+                {
+                    return int.MaxValue;
+                }
+
+                return ((left + SampleStep - 1) / SampleStep) * SampleStep;
+            }
+
+            public void Set(
+                int x,
+                int y,
+                float red,
+                float green,
+                float blue,
+                float alpha)
+            {
+                if (preserveAlpha && alpha <= 0.001f)
+                {
+                    return;
+                }
+
+                if (preserveAlpha && alpha < 1f)
+                {
+                    float inverseAlpha = 1f / alpha;
+                    red *= inverseAlpha;
+                    green *= inverseAlpha;
+                    blue *= inverseAlpha;
+                }
+
+                float value = GetRec2020Max(red, green, blue) * ScRgbNitsPerUnit;
+                if (float.IsFinite(value) && value > ThresholdNits)
+                {
+                    peakNits[(y / SampleStep) * SamplesX + x / SampleStep] =
+                        Math.Min(value, MaximumNits);
+                }
+            }
+
+            public float Get(int sampleX, int sampleY)
+            {
+                return peakNits[sampleY * SamplesX + sampleX];
+            }
         }
 
         private sealed class HdrFrameAnalysis

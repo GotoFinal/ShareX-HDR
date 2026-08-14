@@ -42,6 +42,33 @@ public sealed class HdrToneMapPeakAnalysisTests
     }
 
     [Fact]
+    public void AutomaticPeak_ContentAwareScanMatchesUniformMeasurement()
+    {
+        using HdrRgba16FloatBuffer pixels = CreateGrayPixels(128, 128, 400f);
+        WriteGrayPixel(pixels, 127, 127, 10000f);
+        var uniformSettings = new HdrCaptureSettings
+        {
+            ToneMappingMode = HdrToneMappingMode.Uniform,
+            PeakBrightnessMode = HdrPeakBrightnessMode.Automatic
+        };
+        var contentAwareSettings = new HdrCaptureSettings
+        {
+            ToneMappingMode = HdrToneMappingMode.ContentAware,
+            PeakBrightnessMode = HdrPeakBrightnessMode.Automatic
+        };
+
+        HdrToSdrToneMapper.ToneMapInputAnalysis uniform =
+            Analyze(pixels, uniformSettings, 203f);
+        HdrToSdrToneMapper.ToneMapInputAnalysis contentAware =
+            Analyze(pixels, contentAwareSettings, 203f);
+
+        Assert.Equal(uniform.ContentPeak.SampleCount, contentAware.ContentPeak.SampleCount);
+        Assert.Equal(uniform.ContentPeak.ObservedMaximumNits, contentAware.ContentPeak.ObservedMaximumNits);
+        Assert.Equal(uniform.ContentPeak.EffectivePeakNits, contentAware.ContentPeak.EffectivePeakNits);
+        Assert.Equal(uniform.Parameters.SourcePeakNits, contentAware.Parameters.SourcePeakNits);
+    }
+
+    [Fact]
     public void ManualOverrides_ControlSourcePeakAndPaperWhiteExactly()
     {
         using HdrRgba16FloatBuffer pixels = CreateGrayPixels(256, 1000f);
@@ -115,6 +142,17 @@ public sealed class HdrToneMapPeakAnalysisTests
                 203f,
                 1000f,
                 preserveAlpha: true);
+            using Bitmap warmup = gpuSession.ToneMap(
+                source,
+                pixels.RowBytes,
+                width,
+                height,
+                settings,
+                203f,
+                1000f,
+                preserveAlpha: true,
+                windowRegions: null,
+                out _);
             using Bitmap gpu = gpuSession.ToneMap(
                 source,
                 pixels.RowBytes,
@@ -172,10 +210,40 @@ public sealed class HdrToneMapPeakAnalysisTests
         return result;
     }
 
+    private static HdrRgba16FloatBuffer CreateGrayPixels(int width, int height, float nits)
+    {
+        var result = new HdrRgba16FloatBuffer(width, height);
+
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                WriteGrayPixel(result, x, y, nits);
+            }
+        }
+
+        return result;
+    }
+
     private static void WriteGrayPixel(HdrRgba16FloatBuffer pixels, int pixel, float nits)
     {
         Span<byte> row = pixels.GetWritableRowSpan(0);
         int offset = pixel * HdrRgba16FloatBuffer.BytesPerPixel;
+        float scRgb = nits / HdrRgba16FloatBuffer.ReferenceWhiteNits;
+        WriteHalf(row, offset, scRgb);
+        WriteHalf(row, offset + 2, scRgb);
+        WriteHalf(row, offset + 4, scRgb);
+        WriteHalf(row, offset + 6, 1f);
+    }
+
+    private static void WriteGrayPixel(
+        HdrRgba16FloatBuffer pixels,
+        int x,
+        int y,
+        float nits)
+    {
+        Span<byte> row = pixels.GetWritableRowSpan(y);
+        int offset = x * HdrRgba16FloatBuffer.BytesPerPixel;
         float scRgb = nits / HdrRgba16FloatBuffer.ReferenceWhiteNits;
         WriteHalf(row, offset, scRgb);
         WriteHalf(row, offset + 2, scRgb);

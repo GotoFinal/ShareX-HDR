@@ -7,6 +7,13 @@ namespace ShareX.ScreenCaptureLib.Tests.HDR;
 
 public sealed class HdrCapturePerformanceTests
 {
+    private readonly ITestOutputHelper output;
+
+    public HdrCapturePerformanceTests(ITestOutputHelper output)
+    {
+        this.output = output;
+    }
+
     [Fact]
     public void WindowsGraphicsCapture_RepresentativeRegionsPerformanceProbe()
     {
@@ -28,17 +35,21 @@ public sealed class HdrCapturePerformanceTests
         Measure("small-region", region);
         Measure("single-monitor", monitor);
         Measure("virtual-screen", virtualScreen);
+        MeasurePipeline("virtual-screen-pipeline", virtualScreen);
     }
 
-    private static void Measure(string name, Rectangle bounds)
+    private void Measure(string name, Rectangle bounds)
     {
         var stopwatch = Stopwatch.StartNew();
-        bool captured = WindowsGraphicsCapture.TryCaptureHdr(bounds, null, out HdrImageDocument document);
+        bool captured = WindowsGraphicsCapture.TryCaptureHdr(
+            bounds,
+            null,
+            out HdrImageDocument document);
         stopwatch.Stop();
 
         using (document)
         {
-            Console.WriteLine(
+            output.WriteLine(
                 $"HDR capture probe: {name} {bounds.Width}x{bounds.Height}, " +
                 $"captured={captured}, elapsed={stopwatch.Elapsed.TotalMilliseconds:F1} ms.");
 
@@ -48,6 +59,46 @@ public sealed class HdrCapturePerformanceTests
                     document.MasterPixels.Width,
                     document.MasterPixels.Height));
             }
+        }
+    }
+
+    private void MeasurePipeline(string name, Rectangle bounds)
+    {
+        var settings = new HdrCaptureSettings();
+        var captureTimer = Stopwatch.StartNew();
+        bool captured = WindowsGraphicsCapture.TryCaptureHdr(
+            bounds,
+            null,
+            out HdrImageDocument document);
+        captureTimer.Stop();
+
+        using (document)
+        {
+            if (!captured)
+            {
+                output.WriteLine($"HDR pipeline probe: {name}, captured=False.");
+                return;
+            }
+
+            var normalizeTimer = Stopwatch.StartNew();
+            document.NormalizeMixedMonitorBrightness(settings);
+            normalizeTimer.Stop();
+            document.CaptureWindowRegions(settings);
+            var previewTimes = new List<double>();
+            for (int previewIndex = 0; previewIndex < 3; previewIndex++)
+            {
+                var previewTimer = Stopwatch.StartNew();
+                using Bitmap preview = document.CreateSdrPreview(settings);
+                previewTimer.Stop();
+                previewTimes.Add(previewTimer.Elapsed.TotalMilliseconds);
+            }
+
+            output.WriteLine(
+                $"HDR pipeline probe: {name} {bounds.Width}x{bounds.Height}, " +
+                $"capture={captureTimer.Elapsed.TotalMilliseconds:F1} ms, " +
+                $"normalize={normalizeTimer.Elapsed.TotalMilliseconds:F1} ms, " +
+                $"preview=[{string.Join(", ", previewTimes.Select(x => $"{x:F1}"))}] ms, " +
+                $"warmTotal={captureTimer.Elapsed.TotalMilliseconds + normalizeTimer.Elapsed.TotalMilliseconds + previewTimes[^1]:F1} ms.");
         }
     }
 

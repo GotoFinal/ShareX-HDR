@@ -2388,12 +2388,14 @@ namespace ShareX.ScreenCaptureLib
             try
             {
                 GpuHdrToSdrToneMapper.Session gpuSession = null;
+                GpuHdrToSdrToneMapper.SessionLease gpuSessionLease = null;
 
                 if (settings.ProcessingBackend == HdrProcessingBackend.Gpu)
                 {
                     try
                     {
-                        gpuSession = new GpuHdrToSdrToneMapper.Session();
+                        gpuSessionLease = GpuHdrToSdrToneMapper.AcquireSharedSession();
+                        gpuSession = gpuSessionLease.Session;
                     }
                     catch (Exception exception)
                     {
@@ -2418,7 +2420,7 @@ namespace ShareX.ScreenCaptureLib
                 }
                 finally
                 {
-                    gpuSession?.Dispose();
+                    gpuSessionLease?.Dispose();
                 }
 
                 return preview;

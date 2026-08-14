@@ -12,7 +12,10 @@
 
 #endregion License Information (GPL v3)
 
+using ShareX.HelpersLib;
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
@@ -31,11 +34,47 @@ namespace ShareX.ScreenCaptureLib
     {
         private const string ShaderResourceName = "ShareX.ScreenCaptureLib.HDR.HdrToneMap.hlsl";
         private const uint D3DCompileOptimizationLevel3 = 1u << 15;
+        private const int MaximumCachedPreviewSizes = 2;
+        private const int SharedSessionIdleMilliseconds = 10000;
         private static readonly Lazy<CompiledShaders> Shaders = new Lazy<CompiledShaders>(CompileShaders);
+        private static readonly object sharedSessionSync = new object();
+        private static Session sharedSession;
+        private static System.Threading.Timer sharedSessionExpirationTimer;
 
         public static void PrewarmShaders()
         {
             _ = Shaders.Value;
+            using SessionLease lease = AcquireSharedSession();
+        }
+
+        public static SessionLease AcquireSharedSession()
+        {
+            System.Threading.Monitor.Enter(sharedSessionSync);
+
+            try
+            {
+                sharedSessionExpirationTimer?.Change(
+                    System.Threading.Timeout.Infinite,
+                    System.Threading.Timeout.Infinite);
+                sharedSession ??= new Session();
+                return new SessionLease(sharedSession);
+            }
+            catch
+            {
+                System.Threading.Monitor.Exit(sharedSessionSync);
+                throw;
+            }
+        }
+
+        public static void ShutdownSharedSession()
+        {
+            lock (sharedSessionSync)
+            {
+                sharedSession?.Dispose();
+                sharedSession = null;
+                sharedSessionExpirationTimer?.Dispose();
+                sharedSessionExpirationTimer = null;
+            }
         }
 
         public static Bitmap ToneMap(
@@ -125,69 +164,84 @@ namespace ShareX.ScreenCaptureLib
             int width,
             int height,
             HdrToSdrToneMapper.ToneMapInputAnalysis analysis,
-            bool preserveAlpha)
+            bool preserveAlpha,
+            ToneMapResources reusableResources = null,
+            bool sourceAlreadyUploaded = false)
         {
-            CompiledShaders shaderBytecode = Shaders.Value;
-            Texture2DDescription sourceDescription = sourceTexture.Description;
+            Stopwatch totalTimer = Stopwatch.StartNew();
+            Stopwatch resourceTimer = Stopwatch.StartNew();
             HdrToSdrToneMapper.ToneMapParameters parameters = analysis.Parameters;
-            using ID3D11Texture2D shaderInput = CreateTexture(
-                device,
-                sourceDescription.Width,
-                sourceDescription.Height,
-                Format.R16G16B16A16_Float,
-                BindFlags.ShaderResource);
-            context.CopyResource(shaderInput, sourceTexture);
-            using ID3D11Texture2D toneMapMask = analysis.ToneMapMask != null
-                ? CreateToneMapMask(device, context, analysis.ToneMapMask, width, height)
+            using ToneMapResources ownedResources = reusableResources == null
+                ? new ToneMapResources(device, width, height)
                 : null;
-            using ID3D11Texture2D output = CreateTexture(
-                device,
-                (uint)width,
-                (uint)height,
-                Format.B8G8R8A8_UNorm,
-                BindFlags.RenderTarget);
-            using ID3D11Texture2D stagingOutput = CreateStagingTexture(
-                device,
-                (uint)width,
-                (uint)height,
-                Format.B8G8R8A8_UNorm);
-            using ID3D11VertexShader vertexShader = device.CreateVertexShader(shaderBytecode.Vertex);
-            using ID3D11PixelShader pixelShader = device.CreatePixelShader(shaderBytecode.Pixel);
-            using ID3D11Buffer constants = device.CreateBuffer(
-                new GpuToneMapConstants[]
-                {
-                    new GpuToneMapConstants(
-                        parameters,
-                        toneMapMask != null,
-                        preserveAlpha,
-                        analysis.DefaultToneMapAmount)
-                },
-                BindFlags.ConstantBuffer);
-            using ID3D11ShaderResourceView sourceView = device.CreateShaderResourceView(shaderInput);
-            using ID3D11ShaderResourceView maskView = toneMapMask != null
-                ? device.CreateShaderResourceView(toneMapMask)
-                : null;
-            using ID3D11RenderTargetView outputView = device.CreateRenderTargetView(output);
+            ToneMapResources resources = reusableResources ?? ownedResources;
+
+            if (!sourceAlreadyUploaded)
+            {
+                ArgumentNullException.ThrowIfNull(sourceTexture);
+                context.CopyResource(resources.ShaderInput, sourceTexture);
+            }
+
+            bool useToneMapMask = analysis.ToneMapMask != null;
+            if (useToneMapMask)
+            {
+                context.UpdateSubresource(
+                    analysis.ToneMapMask,
+                    resources.ToneMapMask,
+                    0,
+                    (uint)width);
+            }
+
+            var constants = new GpuToneMapConstants(
+                parameters,
+                useToneMapMask,
+                preserveAlpha,
+                analysis.DefaultToneMapAmount);
+            context.UpdateSubresource(
+                resources.Constants,
+                0,
+                null,
+                (IntPtr)(&constants),
+                0,
+                0);
+            resourceTimer.Stop();
 
             try
             {
-                context.OMSetRenderTargets(outputView);
+                Stopwatch submitTimer = Stopwatch.StartNew();
+                context.OMSetRenderTargets(resources.OutputView);
                 context.RSSetViewport(new Viewport(width, height));
                 context.IASetInputLayout(null);
                 context.IASetPrimitiveTopology(PrimitiveTopology.TriangleList);
-                context.VSSetShader(vertexShader);
-                context.PSSetShader(pixelShader);
-                context.PSSetConstantBuffer(0, constants);
-                context.PSSetShaderResource(0, sourceView);
-                context.PSSetShaderResource(1, maskView);
+                context.VSSetShader(resources.VertexShader);
+                context.PSSetShader(resources.PixelShader);
+                context.PSSetConstantBuffer(0, resources.Constants);
+                context.PSSetShaderResource(0, resources.SourceView);
+                context.PSSetShaderResource(1, useToneMapMask ? resources.MaskView : null);
                 context.Draw(3, 0);
 
                 context.PSSetShaderResource(0, null);
                 context.PSSetShaderResource(1, null);
                 context.OMSetRenderTargets((ID3D11RenderTargetView)null);
-                context.CopyResource(stagingOutput, output);
+                context.CopyResource(resources.StagingOutput, resources.Output);
+                submitTimer.Stop();
 
-                return ReadBgra8Bitmap(context, stagingOutput, width, height);
+                Stopwatch readbackTimer = Stopwatch.StartNew();
+                Bitmap bitmap = ReadBgra8Bitmap(
+                    context,
+                    resources.StagingOutput,
+                    width,
+                    height);
+                readbackTimer.Stop();
+                totalTimer.Stop();
+                LogPerformance(
+                    $"HDR GPU preview stages | size={width}x{height} " +
+                    $"reused={reusableResources != null} " +
+                    $"resourcesMs={resourceTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"submitMs={submitTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"readbackMs={readbackTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
+                return bitmap;
             }
             finally
             {
@@ -198,29 +252,97 @@ namespace ShareX.ScreenCaptureLib
             }
         }
 
-        private static ID3D11Texture2D CreateToneMapMask(
-            ID3D11Device device,
-            ID3D11DeviceContext context,
-            byte[] mask,
-            int width,
-            int height)
+        private static void LogPerformance(string message)
         {
-            ID3D11Texture2D maskTexture = CreateTexture(
-                device,
-                (uint)width,
-                (uint)height,
-                Format.R8_UNorm,
-                BindFlags.ShaderResource);
-
-            try
+            DebugHelper.WriteLine(message);
+            if (string.Equals(
+                Environment.GetEnvironmentVariable("SHAREX_RUN_HDR_CAPTURE_PERFORMANCE_TESTS"),
+                "1",
+                StringComparison.Ordinal))
             {
-                context.UpdateSubresource(mask, maskTexture, 0, (uint)width);
-                return maskTexture;
+                Console.WriteLine(message);
             }
-            catch
+        }
+
+        private sealed class ToneMapResources : IDisposable
+        {
+            public ID3D11Texture2D ShaderInput { get; private set; }
+            public ID3D11Texture2D ToneMapMask { get; private set; }
+            public ID3D11Texture2D Output { get; private set; }
+            public ID3D11Texture2D StagingOutput { get; private set; }
+            public ID3D11VertexShader VertexShader { get; private set; }
+            public ID3D11PixelShader PixelShader { get; private set; }
+            public ID3D11Buffer Constants { get; private set; }
+            public ID3D11ShaderResourceView SourceView { get; private set; }
+            public ID3D11ShaderResourceView MaskView { get; private set; }
+            public ID3D11RenderTargetView OutputView { get; private set; }
+
+            public ToneMapResources(ID3D11Device device, int width, int height)
             {
-                maskTexture.Dispose();
-                throw;
+                try
+                {
+                    CompiledShaders shaders = Shaders.Value;
+                    ShaderInput = CreateTexture(
+                        device,
+                        (uint)width,
+                        (uint)height,
+                        Format.R16G16B16A16_Float,
+                        BindFlags.ShaderResource);
+                    ToneMapMask = CreateTexture(
+                        device,
+                        (uint)width,
+                        (uint)height,
+                        Format.R8_UNorm,
+                        BindFlags.ShaderResource);
+                    Output = CreateTexture(
+                        device,
+                        (uint)width,
+                        (uint)height,
+                        Format.B8G8R8A8_UNorm,
+                        BindFlags.RenderTarget);
+                    StagingOutput = CreateStagingTexture(
+                        device,
+                        (uint)width,
+                        (uint)height,
+                        Format.B8G8R8A8_UNorm);
+                    VertexShader = device.CreateVertexShader(shaders.Vertex);
+                    PixelShader = device.CreatePixelShader(shaders.Pixel);
+                    Constants = device.CreateBuffer(
+                        new GpuToneMapConstants[1],
+                        BindFlags.ConstantBuffer);
+                    SourceView = device.CreateShaderResourceView(ShaderInput);
+                    MaskView = device.CreateShaderResourceView(ToneMapMask);
+                    OutputView = device.CreateRenderTargetView(Output);
+                }
+                catch
+                {
+                    Dispose();
+                    throw;
+                }
+            }
+
+            public void Dispose()
+            {
+                OutputView?.Dispose();
+                OutputView = null;
+                MaskView?.Dispose();
+                MaskView = null;
+                SourceView?.Dispose();
+                SourceView = null;
+                Constants?.Dispose();
+                Constants = null;
+                PixelShader?.Dispose();
+                PixelShader = null;
+                VertexShader?.Dispose();
+                VertexShader = null;
+                StagingOutput?.Dispose();
+                StagingOutput = null;
+                Output?.Dispose();
+                Output = null;
+                ToneMapMask?.Dispose();
+                ToneMapMask = null;
+                ShaderInput?.Dispose();
+                ShaderInput = null;
             }
         }
 
@@ -228,7 +350,11 @@ namespace ShareX.ScreenCaptureLib
         {
             private readonly ID3D11Device device;
             private readonly ID3D11DeviceContext context;
+            private readonly Dictionary<System.Drawing.Size, ToneMapResources> resourceCache =
+                new Dictionary<System.Drawing.Size, ToneMapResources>();
             private bool disposed;
+
+            public bool IsDisposed => disposed;
 
             public Session()
             {
@@ -255,6 +381,7 @@ namespace ShareX.ScreenCaptureLib
                 out HdrToSdrToneMapper.ToneMapInputAnalysis analysis)
             {
                 ObjectDisposedException.ThrowIf(disposed, this);
+                Stopwatch analysisTimer = Stopwatch.StartNew();
                 analysis = HdrToSdrToneMapper.AnalyzeToneMapInput(
                     source,
                     sourceRowPitch,
@@ -265,28 +392,36 @@ namespace ShareX.ScreenCaptureLib
                     displayMaxLuminanceNits,
                     preserveAlpha,
                     windowRegions);
+                analysisTimer.Stop();
                 HdrToSdrToneMapper.LogAnalysis("GPU", settings, analysis, displayMaxLuminanceNits);
-                using ID3D11Texture2D sourceTexture = CreateTexture(
-                    device,
-                    (uint)width,
-                    (uint)height,
-                    Format.R16G16B16A16_Float,
-                    BindFlags.ShaderResource);
+                Stopwatch uploadTimer = Stopwatch.StartNew();
+                ToneMapResources resources = GetResources(width, height);
                 context.UpdateSubresource(
-                    sourceTexture,
+                    resources.ShaderInput,
                     0,
                     null,
                     source,
                     (uint)sourceRowPitch,
                     0);
-                return ToneMapAnalyzed(
+                uploadTimer.Stop();
+                Stopwatch renderTimer = Stopwatch.StartNew();
+                Bitmap bitmap = ToneMapAnalyzed(
                     device,
                     context,
-                    sourceTexture,
+                    sourceTexture: null,
                     width,
                     height,
                     analysis,
-                    preserveAlpha);
+                    preserveAlpha,
+                    resources,
+                    sourceAlreadyUploaded: true);
+                renderTimer.Stop();
+                LogPerformance(
+                    $"HDR GPU preview input | size={width}x{height} " +
+                    $"analysisMs={analysisTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"uploadMs={uploadTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"renderMs={renderTimer.Elapsed.TotalMilliseconds:F1}");
+                return bitmap;
             }
 
             public Bitmap ToneMapKnownSdr(
@@ -300,27 +435,55 @@ namespace ShareX.ScreenCaptureLib
                 ObjectDisposedException.ThrowIf(disposed, this);
                 HdrToSdrToneMapper.ToneMapInputAnalysis analysis =
                     HdrToSdrToneMapper.CreateKnownSdrAnalysis(paperWhiteNits);
-                using ID3D11Texture2D sourceTexture = CreateTexture(
-                    device,
-                    (uint)width,
-                    (uint)height,
-                    Format.R16G16B16A16_Float,
-                    BindFlags.ShaderResource);
+                Stopwatch uploadTimer = Stopwatch.StartNew();
+                ToneMapResources resources = GetResources(width, height);
                 context.UpdateSubresource(
-                    sourceTexture,
+                    resources.ShaderInput,
                     0,
                     null,
                     source,
                     (uint)sourceRowPitch,
                     0);
-                return ToneMapAnalyzed(
+                uploadTimer.Stop();
+                Stopwatch renderTimer = Stopwatch.StartNew();
+                Bitmap bitmap = ToneMapAnalyzed(
                     device,
                     context,
-                    sourceTexture,
+                    sourceTexture: null,
                     width,
                     height,
                     analysis,
-                    preserveAlpha);
+                    preserveAlpha,
+                    resources,
+                    sourceAlreadyUploaded: true);
+                renderTimer.Stop();
+                LogPerformance(
+                    $"HDR GPU preview input | size={width}x{height} analysisMs=0.0 " +
+                    $"uploadMs={uploadTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"renderMs={renderTimer.Elapsed.TotalMilliseconds:F1}");
+                return bitmap;
+            }
+
+            private ToneMapResources GetResources(int width, int height)
+            {
+                var size = new System.Drawing.Size(width, height);
+                if (!resourceCache.TryGetValue(size, out ToneMapResources resources))
+                {
+                    if (resourceCache.Count >= MaximumCachedPreviewSizes)
+                    {
+                        foreach (ToneMapResources cachedResources in resourceCache.Values)
+                        {
+                            cachedResources.Dispose();
+                        }
+
+                        resourceCache.Clear();
+                    }
+
+                    resources = new ToneMapResources(device, width, height);
+                    resourceCache.Add(size, resources);
+                }
+
+                return resources;
             }
 
             public void Dispose()
@@ -329,10 +492,58 @@ namespace ShareX.ScreenCaptureLib
                 {
                     context.ClearState();
                     context.Flush();
+
+                    foreach (ToneMapResources resources in resourceCache.Values)
+                    {
+                        resources.Dispose();
+                    }
+
+                    resourceCache.Clear();
                     context.Dispose();
                     device.Dispose();
                     disposed = true;
                 }
+            }
+        }
+
+        internal sealed class SessionLease : IDisposable
+        {
+            private Session session;
+
+            public Session Session => session ??
+                throw new ObjectDisposedException(nameof(SessionLease));
+
+            public SessionLease(Session session)
+            {
+                this.session = session;
+            }
+
+            public void Dispose()
+            {
+                Session released = System.Threading.Interlocked.Exchange(ref session, null);
+                if (released == null)
+                {
+                    return;
+                }
+
+                if (released.IsDisposed && ReferenceEquals(sharedSession, released))
+                {
+                    sharedSession = null;
+                }
+
+                if (!released.IsDisposed)
+                {
+                    sharedSessionExpirationTimer ??= new System.Threading.Timer(
+                        _ => ShutdownSharedSession(),
+                        null,
+                        System.Threading.Timeout.Infinite,
+                        System.Threading.Timeout.Infinite);
+                    sharedSessionExpirationTimer.Change(
+                        SharedSessionIdleMilliseconds,
+                        System.Threading.Timeout.Infinite);
+                }
+
+                System.Threading.Monitor.Exit(sharedSessionSync);
             }
         }
 

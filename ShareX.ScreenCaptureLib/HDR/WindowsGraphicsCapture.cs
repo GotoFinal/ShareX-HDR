@@ -336,6 +336,7 @@ namespace ShareX.ScreenCaptureLib
             }
 
             worker?.Dispose();
+            GpuHdrToSdrToneMapper.ShutdownSharedSession();
         }
 
         private static NormalCaptureWorker GetNormalCaptureWorker()
