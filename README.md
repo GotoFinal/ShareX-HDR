@@ -1,3 +1,19 @@
+# ShareX-HDR
+This is a fork of ShareX with HDR support, most of the code was written with a lot of AI assist, so expect slop, but it works.  
+Supported: 
+- Tone-mapped HDR to SDR in most tools, like region screenshots, scrolling, screen recording.
+- Saving actual HDR images and vidoes in .png/.jpg/.avif/.exr/.mp4
+- Saving tone-mapped SDR copy to clipboard
+- HDR screen preview
+- OBS hook for HDR games that require exclusive Fullscreen
+- Content-aware tone mapping that tries to separate HDR and SDR content
+
+## Troubleshooting
+Mess with this stuff, maybe will help
+<img width="786" height="543" alt="image" src="https://github.com/user-attachments/assets/94d48723-6c96-47fb-ba47-4c7a296f96ba" />
+<img width="786" height="665" alt="image" src="https://github.com/user-attachments/assets/697868e8-e6bf-44eb-ba7b-38694263b7e2" />
+
+
 <p align="center"><a href="https://getsharex.com"><img src="https://getsharex.com/img/ShareX_Banner.png" alt="ShareX Banner"/></a></p>
 <h3 align="center">Screen capture, file sharing and productivity tool</h3>
 <br>
