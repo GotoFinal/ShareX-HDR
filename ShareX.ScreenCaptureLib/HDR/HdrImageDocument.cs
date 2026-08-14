@@ -140,7 +140,7 @@ namespace ShareX.ScreenCaptureLib
 
             fixed (byte* destinationBase = pixels)
             {
-                if (Math.Abs(rgbScale - 1f) > 0.0001f && height >= 64)
+                if (height >= 64)
                 {
                     nint sourceAddress = (nint)source;
                     nint destinationAddress = (nint)destinationBase;
@@ -169,6 +169,80 @@ namespace ShareX.ScreenCaptureLib
                         width,
                         rgbScale);
                 }
+            }
+        }
+
+        internal unsafe void CopyScaledFrom(
+            IntPtr source,
+            int sourceRowBytes,
+            int sourceWidth,
+            int sourceHeight,
+            Rectangle destinationRectangle,
+            float rgbScale = 1f)
+        {
+            ObjectDisposedException.ThrowIf(pixels == null, this);
+            if (source == IntPtr.Zero)
+            {
+                throw new ArgumentNullException(nameof(source));
+            }
+
+            ValidateDimensions(sourceWidth, sourceHeight);
+            int activeSourceRowBytes = checked(sourceWidth * BytesPerPixel);
+            if (sourceRowBytes < activeSourceRowBytes)
+            {
+                throw new ArgumentOutOfRangeException(nameof(sourceRowBytes));
+            }
+
+            ValidateRectangle(destinationRectangle, Width, Height, nameof(destinationRectangle));
+            if (destinationRectangle.Width == sourceWidth &&
+                destinationRectangle.Height == sourceHeight)
+            {
+                CopyFrom(
+                    source,
+                    sourceRowBytes,
+                    sourceWidth,
+                    sourceHeight,
+                    destinationRectangle.Location,
+                    rgbScale);
+                return;
+            }
+
+            nint sourceAddress = (nint)source;
+            fixed (byte* destinationBase = pixels)
+            {
+                nint destinationAddress = (nint)destinationBase;
+                Parallel.For(0, destinationRectangle.Height, destinationY =>
+                {
+                    int sourceY = (int)((long)destinationY * sourceHeight /
+                        destinationRectangle.Height);
+                    ushort* sourceRow = (ushort*)((byte*)sourceAddress +
+                        sourceY * sourceRowBytes);
+                    ushort* destinationPixel = (ushort*)((byte*)destinationAddress +
+                        (destinationRectangle.Y + destinationY) * RowBytes +
+                        destinationRectangle.X * BytesPerPixel);
+                    int sourceX = 0;
+                    int sourceXFraction = 0;
+                    int sourceXAdvance = sourceWidth / destinationRectangle.Width;
+                    int sourceXFractionAdvance = sourceWidth % destinationRectangle.Width;
+
+                    for (int destinationX = 0;
+                        destinationX < destinationRectangle.Width;
+                        destinationX++)
+                    {
+                        CopySanitizedPixel(
+                            sourceRow + sourceX * 4,
+                            destinationPixel,
+                            rgbScale);
+                        destinationPixel += 4;
+                        sourceX += sourceXAdvance;
+                        sourceXFraction += sourceXFractionAdvance;
+                        if (sourceXFraction >= destinationRectangle.Width)
+                        {
+                            sourceX++;
+                            sourceXFraction -= destinationRectangle.Width;
+                        }
+                    }
+                });
             }
         }
 
@@ -351,6 +425,29 @@ namespace ShareX.ScreenCaptureLib
 
                 float value = (float)BitConverter.UInt16BitsToHalf(sanitized);
                 destinationValues[valueIndex] = BitConverter.HalfToUInt16Bits(
+                    (Half)ClampFiniteHalf(value * rgbScale));
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static unsafe void CopySanitizedPixel(
+            ushort* source,
+            ushort* destination,
+            float rgbScale)
+        {
+            bool scaleRgb = Math.Abs(rgbScale - 1f) > 0.0001f;
+
+            for (int channel = 0; channel < 4; channel++)
+            {
+                ushort sanitized = SanitizeHalfBits(source[channel]);
+                if (!scaleRgb || channel == 3)
+                {
+                    destination[channel] = sanitized;
+                    continue;
+                }
+
+                float value = (float)BitConverter.UInt16BitsToHalf(sanitized);
+                destination[channel] = BitConverter.HalfToUInt16Bits(
                     (Half)ClampFiniteHalf(value * rgbScale));
             }
         }

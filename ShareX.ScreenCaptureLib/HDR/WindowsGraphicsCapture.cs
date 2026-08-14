@@ -50,6 +50,7 @@ namespace ShareX.ScreenCaptureLib
         private const string GraphicsCaptureItemRuntimeClass = "Windows.Graphics.Capture.GraphicsCaptureItem";
         private static readonly object normalCaptureWorkerSync = new object();
         private static NormalCaptureWorker normalCaptureWorker;
+        internal static Action<string> PerformanceLogSink { get; set; }
 
         public static bool TryCapture(Rectangle captureRectangle, HdrCaptureSettings settings, out Bitmap bitmap)
         {
@@ -517,7 +518,9 @@ namespace ShareX.ScreenCaptureLib
 
         private static void Log(FormattableString message)
         {
-            DebugHelper.WriteLine("HDR capture | " + FormattableString.Invariant(message));
+            string formatted = "HDR capture | " + FormattableString.Invariant(message);
+            DebugHelper.WriteLine(formatted);
+            PerformanceLogSink?.Invoke(formatted);
         }
 
         private static string FormatRectangle(Rectangle rectangle)
@@ -1187,20 +1190,35 @@ namespace ShareX.ScreenCaptureLib
                 try
                 {
                     Stopwatch cpuCopyTimer = Stopwatch.StartNew();
-                    bool copiedDirectly = destination != null &&
-                        destinationRectangle.Width == width &&
-                        destinationRectangle.Height == height;
+                    bool copiedIntoDestination = destination != null;
+                    bool scaledIntoDestination = copiedIntoDestination &&
+                        (destinationRectangle.Width != width ||
+                            destinationRectangle.Height != height);
                     HdrRgba16FloatBuffer result;
 
-                    if (copiedDirectly)
+                    if (copiedIntoDestination)
                     {
-                        destination.CopyFrom(
-                            mapped.DataPointer,
-                            (int)mapped.RowPitch,
-                            width,
-                            height,
-                            destinationRectangle.Location,
-                            rgbScale);
+                        if (scaledIntoDestination)
+                        {
+                            destination.CopyScaledFrom(
+                                mapped.DataPointer,
+                                (int)mapped.RowPitch,
+                                width,
+                                height,
+                                destinationRectangle,
+                                rgbScale);
+                        }
+                        else
+                        {
+                            destination.CopyFrom(
+                                mapped.DataPointer,
+                                (int)mapped.RowPitch,
+                                width,
+                                height,
+                                destinationRectangle.Location,
+                                rgbScale);
+                        }
+
                         result = null;
                     }
                     else
@@ -1217,7 +1235,7 @@ namespace ShareX.ScreenCaptureLib
 
                     cpuCopyTimer.Stop();
                     Log(
-                        $"hdr-readback frame={frameWidth}x{frameHeight} crop={sourceLeft},{sourceTop},{width}x{height} direct={copiedDirectly} rgbScale={rgbScale:F3} gpuWaitMs={gpuReadbackTimer.Elapsed.TotalMilliseconds:F1} cpuCopyMs={cpuCopyTimer.Elapsed.TotalMilliseconds:F1}");
+                        $"hdr-readback frame={frameWidth}x{frameHeight} crop={sourceLeft},{sourceTop},{width}x{height} destination={(copiedIntoDestination ? scaledIntoDestination ? "scaled" : "direct" : "owned")} rgbScale={rgbScale:F3} gpuWaitMs={gpuReadbackTimer.Elapsed.TotalMilliseconds:F1} cpuCopyMs={cpuCopyTimer.Elapsed.TotalMilliseconds:F1}");
                     return result;
                 }
                 finally

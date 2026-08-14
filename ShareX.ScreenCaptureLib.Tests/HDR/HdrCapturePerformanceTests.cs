@@ -28,22 +28,31 @@ public sealed class HdrCapturePerformanceTests
             return;
         }
 
-        // ShareX performs this asynchronously at startup. Keep shader/device
-        // initialization out of the capture-path numbers while retaining the
-        // first allocation and analysis cost for each captured size.
-        WindowsGraphicsCapture.Prewarm();
+        Action<string> previousCaptureSink = WindowsGraphicsCapture.PerformanceLogSink;
+        WindowsGraphicsCapture.PerformanceLogSink = message => output.WriteLine(message);
+        try
+        {
+            // ShareX performs this asynchronously at startup. Keep shader/device
+            // initialization out of the capture-path numbers while retaining the
+            // first allocation and analysis cost for each captured size.
+            WindowsGraphicsCapture.Prewarm();
 
-        Rectangle virtualScreen = SystemInformation.VirtualScreen;
-        Rectangle monitor = Screen.PrimaryScreen?.Bounds ?? virtualScreen;
-        Rectangle region = CenterRectangle(
-            monitor,
-            Math.Min(1280, monitor.Width),
-            Math.Min(720, monitor.Height));
+            Rectangle virtualScreen = SystemInformation.VirtualScreen;
+            Rectangle monitor = Screen.PrimaryScreen?.Bounds ?? virtualScreen;
+            Rectangle region = CenterRectangle(
+                monitor,
+                Math.Min(1280, monitor.Width),
+                Math.Min(720, monitor.Height));
 
-        Measure("small-region", region);
-        Measure("single-monitor", monitor);
-        Measure("virtual-screen", virtualScreen);
-        MeasurePipeline("virtual-screen-pipeline", virtualScreen);
+            Measure("small-region", region);
+            Measure("single-monitor", monitor);
+            Measure("virtual-screen", virtualScreen);
+            MeasurePipeline("virtual-screen-pipeline", virtualScreen);
+        }
+        finally
+        {
+            WindowsGraphicsCapture.PerformanceLogSink = previousCaptureSink;
+        }
     }
 
     private void Measure(string name, Rectangle bounds)
