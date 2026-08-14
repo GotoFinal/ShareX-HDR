@@ -24,20 +24,27 @@ namespace ShareX
             HdrImageDocument document,
             HdrFileOutputSettings settings)
         {
-            ArgumentNullException.ThrowIfNull(document);
             settings ??= new HdrFileOutputSettings();
-            HdrEncoderCapabilities.EnsureAvailable(settings.FileFormat);
-            return Encode(document, settings, CreateEncoder(settings.FileFormat));
+            return Encode(document, settings, settings.FileFormat);
         }
 
         public static ImageData EncodeClipboard(
             HdrImageDocument document,
             HdrFileOutputSettings settings)
         {
+            settings ??= new HdrFileOutputSettings();
+            return Encode(document, settings, settings.ClipboardFileFormat);
+        }
+
+        public static ImageData Encode(
+            HdrImageDocument document,
+            HdrFileOutputSettings settings,
+            HdrFileFormat format)
+        {
             ArgumentNullException.ThrowIfNull(document);
             settings ??= new HdrFileOutputSettings();
-            HdrEncoderCapabilities.EnsureAvailable(settings.ClipboardFileFormat);
-            return Encode(document, settings, CreateEncoder(settings.ClipboardFileFormat));
+            HdrEncoderCapabilities.EnsureAvailable(format);
+            return Encode(document, settings, CreateEncoder(format));
         }
 
         private static IHdrImageEncoder CreateEncoder(HdrFileFormat format) =>

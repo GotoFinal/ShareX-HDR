@@ -14,6 +14,7 @@
 
 using ShareX.HelpersLib;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -38,6 +39,7 @@ namespace ShareX.ScreenCaptureLib
     internal static class WindowsGraphicsCapture
     {
         private const int CaptureTimeoutMilliseconds = 1500;
+        private const int NormalSessionIdleMilliseconds = 10000;
         private const int RpcEChangedMode = unchecked((int)0x80010106);
         private const uint MonitorDefaultToNearest = 2;
 
@@ -45,6 +47,8 @@ namespace ShareX.ScreenCaptureLib
         private static readonly Guid GraphicsCaptureItemGuid = new Guid("79C3F95B-31F7-4EC2-A464-632EF5D30760");
         private static readonly Guid Direct3DDxgiInterfaceAccessGuid = new Guid("A9B3D012-3DF2-4EE3-B8D1-8695F457D3C1");
         private const string GraphicsCaptureItemRuntimeClass = "Windows.Graphics.Capture.GraphicsCaptureItem";
+        private static readonly object normalCaptureWorkerSync = new object();
+        private static NormalCaptureWorker normalCaptureWorker;
 
         public static bool TryCapture(Rectangle captureRectangle, HdrCaptureSettings settings, out Bitmap bitmap)
         {
@@ -132,6 +136,19 @@ namespace ShareX.ScreenCaptureLib
         }
 
         internal static bool TryCaptureHdr(
+            Rectangle captureRectangle,
+            CaptureContext captureContext,
+            out HdrImageDocument document)
+        {
+            if (captureContext == null)
+            {
+                return GetNormalCaptureWorker().TryCapture(captureRectangle, out document);
+            }
+
+            return TryCaptureHdrCore(captureRectangle, captureContext, out document);
+        }
+
+        private static bool TryCaptureHdrCore(
             Rectangle captureRectangle,
             CaptureContext captureContext,
             out HdrImageDocument document)
@@ -274,19 +291,16 @@ namespace ShareX.ScreenCaptureLib
             {
                 foreach (MonitorCaptureTarget target in targets)
                 {
-                    using HdrRgba16FloatBuffer monitorPixels = captureContext.CaptureMonitorHdr(
-                        target.Monitor,
-                        target.MonitorBounds,
-                        target.Intersection);
                     var destinationRectangle = new Rectangle(
                         target.Intersection.X - captureRectangle.X,
                         target.Intersection.Y - captureRectangle.Y,
                         target.Intersection.Width,
                         target.Intersection.Height);
-
-                    canvas.CopyScaledRegionFrom(
-                        monitorPixels,
-                        new Rectangle(Point.Empty, new Size(monitorPixels.Width, monitorPixels.Height)),
+                    captureContext.CaptureMonitorHdrInto(
+                        target.Monitor,
+                        target.MonitorBounds,
+                        target.Intersection,
+                        canvas,
                         destinationRectangle);
                     segments.Add(new HdrCaptureSourceSegment(
                         destinationRectangle,
@@ -302,6 +316,33 @@ namespace ShareX.ScreenCaptureLib
             {
                 canvas.Dispose();
                 throw;
+            }
+        }
+
+        public static void Prewarm()
+        {
+            GpuHdrToSdrToneMapper.PrewarmShaders();
+            GetNormalCaptureWorker().Prewarm();
+        }
+
+        public static void Shutdown()
+        {
+            NormalCaptureWorker worker;
+
+            lock (normalCaptureWorkerSync)
+            {
+                worker = normalCaptureWorker;
+                normalCaptureWorker = null;
+            }
+
+            worker?.Dispose();
+        }
+
+        private static NormalCaptureWorker GetNormalCaptureWorker()
+        {
+            lock (normalCaptureWorkerSync)
+            {
+                return normalCaptureWorker ??= new NormalCaptureWorker();
             }
         }
 
@@ -487,23 +528,7 @@ namespace ShareX.ScreenCaptureLib
                 float maxLuminanceNits)
             {
                 EnsureInitialized();
-
-                if (!IsReusable)
-                {
-                    return captureDevice.CaptureMonitor(
-                        monitor,
-                        settings,
-                        sdrWhiteNits,
-                        maxLuminanceNits);
-                }
-
-                if (!monitorSessions.TryGetValue(monitor, out D3D11CaptureDevice.MonitorCaptureSession session))
-                {
-                    session = captureDevice.CreateMonitorSession(monitor);
-                    monitorSessions.Add(monitor, session);
-                    Log($"session=create monitor=0x{monitor.ToInt64():X} reusable=true");
-                }
-
+                D3D11CaptureDevice.MonitorCaptureSession session = GetOrCreateMonitorSession(monitor);
                 return session.Capture(settings, sdrWhiteNits, maxLuminanceNits);
             }
 
@@ -513,19 +538,39 @@ namespace ShareX.ScreenCaptureLib
                 Rectangle intersection)
             {
                 EnsureInitialized();
+                D3D11CaptureDevice.MonitorCaptureSession session = GetOrCreateMonitorSession(monitor);
+                return session.CaptureHdr(monitorBounds, intersection);
+            }
 
-                if (!IsReusable)
-                {
-                    return captureDevice.CaptureMonitorHdr(monitor, monitorBounds, intersection);
-                }
+            public void CaptureMonitorHdrInto(
+                IntPtr monitor,
+                Rectangle monitorBounds,
+                Rectangle intersection,
+                HdrRgba16FloatBuffer destination,
+                Rectangle destinationRectangle)
+            {
+                EnsureInitialized();
+                D3D11CaptureDevice.MonitorCaptureSession session = GetOrCreateMonitorSession(monitor);
+                session.CaptureHdrInto(
+                    monitorBounds,
+                    intersection,
+                    destination,
+                    destinationRectangle);
+            }
 
-                if (!monitorSessions.TryGetValue(monitor, out D3D11CaptureDevice.MonitorCaptureSession session))
+            private D3D11CaptureDevice.MonitorCaptureSession GetOrCreateMonitorSession(IntPtr monitor)
+            {
+                if (!monitorSessions.TryGetValue(
+                    monitor,
+                    out D3D11CaptureDevice.MonitorCaptureSession session))
                 {
                     session = captureDevice.CreateMonitorSession(monitor);
                     monitorSessions.Add(monitor, session);
+                    Log(
+                        $"session=create monitor=0x{monitor.ToInt64():X} reusable={IsReusable}");
                 }
 
-                return session.CaptureHdr(monitorBounds, intersection);
+                return session;
             }
 
             public void ResetAfterFailure()
@@ -534,6 +579,11 @@ namespace ShareX.ScreenCaptureLib
                 {
                     ReleaseOwnedResources();
                 }
+            }
+
+            public void Prewarm()
+            {
+                EnsureInitialized();
             }
 
             private void EnsureInitialized()
@@ -616,6 +666,155 @@ namespace ShareX.ScreenCaptureLib
                     ReleaseOwnedResources();
                     disposed = true;
                 }
+            }
+        }
+
+        private sealed class NormalCaptureWorker : IDisposable
+        {
+            private readonly BlockingCollection<NormalCaptureRequest> requests =
+                new BlockingCollection<NormalCaptureRequest>();
+            private readonly Thread thread;
+            private bool disposed;
+
+            public NormalCaptureWorker()
+            {
+                thread = new Thread(Run)
+                {
+                    IsBackground = true,
+                    Name = "ShareX HDR capture"
+                };
+                thread.Start();
+            }
+
+            public bool TryCapture(Rectangle captureRectangle, out HdrImageDocument document)
+            {
+                using var request = new NormalCaptureRequest(captureRectangle, prewarmOnly: false);
+                EnqueueAndWait(request);
+                document = request.Document;
+                return request.Succeeded;
+            }
+
+            public void Prewarm()
+            {
+                using var request = new NormalCaptureRequest(default, prewarmOnly: true);
+                EnqueueAndWait(request);
+            }
+
+            private void EnqueueAndWait(NormalCaptureRequest request)
+            {
+                ObjectDisposedException.ThrowIf(disposed, this);
+                requests.Add(request);
+                request.Completion.Wait();
+
+                if (request.Exception != null)
+                {
+                    throw new InvalidOperationException(
+                        "The HDR capture worker failed.",
+                        request.Exception);
+                }
+            }
+
+            private void Run()
+            {
+                CaptureContext captureContext = null;
+                long lastUseTimestamp = 0;
+
+                try
+                {
+                    while (!requests.IsCompleted)
+                    {
+                        if (requests.TryTake(out NormalCaptureRequest request, 250))
+                        {
+                            try
+                            {
+                                captureContext ??= new CaptureContext(true);
+
+                                if (request.PrewarmOnly)
+                                {
+                                    captureContext.Prewarm();
+                                    request.Succeeded = true;
+                                }
+                                else
+                                {
+                                    HdrImageDocument document;
+                                    request.Succeeded = TryCaptureHdrCore(
+                                        request.CaptureRectangle,
+                                        captureContext,
+                                        out document);
+                                    request.Document = document;
+                                }
+
+                                lastUseTimestamp = Stopwatch.GetTimestamp();
+                            }
+                            catch (Exception e)
+                            {
+                                request.Exception = e;
+                            }
+                            finally
+                            {
+                                request.Completion.Set();
+                            }
+                        }
+                        else if (captureContext != null &&
+                            Stopwatch.GetElapsedTime(lastUseTimestamp).TotalMilliseconds >=
+                                NormalSessionIdleMilliseconds)
+                        {
+                            captureContext.Dispose();
+                            captureContext = null;
+                            Log($"session-cache=expired idleMs={NormalSessionIdleMilliseconds}");
+                        }
+                    }
+                }
+                finally
+                {
+                    captureContext?.Dispose();
+
+                    while (requests.TryTake(out NormalCaptureRequest request))
+                    {
+                        request.Exception = new ObjectDisposedException(nameof(NormalCaptureWorker));
+                        request.Completion.Set();
+                    }
+                }
+            }
+
+            public void Dispose()
+            {
+                if (disposed)
+                {
+                    return;
+                }
+
+                disposed = true;
+                requests.CompleteAdding();
+                if (thread.Join(CaptureTimeoutMilliseconds * 4))
+                {
+                    requests.Dispose();
+                }
+                else
+                {
+                    Log($"session-cache shutdown timed out; worker resources will be released by its background thread");
+                }
+            }
+        }
+
+        private sealed class NormalCaptureRequest : IDisposable
+        {
+            public Rectangle CaptureRectangle { get; }
+            public bool PrewarmOnly { get; }
+            public ManualResetEventSlim Completion { get; } = new ManualResetEventSlim();
+            public HdrImageDocument Document { get; set; }
+            public bool Succeeded { get; set; }
+            public Exception Exception { get; set; }
+
+            public NormalCaptureRequest(Rectangle captureRectangle, bool prewarmOnly)
+            {
+                CaptureRectangle = captureRectangle;
+                PrewarmOnly = prewarmOnly;
+            }
+
+            public void Dispose()
+            {
+                Completion.Dispose();
             }
         }
 
@@ -766,7 +965,9 @@ namespace ShareX.ScreenCaptureLib
             private HdrRgba16FloatBuffer CopyToHdrBuffer(
                 Direct3D11CaptureFrame frame,
                 Rectangle monitorBounds,
-                Rectangle intersection)
+                Rectangle intersection,
+                HdrRgba16FloatBuffer destination = null,
+                Rectangle destinationRectangle = default)
             {
                 using ID3D11Texture2D sourceTexture = GetTexture(frame.Surface);
                 Texture2DDescription sourceDescription = sourceTexture.Description;
@@ -833,14 +1034,33 @@ namespace ShareX.ScreenCaptureLib
                 try
                 {
                     Stopwatch cpuCopyTimer = Stopwatch.StartNew();
-                    HdrRgba16FloatBuffer result = HdrRgba16FloatBuffer.CopyFrom(
-                        mapped.DataPointer,
-                        (int)mapped.RowPitch,
-                        width,
-                        height);
+                    bool copiedDirectly = destination != null &&
+                        destinationRectangle.Width == width &&
+                        destinationRectangle.Height == height;
+                    HdrRgba16FloatBuffer result;
+
+                    if (copiedDirectly)
+                    {
+                        destination.CopyFrom(
+                            mapped.DataPointer,
+                            (int)mapped.RowPitch,
+                            width,
+                            height,
+                            destinationRectangle.Location);
+                        result = null;
+                    }
+                    else
+                    {
+                        result = HdrRgba16FloatBuffer.CopyFrom(
+                            mapped.DataPointer,
+                            (int)mapped.RowPitch,
+                            width,
+                            height);
+                    }
+
                     cpuCopyTimer.Stop();
                     Log(
-                        $"hdr-readback frame={frameWidth}x{frameHeight} crop={sourceLeft},{sourceTop},{width}x{height} gpuWaitMs={gpuReadbackTimer.Elapsed.TotalMilliseconds:F1} cpuCopyMs={cpuCopyTimer.Elapsed.TotalMilliseconds:F1}");
+                        $"hdr-readback frame={frameWidth}x{frameHeight} crop={sourceLeft},{sourceTop},{width}x{height} direct={copiedDirectly} gpuWaitMs={gpuReadbackTimer.Elapsed.TotalMilliseconds:F1} cpuCopyMs={cpuCopyTimer.Elapsed.TotalMilliseconds:F1}");
                     return result;
                 }
                 finally
@@ -929,6 +1149,36 @@ namespace ShareX.ScreenCaptureLib
                     Log(
                         $"hdr-frame size={frame.ContentSize.Width}x{frame.ContentSize.Height} acquisitionMs={acquisitionTimer.Elapsed.TotalMilliseconds:F1}");
                     return owner.CopyToHdrBuffer(frame, monitorBounds, intersection);
+                }
+
+                public void CaptureHdrInto(
+                    Rectangle monitorBounds,
+                    Rectangle intersection,
+                    HdrRgba16FloatBuffer destination,
+                    Rectangle destinationRectangle)
+                {
+                    ArgumentNullException.ThrowIfNull(destination);
+                    ObjectDisposedException.ThrowIf(session == null, this);
+                    Stopwatch acquisitionTimer = Stopwatch.StartNew();
+                    using Direct3D11CaptureFrame frame = WaitForFrame(framePool, lastFrameTime);
+                    lastFrameTime = frame.SystemRelativeTime;
+                    acquisitionTimer.Stop();
+                    Log(
+                        $"hdr-frame size={frame.ContentSize.Width}x{frame.ContentSize.Height} acquisitionMs={acquisitionTimer.Elapsed.TotalMilliseconds:F1}");
+                    using HdrRgba16FloatBuffer scaledSource = owner.CopyToHdrBuffer(
+                        frame,
+                        monitorBounds,
+                        intersection,
+                        destination,
+                        destinationRectangle);
+
+                    if (scaledSource != null)
+                    {
+                        destination.CopyScaledRegionFrom(
+                            scaledSource,
+                            new Rectangle(Point.Empty, new Size(scaledSource.Width, scaledSource.Height)),
+                            destinationRectangle);
+                    }
                 }
 
                 public void Dispose()

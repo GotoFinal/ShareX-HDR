@@ -29,6 +29,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace ShareX.ScreenCaptureLib
 {
@@ -390,6 +391,26 @@ namespace ShareX.ScreenCaptureLib
             }
 
             service?.Dispose();
+        }
+
+        public static void PrewarmHdrCapture()
+        {
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    WindowsGraphicsCapture.Prewarm();
+                }
+                catch (Exception e)
+                {
+                    DebugHelper.WriteException(e, "HDR capture prewarm failed.");
+                }
+            });
+        }
+
+        public static void ShutdownHdrCapture()
+        {
+            WindowsGraphicsCapture.Shutdown();
         }
         internal CaptureSession CreateCaptureSession()
         {

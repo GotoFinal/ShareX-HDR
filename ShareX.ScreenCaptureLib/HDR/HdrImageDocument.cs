@@ -99,29 +99,56 @@ namespace ShareX.ScreenCaptureLib
             }
 
             ValidateDimensions(width, height);
-            int activeRowBytes = checked(width * BytesPerPixel);
+            var result = new HdrRgba16FloatBuffer(width, height);
+            result.CopyFrom(
+                source,
+                sourceRowBytes,
+                width,
+                height,
+                Point.Empty);
+            return result;
+        }
 
+        internal unsafe void CopyFrom(
+            IntPtr source,
+            int sourceRowBytes,
+            int width,
+            int height,
+            Point destinationLocation)
+        {
+            ObjectDisposedException.ThrowIf(pixels == null, this);
+            if (source == IntPtr.Zero)
+            {
+                throw new ArgumentNullException(nameof(source));
+            }
+
+            ValidateDimensions(width, height);
+            int activeRowBytes = checked(width * BytesPerPixel);
             if (sourceRowBytes < activeRowBytes)
             {
                 throw new ArgumentOutOfRangeException(nameof(sourceRowBytes));
             }
 
-            var result = new HdrRgba16FloatBuffer(width, height);
+            Rectangle destinationRectangle = new Rectangle(
+                destinationLocation,
+                new Size(width, height));
+            ValidateRectangle(destinationRectangle, Width, Height, nameof(destinationLocation));
 
-            fixed (byte* destinationBase = result.pixels)
+            fixed (byte* destinationBase = pixels)
             {
                 for (int y = 0; y < height; y++)
                 {
+                    byte* destinationRow = destinationBase +
+                        (destinationLocation.Y + y) * RowBytes +
+                        destinationLocation.X * BytesPerPixel;
                     Buffer.MemoryCopy(
                         (byte*)source + y * sourceRowBytes,
-                        destinationBase + y * result.RowBytes,
+                        destinationRow,
                         activeRowBytes,
                         activeRowBytes);
+                    SanitizeNonFinite(destinationRow, width * 4);
                 }
             }
-
-            result.SanitizeNonFinite();
-            return result;
         }
 
         public ReadOnlySpan<byte> GetRowSpan(int y)
@@ -204,31 +231,35 @@ namespace ShareX.ScreenCaptureLib
 
         private unsafe void SanitizeNonFinite()
         {
-            const ushort exponentMask = 0x7C00;
-            const ushort mantissaMask = 0x03FF;
-            const ushort signMask = 0x8000;
-            const ushort maximumFinite = 0x7BFF;
-
             fixed (byte* pixelBase = pixels)
             {
                 int valuesPerRow = checked(Width * 4);
                 for (int y = 0; y < Height; y++)
                 {
-                    ushort* row = (ushort*)(pixelBase + y * RowBytes);
-
-                    for (int valueIndex = 0; valueIndex < valuesPerRow; valueIndex++)
-                    {
-                        ushort bits = row[valueIndex];
-                        if ((bits & exponentMask) != exponentMask)
-                        {
-                            continue;
-                        }
-
-                        row[valueIndex] = (bits & mantissaMask) != 0
-                            ? (ushort)0
-                            : (ushort)((bits & signMask) | maximumFinite);
-                    }
+                    SanitizeNonFinite(pixelBase + y * RowBytes, valuesPerRow);
                 }
+            }
+        }
+
+        private static unsafe void SanitizeNonFinite(byte* values, int valueCount)
+        {
+            const ushort exponentMask = 0x7C00;
+            const ushort mantissaMask = 0x03FF;
+            const ushort signMask = 0x8000;
+            const ushort maximumFinite = 0x7BFF;
+            ushort* halfValues = (ushort*)values;
+
+            for (int valueIndex = 0; valueIndex < valueCount; valueIndex++)
+            {
+                ushort bits = halfValues[valueIndex];
+                if ((bits & exponentMask) != exponentMask)
+                {
+                    continue;
+                }
+
+                halfValues[valueIndex] = (bits & mantissaMask) != 0
+                    ? (ushort)0
+                    : (ushort)((bits & signMask) | maximumFinite);
             }
         }
 

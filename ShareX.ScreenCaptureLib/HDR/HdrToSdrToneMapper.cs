@@ -271,24 +271,20 @@ namespace ShareX.ScreenCaptureLib
                 sourceRowPitch,
                 width,
                 height,
-                paperWhiteScRgb);
-            nint sourceAddress = source;
-            float headroomThreshold = paperWhiteScRgb * HdrDetectionMargin;
+                paperWhiteScRgb,
+                mask);
 
             Parallel.For(0, height, y =>
             {
                 int rowOffset = y * width;
-                ushort* sourcePixel = (ushort*)((byte*)sourceAddress + y * sourceRowPitch);
 
                 for (int x = 0; x < width; x++)
                 {
-                    float red = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[0]));
-                    float green = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[1]));
-                    float blue = SanitizeLinear((float)BitConverter.UInt16BitsToHalf(sourcePixel[2]));
-                    mask[rowOffset + x] = GetRec2020Max(red, green, blue) > headroomThreshold
-                        ? byte.MaxValue
-                        : ToByte(analysis.GetToneMapAmount(x, y));
-                    sourcePixel += 4;
+                    int maskIndex = rowOffset + x;
+                    if (mask[maskIndex] != byte.MaxValue)
+                    {
+                        mask[maskIndex] = ToByte(analysis.GetToneMapAmount(x, y));
+                    }
                 }
             });
 
@@ -719,8 +715,15 @@ namespace ShareX.ScreenCaptureLib
             int sourceRowPitch,
             int width,
             int height,
-            float paperWhiteScRgb)
+            float paperWhiteScRgb,
+            byte[] headroomMask)
         {
+            ArgumentNullException.ThrowIfNull(headroomMask);
+            if (headroomMask.Length < checked(width * height))
+            {
+                throw new ArgumentException("The headroom mask is too small.", nameof(headroomMask));
+            }
+
             int tilesX = (width + TileSize - 1) / TileSize;
             int tilesY = (height + TileSize - 1) / TileSize;
             bool[] seedTiles = new bool[tilesX * tilesY];
@@ -751,6 +754,7 @@ namespace ShareX.ScreenCaptureLib
                             if (GetRec2020Max(red, green, blue) > headroomThreshold)
                             {
                                 headroomPixelCount++;
+                                headroomMask[y * width + x] = byte.MaxValue;
                             }
 
                             sourcePixel += 4;

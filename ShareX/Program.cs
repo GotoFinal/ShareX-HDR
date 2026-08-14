@@ -360,6 +360,7 @@ namespace ShareX
             DebugHelper.WriteLine("Avalonia init finished.");
 
             SettingManager.LoadInitialSettings();
+            Screenshot.PrewarmHdrCapture();
 
             UpdateManager = new ShareXUpdateManager();
             LanguageHelper.ChangeLanguage(Settings.Language);
@@ -383,6 +384,7 @@ namespace ShareX
                 DebugHelper.WriteLine("ShareX closing.");
 
                 Screenshot.ShutdownObsGameCapture();
+                Screenshot.ShutdownHdrCapture();
                 WatchFolderManager?.Dispose();
                 SettingManager.HistoryClose();
                 SettingManager.SaveAllSettings();

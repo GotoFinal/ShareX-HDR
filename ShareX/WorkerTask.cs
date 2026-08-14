@@ -68,6 +68,11 @@ namespace ShareX
         private GenericUploader uploader;
         private TaskReferenceHelper taskReferenceHelper;
         private HdrImageDocument hdrImageDocument;
+        private ImageData cachedHdrImageData;
+        private HdrFileOutputSettings cachedHdrOutputSettings;
+        private HdrFileFormat cachedHdrFormat;
+        private Guid cachedHdrDocumentId;
+        private int cachedHdrDocumentRevision;
 
         #region Constructors
 
@@ -769,7 +774,7 @@ namespace ShareX
             {
                 bool encodeHdr = hdrImageDocument != null && hdrOutputSettings.OutputMode != HdrOutputMode.SdrOnly;
                 ImageData imageData = encodeHdr
-                    ? HdrImageOutput.Encode(hdrImageDocument, hdrOutputSettings)
+                    ? GetOrEncodeHdrImage(hdrOutputSettings, hdrOutputSettings.FileFormat)
                     : TaskHelpers.PrepareImage(Image, Info.TaskSettings);
 
                 if (encodeHdr)
@@ -782,6 +787,12 @@ namespace ShareX
                 }
 
                 Data = imageData.ImageStream;
+                if (ReferenceEquals(imageData, cachedHdrImageData))
+                {
+                    // Data now owns the stream for the remainder of the task.
+                    cachedHdrImageData = null;
+                    cachedHdrOutputSettings = null;
+                }
                 Info.FileName = Path.ChangeExtension(
                     Info.FileName,
                     string.IsNullOrWhiteSpace(imageData.FileExtension)
@@ -911,25 +922,38 @@ namespace ShareX
 
             try
             {
-                using ImageData hdrClipboardImage = HdrImageOutput.EncodeClipboard(
-                    hdrImageDocument,
-                    settings);
-                bool copied = ClipboardHelpers.CopyHdrImage(
-                    hdrClipboardImage.ImageStream,
-                    GetHdrClipboardFormatName(settings.ClipboardFileFormat),
-                    hdrClipboardImage.MediaType,
-                    hdrClipboardImage.FileExtension,
-                    includeSdrFallback ? Image : null,
-                    Info.FileName,
-                    settings.ClipboardFileFormat == HdrFileFormat.UltraHdrJpeg);
+                bool canReuseForFile = settings.ClipboardFileFormat == settings.FileFormat &&
+                    settings.OutputMode != HdrOutputMode.SdrOnly;
+                ImageData hdrClipboardImage = canReuseForFile
+                    ? GetOrEncodeHdrImage(settings, settings.ClipboardFileFormat)
+                    : HdrImageOutput.EncodeClipboard(hdrImageDocument, settings);
 
-                if (copied)
+                try
                 {
-                    DebugHelper.WriteLine(
-                        includeSdrFallback
-                            ? $"HDR {settings.ClipboardFileFormat} and SDR fallback copied to clipboard."
-                            : $"HDR {settings.ClipboardFileFormat} copied to clipboard without an SDR fallback.");
-                    return;
+                    bool copied = ClipboardHelpers.CopyHdrImage(
+                        hdrClipboardImage.ImageStream,
+                        GetHdrClipboardFormatName(settings.ClipboardFileFormat),
+                        hdrClipboardImage.MediaType,
+                        hdrClipboardImage.FileExtension,
+                        includeSdrFallback ? Image : null,
+                        Info.FileName,
+                        settings.ClipboardFileFormat == HdrFileFormat.UltraHdrJpeg);
+
+                    if (copied)
+                    {
+                        DebugHelper.WriteLine(
+                            includeSdrFallback
+                                ? $"HDR {settings.ClipboardFileFormat} and SDR fallback copied to clipboard."
+                                : $"HDR {settings.ClipboardFileFormat} copied to clipboard without an SDR fallback.");
+                        return;
+                    }
+                }
+                finally
+                {
+                    if (!canReuseForFile)
+                    {
+                        hdrClipboardImage.Dispose();
+                    }
                 }
             }
             catch (Exception e)
@@ -948,6 +972,30 @@ namespace ShareX
             {
                 DebugHelper.WriteLine("HDR clipboard copy failed.");
             }
+        }
+
+        private ImageData GetOrEncodeHdrImage(
+            HdrFileOutputSettings settings,
+            HdrFileFormat format)
+        {
+            if (cachedHdrImageData != null &&
+                ReferenceEquals(cachedHdrOutputSettings, settings) &&
+                cachedHdrFormat == format &&
+                cachedHdrDocumentId == hdrImageDocument.DocumentId &&
+                cachedHdrDocumentRevision == hdrImageDocument.Revision)
+            {
+                DebugHelper.WriteLine(
+                    $"HDR encoding reused | format={format} document={cachedHdrDocumentId} revision={cachedHdrDocumentRevision}");
+                return cachedHdrImageData;
+            }
+
+            cachedHdrImageData?.Dispose();
+            cachedHdrImageData = HdrImageOutput.Encode(hdrImageDocument, settings, format);
+            cachedHdrOutputSettings = settings;
+            cachedHdrFormat = format;
+            cachedHdrDocumentId = hdrImageDocument.DocumentId;
+            cachedHdrDocumentRevision = hdrImageDocument.Revision;
+            return cachedHdrImageData;
         }
 
         private static string GetHdrClipboardFormatName(HdrFileFormat format) => format switch
@@ -1635,6 +1683,10 @@ namespace ShareX
 
             hdrImageDocument?.Dispose();
             hdrImageDocument = null;
+
+            cachedHdrImageData?.Dispose();
+            cachedHdrImageData = null;
+            cachedHdrOutputSettings = null;
 
             if (!KeepImage && Image != null)
             {

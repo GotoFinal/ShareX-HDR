@@ -33,6 +33,11 @@ namespace ShareX.ScreenCaptureLib
         private const uint D3DCompileOptimizationLevel3 = 1u << 15;
         private static readonly Lazy<CompiledShaders> Shaders = new Lazy<CompiledShaders>(CompileShaders);
 
+        public static void PrewarmShaders()
+        {
+            _ = Shaders.Value;
+        }
+
         public static Bitmap ToneMap(
             ID3D11Device device,
             ID3D11DeviceContext context,
