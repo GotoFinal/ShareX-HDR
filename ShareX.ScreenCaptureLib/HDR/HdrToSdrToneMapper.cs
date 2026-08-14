@@ -173,6 +173,55 @@ namespace ShareX.ScreenCaptureLib
             }
         }
 
+        internal static Bitmap ToneMapRgba16FloatAnalyzed(
+            IntPtr source,
+            int sourceRowPitch,
+            int width,
+            int height,
+            ToneMapInputAnalysis analysis,
+            bool preserveAlpha)
+        {
+            if (source == IntPtr.Zero || width <= 0 || height <= 0 ||
+                sourceRowPitch < width * sizeof(ushort) * 4)
+            {
+                throw new ArgumentOutOfRangeException(nameof(width));
+            }
+
+            Bitmap bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+
+            try
+            {
+                BitmapData destination = bitmap.LockBits(
+                    new Rectangle(0, 0, width, height),
+                    ImageLockMode.WriteOnly,
+                    PixelFormat.Format32bppArgb);
+
+                try
+                {
+                    ToneMapRgba16FloatAnalyzed(
+                        (byte*)source,
+                        sourceRowPitch,
+                        (byte*)destination.Scan0,
+                        destination.Stride,
+                        width,
+                        height,
+                        analysis,
+                        preserveAlpha);
+                }
+                finally
+                {
+                    bitmap.UnlockBits(destination);
+                }
+
+                return bitmap;
+            }
+            catch
+            {
+                bitmap.Dispose();
+                throw;
+            }
+        }
+
         internal static ToneMapInputAnalysis CreateKnownSdrAnalysis(float paperWhiteNits)
         {
             float clampedWhite = Math.Clamp(

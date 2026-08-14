@@ -264,6 +264,37 @@ public class HdrImageDocumentTests
     }
 
     [Fact]
+    public void CreateSdrPreview_ReusedAnalysisMatchesFirstPreview()
+    {
+        using HdrImageDocument document = CreatePatternDocument();
+        var settings = new HdrCaptureSettings
+        {
+            ProcessingBackend = HdrProcessingBackend.Gpu
+        };
+
+        using Bitmap first = document.CreateSdrPreview(settings);
+        using Bitmap second = document.CreateSdrPreview(settings);
+
+        AssertBitmapsEqual(first, second);
+    }
+
+    [Fact]
+    public void CreateSdrPreview_PixelRevisionInvalidatesReusedAnalysis()
+    {
+        using HdrImageDocument document = CreatePatternDocument();
+        var settings = new HdrCaptureSettings
+        {
+            ProcessingBackend = HdrProcessingBackend.Gpu
+        };
+
+        using Bitmap before = document.CreateSdrPreview(settings);
+        document.ApplyExposureAdjustment(1f);
+        using Bitmap after = document.CreateSdrPreview(settings);
+
+        Assert.NotEqual(before.GetPixel(1, 0), after.GetPixel(1, 0));
+    }
+
+    [Fact]
     public void ResizeCanvas_RejectsNonPositiveResultDimensions()
     {
         using HdrImageDocument document = CreatePatternDocument();
@@ -832,6 +863,19 @@ public class HdrImageDocumentTests
                 new HdrCaptureSourceSegment(new Rectangle(0, 0, 2, 1), "HDR", true, 203f, 1000f),
                 new HdrCaptureSourceSegment(new Rectangle(0, 1, 3, 1), "SDR", false, 80f, 80f)
             });
+    }
+
+    private static void AssertBitmapsEqual(Bitmap expected, Bitmap actual)
+    {
+        Assert.Equal(expected.Size, actual.Size);
+
+        for (int y = 0; y < expected.Height; y++)
+        {
+            for (int x = 0; x < expected.Width; x++)
+            {
+                Assert.Equal(expected.GetPixel(x, y), actual.GetPixel(x, y));
+            }
+        }
     }
 
     public enum EditorTransform

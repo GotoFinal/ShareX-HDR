@@ -479,6 +479,43 @@ namespace ShareX.ScreenCaptureLib
                     windowRegions);
                 analysisTimer.Stop();
                 HdrToSdrToneMapper.LogAnalysis("GPU", settings, analysis, displayMaxLuminanceNits);
+                return ToneMapAnalyzedInput(
+                    source,
+                    sourceRowPitch,
+                    width,
+                    height,
+                    analysis,
+                    preserveAlpha,
+                    analysisTimer.Elapsed.TotalMilliseconds);
+            }
+
+            public Bitmap ToneMapAnalyzed(
+                IntPtr source,
+                int sourceRowPitch,
+                int width,
+                int height,
+                HdrToSdrToneMapper.ToneMapInputAnalysis analysis,
+                bool preserveAlpha)
+            {
+                return ToneMapAnalyzedInput(
+                    source,
+                    sourceRowPitch,
+                    width,
+                    height,
+                    analysis,
+                    preserveAlpha,
+                    analysisMilliseconds: 0d);
+            }
+
+            private Bitmap ToneMapAnalyzedInput(
+                IntPtr source,
+                int sourceRowPitch,
+                int width,
+                int height,
+                HdrToSdrToneMapper.ToneMapInputAnalysis analysis,
+                bool preserveAlpha,
+                double analysisMilliseconds)
+            {
                 ToneMapResources resources = GetResources(
                     width,
                     height,
@@ -493,7 +530,7 @@ namespace ShareX.ScreenCaptureLib
                     0);
                 uploadTimer.Stop();
                 Stopwatch renderTimer = Stopwatch.StartNew();
-                Bitmap bitmap = ToneMapAnalyzed(
+                Bitmap bitmap = GpuHdrToSdrToneMapper.ToneMapAnalyzed(
                     device,
                     context,
                     sourceTexture: null,
@@ -508,7 +545,7 @@ namespace ShareX.ScreenCaptureLib
                 renderTimer.Stop();
                 LogPerformance(
                     $"HDR GPU preview input | size={width}x{height} " +
-                    $"analysisMs={analysisTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"analysisMs={analysisMilliseconds:F1} " +
                     $"uploadMs={uploadTimer.Elapsed.TotalMilliseconds:F1} " +
                     $"renderMs={renderTimer.Elapsed.TotalMilliseconds:F1}");
                 return bitmap;
@@ -539,7 +576,7 @@ namespace ShareX.ScreenCaptureLib
                     0);
                 uploadTimer.Stop();
                 Stopwatch renderTimer = Stopwatch.StartNew();
-                Bitmap bitmap = ToneMapAnalyzed(
+                Bitmap bitmap = GpuHdrToSdrToneMapper.ToneMapAnalyzed(
                     device,
                     context,
                     sourceTexture: null,
