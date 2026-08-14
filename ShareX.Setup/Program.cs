@@ -382,7 +382,7 @@ namespace ShareX.Setup
             {
                 if (File.Exists(RecorderDevicesSetupPath))
                 {
-                    FileHelpers.CopyFiles(RecorderDevicesSetupPath, destination);
+                    FileHelpers.CopyFile(RecorderDevicesSetupPath, destination, overwrite: true);
                 }
             }
 
@@ -400,12 +400,12 @@ namespace ShareX.Setup
 
             if (File.Exists(FFmpegPath))
             {
-                FileHelpers.CopyFiles(FFmpegPath, destination);
+                FileHelpers.CopyFile(FFmpegPath, destination, overwrite: true);
             }
 
             if (File.Exists(ExifToolPath))
             {
-                FileHelpers.CopyFiles(ExifToolPath, destination);
+                FileHelpers.CopyFile(ExifToolPath, destination, overwrite: true);
                 FileHelpers.CopyAll(Path.Combine(OutputDir, "exiftool_files"), Path.Combine(destination, "exiftool_files"));
             }
 
