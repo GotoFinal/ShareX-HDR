@@ -1,4 +1,4 @@
-name: Build ShareX
+name: Build ShareX HDR
 
 on:
   push:
@@ -6,6 +6,7 @@ on:
       - "**"
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-hdr"
     paths-ignore:
       - "**/*.md"
       - "**/*.gitignore"
@@ -16,32 +17,19 @@ permissions:
 
 jobs:
   build:
-    name: Build
+    name: Build and test x64 release
     runs-on: windows-latest
 
-    strategy:
-      fail-fast: false
-      matrix:
-        configuration:
-          - Release
-          - Debug
-          - Steam
-          - MicrosoftStore
-          - MicrosoftStoreDebug
-        platform:
-          - x64
-          - ARM64
-        exclude:
-          # Steam configuration doesn't support ARM64
-          - configuration: Steam
-            platform: ARM64
-
     env:
-      SOLUTION_FILE_PATH: ShareX.sln
+      APP_PROJECT_PATH: ShareX\ShareX.csproj
+      SETUP_PROJECT_PATH: ShareX.Setup\ShareX.Setup.csproj
+      TEST_PROJECT_PATH: ShareX.ScreenCaptureLib.Tests\ShareX.ScreenCaptureLib.Tests.csproj
       ASSEMBLY_INFO_PATH: Directory.build.props
+      PLATFORM: x64
+      RUNTIME_ID: win-x64
 
     outputs:
-      APP_VERSION: ${{ env.APP_VERSION }}
+      APP_VERSION: ${{ steps.version.outputs.app_version }}
 
     steps:
       - name: Checkout
@@ -52,142 +40,71 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
-      - name: Set PLATFORM & RUNTIME_ID
-        run: |
-          $platform = if ("${{ matrix.platform }}" -eq "ARM64") { "arm64" } else { "x64" }
-          echo "PLATFORM=$platform" >> $env:GITHUB_ENV
-          echo "RUNTIME_ID=win-$platform" >> $env:GITHUB_ENV
-
       - name: Set APP_VERSION
+        id: version
+        shell: pwsh
         run: |
           $content = Get-Content "${{ env.ASSEMBLY_INFO_PATH }}" -Raw
           $pattern = '<Version>([0-9]+(?:\.[0-9]+){1,3})</Version>'
           $match = [regex]::Match($content, $pattern)
+          if (!$match.Success) {
+            throw "Could not read the application version from ${{ env.ASSEMBLY_INFO_PATH }}."
+          }
+
           $version = $match.Groups[1].Value
           if ($env:GITHUB_REF -eq "refs/heads/develop") {
             $version = "$version.$env:GITHUB_RUN_NUMBER"
             $content = [regex]::Replace($content, $pattern, "<Version>$version</Version>")
-            Set-Content -Path "${{ env.ASSEMBLY_INFO_PATH }}" -Value "$content" -NoNewline
+            Set-Content -Path "${{ env.ASSEMBLY_INFO_PATH }}" -Value $content -NoNewline
           }
-          echo $version
-          echo "APP_VERSION=$version" >> $env:GITHUB_ENV
+
+          "APP_VERSION=$version" >> $env:GITHUB_ENV
+          "app_version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Application version: $version"
 
       - name: Download API keys
         env:
           API_KEYS: ${{ secrets.API_KEYS }}
         if: env.API_KEYS != ''
-        working-directory: ${{ env.GITHUB_WORKSPACE }}
-        run: |
-          Invoke-WebRequest -Uri "$env:API_KEYS" -OutFile "ShareX.UploadersLib\APIKeys\APIKeysLocal.cs"
+        run: Invoke-WebRequest -Uri "$env:API_KEYS" -OutFile "ShareX.UploadersLib\APIKeys\APIKeysLocal.cs"
 
-      - name: Restore NuGet packages
-        run: |
-          dotnet restore --runtime "${{ env.RUNTIME_ID }}" "${{ env.SOLUTION_FILE_PATH }}"
-          if ("${{ matrix.platform }}" -eq "ARM64") {
-            # ShareX.Setup always builds as x64, so restore win-x64 packages too
-            dotnet restore --runtime "win-x64" "ShareX.Setup\ShareX.Setup.csproj"
-          }
+      - name: Restore application
+        run: dotnet restore --runtime "${{ env.RUNTIME_ID }}" "${{ env.APP_PROJECT_PATH }}"
 
-      - name: Build
-        run: dotnet build --no-restore --configuration "${{ matrix.configuration }}" -p:Platform="${{ matrix.platform }}" --self-contained true /m:1 "${{ env.SOLUTION_FILE_PATH }}"
+      - name: Restore setup
+        run: dotnet restore --runtime "${{ env.RUNTIME_ID }}" "${{ env.SETUP_PROJECT_PATH }}"
 
-      - name: Build Setup (x64)
-        if: matrix.platform == 'ARM64'
-        run: |
-          # Build ShareX.Setup and its dependencies for x64 since it can't run as ARM64 on CI
-          dotnet build --configuration "${{ matrix.configuration }}" -p:Platform="x64" --self-contained true "ShareX.Setup\ShareX.Setup.csproj"
+      - name: Build application
+        run: dotnet build --no-restore --configuration Release -p:Platform="${{ env.PLATFORM }}" --self-contained true /m:1 "${{ env.APP_PROJECT_PATH }}"
 
-      - name: Setup
-        working-directory: ${{ env.GITHUB_WORKSPACE }}
-        run: |
-          & "ShareX.Setup\bin\${{ matrix.configuration }}\win-x64\ShareX.Setup.exe" -silent -job "${{ matrix.configuration }}" -platform "${{ matrix.platform }}"
+      - name: Build setup
+        run: dotnet build --no-restore --configuration Release -p:Platform="${{ env.PLATFORM }}" --self-contained true /m:1 "${{ env.SETUP_PROJECT_PATH }}"
 
-      - name: Upload artifact (Setup-x64)
-        if: matrix.configuration == 'Release' && matrix.platform == 'x64'
+      - name: Restore tests
+        run: dotnet restore "${{ env.TEST_PROJECT_PATH }}"
+
+      - name: Run tests
+        run: dotnet test "${{ env.TEST_PROJECT_PATH }}" --no-restore --configuration Release
+
+      - name: Package setup and portable release
+        run: '& "ShareX.Setup\bin\Release\win-x64\ShareX.Setup.exe" -silent -job Release -platform "${{ env.PLATFORM }}"'
+
+      - name: Upload setup artifact
         uses: actions/upload-artifact@v7
         with:
           name: Setup-x64
-          path: Output\ShareX-${{ env.APP_VERSION }}-setup-${{ env.PLATFORM }}.exe
+          path: Output\ShareX-${{ env.APP_VERSION }}-setup-x64.exe
+          if-no-files-found: error
 
-      - name: Upload artifact (Setup-ARM64)
-        if: matrix.configuration == 'Release' && matrix.platform == 'ARM64'
-        uses: actions/upload-artifact@v7
-        with:
-          name: Setup-ARM64
-          path: Output\ShareX-${{ env.APP_VERSION }}-setup-${{ env.PLATFORM }}.exe
-
-      - name: Upload artifact (Portable-x64)
-        if: matrix.configuration == 'Release' && matrix.platform == 'x64'
+      - name: Upload portable artifact
         uses: actions/upload-artifact@v7
         with:
           name: Portable-x64
-          path: Output\ShareX-${{ env.APP_VERSION }}-portable-${{ env.PLATFORM }}.zip
-
-      - name: Upload artifact (Portable-ARM64)
-        if: matrix.configuration == 'Release' && matrix.platform == 'ARM64'
-        uses: actions/upload-artifact@v7
-        with:
-          name: Portable-ARM64
-          path: Output\ShareX-${{ env.APP_VERSION }}-portable-${{ env.PLATFORM }}.zip
-
-      - name: Upload artifact (Debug-x64)
-        if: matrix.configuration == 'Debug' && matrix.platform == 'x64'
-        uses: actions/upload-artifact@v7
-        with:
-          name: Debug-x64
-          path: Output\ShareX-${{ env.APP_VERSION }}-debug-${{ env.PLATFORM }}.zip
-
-      - name: Upload artifact (Debug-ARM64)
-        if: matrix.configuration == 'Debug' && matrix.platform == 'ARM64'
-        uses: actions/upload-artifact@v7
-        with:
-          name: Debug-ARM64
-          path: Output\ShareX-${{ env.APP_VERSION }}-debug-${{ env.PLATFORM }}.zip
-
-      - name: Upload artifact (Steam-x64)
-        if: matrix.configuration == 'Steam' && matrix.platform == 'x64'
-        uses: actions/upload-artifact@v7
-        with:
-          name: Steam-x64
-          path: Output\ShareX-${{ env.APP_VERSION }}-Steam-${{ env.PLATFORM }}.zip
-
-      - name: Upload artifact (Steam-ARM64)
-        if: matrix.configuration == 'Steam' && matrix.platform == 'ARM64'
-        uses: actions/upload-artifact@v7
-        with:
-          name: Steam-ARM64
-          path: Output\ShareX-${{ env.APP_VERSION }}-Steam-${{ env.PLATFORM }}.zip
-
-      - name: Upload artifact (MicrosoftStore-x64)
-        if: matrix.configuration == 'MicrosoftStore' && matrix.platform == 'x64'
-        uses: actions/upload-artifact@v7
-        with:
-          name: MicrosoftStore-x64
-          path: Output\ShareX-${{ env.APP_VERSION }}-MicrosoftStore-${{ env.PLATFORM }}.appx
-
-      - name: Upload artifact (MicrosoftStore-ARM64)
-        if: matrix.configuration == 'MicrosoftStore' && matrix.platform == 'ARM64'
-        uses: actions/upload-artifact@v7
-        with:
-          name: MicrosoftStore-ARM64
-          path: Output\ShareX-${{ env.APP_VERSION }}-MicrosoftStore-${{ env.PLATFORM }}.appx
-
-      - name: Upload artifact (MicrosoftStoreDebug-x64)
-        if: matrix.configuration == 'MicrosoftStoreDebug' && matrix.platform == 'x64'
-        uses: actions/upload-artifact@v7
-        with:
-          name: MicrosoftStoreDebug-x64
-          path: Output\ShareX-${{ env.APP_VERSION }}-MicrosoftStore-debug-${{ env.PLATFORM }}.appx
-
-      - name: Upload artifact (MicrosoftStoreDebug-ARM64)
-        if: matrix.configuration == 'MicrosoftStoreDebug' && matrix.platform == 'ARM64'
-        uses: actions/upload-artifact@v7
-        with:
-          name: MicrosoftStoreDebug-ARM64
-          path: Output\ShareX-${{ env.APP_VERSION }}-MicrosoftStore-debug-${{ env.PLATFORM }}.appx
+          path: Output\ShareX-${{ env.APP_VERSION }}-portable-x64.zip
+          if-no-files-found: error
 
   release:
-    name: Release
+    name: Publish GitHub release
     needs: build
     if: github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
@@ -196,149 +113,59 @@ jobs:
       contents: write
 
     env:
-      REPO_DEV_BUILDS: ${{ github.repository_owner }}/DevBuilds
       RELEASE_BODY_PATH: RELEASE_BODY.md
       APP_VERSION: ${{ needs.build.outputs.APP_VERSION }}
 
     steps:
-      - name: Download artifact (Setup-x64)
+      - name: Download setup artifact
         uses: actions/download-artifact@v8
         with:
           name: Setup-x64
           path: Output
 
-      - name: Download artifact (Setup-ARM64)
-        if: github.ref == 'refs/heads/develop'
-        uses: actions/download-artifact@v8
-        with:
-          name: Setup-ARM64
-          path: Output
-
-      - name: Download artifact (Portable-x64)
+      - name: Download portable artifact
         uses: actions/download-artifact@v8
         with:
           name: Portable-x64
           path: Output
 
-      - name: Download artifact (Portable-ARM64)
-        if: github.ref == 'refs/heads/develop'
-        uses: actions/download-artifact@v8
-        with:
-          name: Portable-ARM64
-          path: Output
-
-      - name: Download artifact (Debug-x64)
-        if: github.ref == 'refs/heads/develop'
-        uses: actions/download-artifact@v8
-        with:
-          name: Debug-x64
-          path: Output
-
-      - name: Download artifact (Debug-ARM64)
-        if: github.ref == 'refs/heads/develop'
-        uses: actions/download-artifact@v8
-        with:
-          name: Debug-ARM64
-          path: Output
-
-      - name: Download artifact (Steam-x64)
-        if: github.ref == 'refs/heads/develop'
-        uses: actions/download-artifact@v8
-        with:
-          name: Steam-x64
-          path: Output
-
-      # - name: Download artifact (Steam-ARM64)
-      #   if: github.ref == 'refs/heads/develop'
-      #   uses: actions/download-artifact@v8
-      #   with:
-      #     name: Steam-ARM64
-      #     path: Output
-
-      - name: Download artifact (MicrosoftStore-x64)
-        if: github.ref == 'refs/heads/develop'
-        uses: actions/download-artifact@v8
-        with:
-          name: MicrosoftStore-x64
-          path: Output
-
-      - name: Download artifact (MicrosoftStore-ARM64)
-        if: github.ref == 'refs/heads/develop'
-        uses: actions/download-artifact@v8
-        with:
-          name: MicrosoftStore-ARM64
-          path: Output
-
-      - name: Download artifact (MicrosoftStoreDebug-x64)
-        if: github.ref == 'refs/heads/develop'
-        uses: actions/download-artifact@v8
-        with:
-          name: MicrosoftStoreDebug-x64
-          path: Output
-
-      - name: Download artifact (MicrosoftStoreDebug-ARM64)
-        if: github.ref == 'refs/heads/develop'
-        uses: actions/download-artifact@v8
-        with:
-          name: MicrosoftStoreDebug-ARM64
-          path: Output
-
-      - name: Create release body file
+      - name: Create release body
+        shell: pwsh
         run: |
-          $checksums = Get-ChildItem -Path "Output\" -Recurse -File
-            | Sort-Object -Property Name
-            | ForEach-Object { "| $($_.Name) | ``$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)`` |" }
-            | Out-String
+          $checksums = Get-ChildItem -Path "Output\" -File |
+            Sort-Object -Property Name |
+            ForEach-Object { "| $($_.Name) | ``$((Get-FileHash $_.FullName -Algorithm SHA256).Hash)`` |" } |
+            Out-String
           $output = "| File | SHA256 |`r`n| --- | --- |`r`n$($checksums.Trim())"
-          echo $output >> $env:GITHUB_STEP_SUMMARY
-          if ($env:GITHUB_REF.StartsWith("refs/tags/v")) {
-            $output = "**Changelog:** https://getsharex.com/changelog#$env:GITHUB_REF_NAME`r`n`r`n$output"
-          }
-          echo $output
-          Set-Content -Path "${{ env.RELEASE_BODY_PATH }}" -Value "$output" -NoNewline
+          $output >> $env:GITHUB_STEP_SUMMARY
+          Set-Content -Path "${{ env.RELEASE_BODY_PATH }}" -Value $output -NoNewline
 
-      - name: Release (Dev)
-        env:
-          CUSTOM_GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
-        if: env.CUSTOM_GITHUB_TOKEN != '' && env.REPO_DEV_BUILDS != '' && github.ref == 'refs/heads/develop'
+      - name: Publish development prerelease
+        if: github.ref == 'refs/heads/develop'
         uses: softprops/action-gh-release@v3
         with:
-          repository: ${{ env.REPO_DEV_BUILDS }}
-          token: ${{ env.CUSTOM_GITHUB_TOKEN }}
-          tag_name: v${{ env.APP_VERSION }}
-          name: ShareX ${{ env.APP_VERSION }} Dev
+          tag_name: v${{ env.APP_VERSION }}-hdr
+          target_commitish: ${{ github.sha }}
+          name: ShareX HDR ${{ env.APP_VERSION }} Dev
           body_path: ${{ env.RELEASE_BODY_PATH }}
           draft: false
-          prerelease: false
+          prerelease: true
+          fail_on_unmatched_files: true
           files: |
             Output/ShareX-${{ env.APP_VERSION }}-setup-x64.exe
-            # Output/ShareX-${{ env.APP_VERSION }}-setup-arm64.exe
             Output/ShareX-${{ env.APP_VERSION }}-portable-x64.zip
-            # Output/ShareX-${{ env.APP_VERSION }}-portable-arm64.zip
-            Output/ShareX-${{ env.APP_VERSION }}-debug-x64.zip
-            Output/ShareX-${{ env.APP_VERSION }}-debug-arm64.zip
-            Output/ShareX-${{ env.APP_VERSION }}-Steam-x64.zip
-            # Output/ShareX-${{ env.APP_VERSION }}-Steam-arm64.zip
-            Output/ShareX-${{ env.APP_VERSION }}-MicrosoftStore-x64.appx
-            Output/ShareX-${{ env.APP_VERSION }}-MicrosoftStore-arm64.appx
-            Output/ShareX-${{ env.APP_VERSION }}-MicrosoftStore-debug-x64.appx
-            Output/ShareX-${{ env.APP_VERSION }}-MicrosoftStore-debug-arm64.appx
 
-      - name: Release (Stable)
-        env:
-          CUSTOM_GITHUB_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN }}
-        if: env.CUSTOM_GITHUB_TOKEN != '' && startsWith(github.ref, 'refs/tags/v')
+      - name: Create stable release draft
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v3
         with:
-          repository: ${{ github.repository }}
-          token: ${{ env.CUSTOM_GITHUB_TOKEN }}
           tag_name: ${{ github.ref_name }}
-          name: ShareX ${{ env.APP_VERSION }}
+          name: ShareX HDR ${{ env.APP_VERSION }}
           body_path: ${{ env.RELEASE_BODY_PATH }}
+          generate_release_notes: true
           draft: true
-          prerelease: true
+          prerelease: false
+          fail_on_unmatched_files: true
           files: |
             Output/ShareX-${{ env.APP_VERSION }}-setup-x64.exe
-            # Output/ShareX-${{ env.APP_VERSION }}-setup-arm64.exe
             Output/ShareX-${{ env.APP_VERSION }}-portable-x64.zip
-            # Output/ShareX-${{ env.APP_VERSION }}-portable-arm64.zip
