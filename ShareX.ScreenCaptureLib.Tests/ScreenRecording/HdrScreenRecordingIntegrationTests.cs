@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Diagnostics;
 using System.Windows.Forms;
 using ShareX.ScreenCaptureLib;
 
@@ -7,7 +8,7 @@ namespace ShareX.ScreenCaptureLib.Tests.ScreenRecording;
 public sealed class HdrScreenRecordingIntegrationTests
 {
     [Fact]
-    public void HdrDesktopRecording_ProducesAnEncodedSdrVideo()
+    public async Task HdrDesktopRecording_ProducesVideoAndStopsPromptly()
     {
         if (!string.Equals(
             Environment.GetEnvironmentVariable("SHAREX_RUN_HDR_VIDEO_TESTS"),
@@ -49,7 +50,7 @@ public sealed class HdrScreenRecordingIntegrationTests
         {
             IsRecording = true,
             FPS = fps,
-            Duration = 2,
+            Duration = 0,
             CaptureArea = hdrScreen.Bounds,
             OutputPath = outputPath,
             DrawCursor = false,
@@ -63,6 +64,7 @@ public sealed class HdrScreenRecordingIntegrationTests
                 VideoSource = FFmpegCaptureDevice.GDIGrab.Value,
                 AudioSource = FFmpegCaptureDevice.None.Value,
                 VideoCodec = videoCodec,
+                UserArgs = "-init_hw_device vulkan=vk -filter_hw_device vk",
                 x264_Preset = FFmpegPreset.ultrafast,
                 x264_CRF = 35
             }
@@ -85,7 +87,35 @@ public sealed class HdrScreenRecordingIntegrationTests
                 screenshot,
                 hdrScreen.Bounds))
             {
-                recorder.StartRecording();
+                using var recordingStarted = new ManualResetEventSlim();
+                recorder.RecordingStarted += recordingStarted.Set;
+                CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+                Task recordingTask = Task.Run(recorder.StartRecording, cancellationToken);
+
+                try
+                {
+                    Assert.True(
+                        recordingStarted.Wait(TimeSpan.FromSeconds(5), cancellationToken),
+                        "The recorder did not start within five seconds.");
+                    await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+
+                    Stopwatch stopTimer = Stopwatch.StartNew();
+                    recorder.StopRecording();
+                    stopTimer.Stop();
+
+                    Assert.True(
+                        stopTimer.Elapsed < TimeSpan.FromSeconds(1),
+                        $"StopRecording blocked for {stopTimer.Elapsed.TotalMilliseconds:F0} ms.");
+                    await recordingTask.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+                }
+                finally
+                {
+                    if (!recordingTask.IsCompleted)
+                    {
+                        recorder.StopRecording();
+                        await recordingTask.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);
+                    }
+                }
             }
 
             Assert.True(File.Exists(outputPath));

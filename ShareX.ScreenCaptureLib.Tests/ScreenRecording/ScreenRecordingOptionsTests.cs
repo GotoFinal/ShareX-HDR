@@ -89,6 +89,32 @@ public sealed class ScreenRecordingOptionsTests
         Assert.Contains("-profile:v main10 -pix_fmt p010le", args);
     }
 
+    [Fact]
+    public void SharedFrameInput_RemovesCaptureHardwareDeviceArguments()
+    {
+        ScreenRecordingOptions options = CreateOptions();
+        options.FFmpeg.UserArgs =
+            "-init_hw_device vulkan=vk -filter_hw_device vk -metadata title=ShareX";
+
+        string args = options.GetFFmpegArgs(frameInputMode: ShareXFrameInputMode.Hdr10P010);
+
+        Assert.DoesNotContain("-init_hw_device", args);
+        Assert.DoesNotContain("-filter_hw_device", args);
+        Assert.Contains("-metadata title=ShareX", args);
+    }
+
+    [Fact]
+    public void FfmpegOwnedCapture_PreservesHardwareDeviceArguments()
+    {
+        ScreenRecordingOptions options = CreateOptions();
+        options.FFmpeg.UserArgs = "-init_hw_device vulkan=vk -filter_hw_device vk";
+
+        string args = options.GetFFmpegArgs();
+
+        Assert.Contains("-init_hw_device vulkan=vk", args);
+        Assert.Contains("-filter_hw_device vk", args);
+    }
+
     [Theory]
     [InlineData(true, false, ShareXFrameInputMode.None)]
     [InlineData(false, true, ShareXFrameInputMode.None)]

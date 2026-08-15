@@ -164,7 +164,7 @@ namespace ShareX.ScreenCaptureLib
                         if (frameInputMode != ShareXFrameInputMode.None)
                         {
                             string commands = Options.GetFFmpegCommands(frameInputMode);
-                            ffmpeg.RunWithStandardInput(
+                            RunWithFrameInput(
                                 commands,
                                 frameInputMode == ShareXFrameInputMode.Hdr10P010
                                     ? RecordUsingHdr10FrameInput
@@ -186,6 +186,54 @@ namespace ShareX.ScreenCaptureLib
                     IsRecording = false;
                 }
             }
+        }
+
+        private void RunWithFrameInput(string commands, Action<Stream> frameWriter)
+        {
+            bool showError = ffmpeg.ShowError;
+            ffmpeg.ShowError = false;
+
+            try
+            {
+                bool succeeded;
+                try
+                {
+                    succeeded = ffmpeg.RunWithStandardInput(commands, frameWriter);
+                }
+                catch (Exception ex) when (!stopRequested &&
+                    (ex is IOException || ex is ObjectDisposedException))
+                {
+                    throw CreateFrameInputException(ex);
+                }
+
+                if (!succeeded && !stopRequested)
+                {
+                    throw CreateFrameInputException();
+                }
+            }
+            finally
+            {
+                ffmpeg.ShowError = showError;
+            }
+        }
+
+        private IOException CreateFrameInputException(Exception innerException = null)
+        {
+            string output = ffmpeg?.Output?.ToString()?.Trim();
+            string message = "FFmpeg stopped accepting video frames.";
+
+            if (!string.IsNullOrEmpty(output))
+            {
+                DebugHelper.WriteLine("FFmpeg frame-input failure output:\r\n" + output);
+                string[] lines = output.Split(
+                    new[] { '\r', '\n' },
+                    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                int firstLine = Math.Max(0, lines.Length - 12);
+                string summary = string.Join(Environment.NewLine, lines, firstLine, lines.Length - firstLine);
+                message += Environment.NewLine + Environment.NewLine + summary;
+            }
+
+            return new IOException(message, innerException);
         }
 
         private ShareXFrameInputMode ResolveShareXFrameInputMode()
@@ -507,17 +555,14 @@ namespace ShareX.ScreenCaptureLib
         {
             stopRequested = true;
 
-            if (ffmpeg != null)
+            if (ffmpeg != null && frameInputMode == ShareXFrameInputMode.None)
             {
-                if (frameInputMode != ShareXFrameInputMode.None)
-                {
-                    ffmpeg.CloseInput();
-                }
-                else
-                {
-                    ffmpeg.Close();
-                }
+                ffmpeg.Close();
             }
+
+            // For ShareX frame input, the producer loop observes stopRequested
+            // and returns. ExternalCLIManager then closes stdin on its worker
+            // thread so the UI never blocks flushing a full or broken pipe.
         }
 
         public void SaveAsGIF(string path, GIFQuality quality)

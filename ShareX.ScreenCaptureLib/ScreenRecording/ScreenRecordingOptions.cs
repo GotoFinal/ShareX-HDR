@@ -30,6 +30,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 
 namespace ShareX.ScreenCaptureLib
@@ -298,9 +299,23 @@ namespace ShareX.ScreenCaptureLib
                 args.Append($"-i \"{InputPath}\" ");
             }
 
-            if (!string.IsNullOrEmpty(FFmpeg.UserArgs))
+            string userArgs = FFmpeg.UserArgs;
+            if (useShareXFrameInput)
             {
-                args.Append(FFmpeg.UserArgs + " ");
+                string compatibleUserArgs = GetShareXFrameInputCompatibleUserArgs(userArgs);
+                if (!string.Equals(userArgs?.Trim(), compatibleUserArgs, StringComparison.Ordinal))
+                {
+                    DebugHelper.WriteLine(
+                        "HDR video FFmpeg arguments | ignored incompatible hardware-device " +
+                        "initialization for ShareX raw-frame input");
+                }
+
+                userArgs = compatibleUserArgs;
+            }
+
+            if (!string.IsNullOrEmpty(userArgs))
+            {
+                args.Append(userArgs + " ");
             }
 
             FFmpegVideoCodec effectiveVideoCodec = GetEffectiveVideoCodec(frameInputMode);
@@ -463,6 +478,25 @@ namespace ShareX.ScreenCaptureLib
             args.Append($"\"{output}\"");
 
             return args.ToString();
+        }
+
+        internal static string GetShareXFrameInputCompatibleUserArgs(string userArgs)
+        {
+            if (string.IsNullOrWhiteSpace(userArgs))
+            {
+                return string.Empty;
+            }
+
+            // Hardware-device initialization is used by FFmpeg-owned capture and
+            // hardware filter graphs. ShareX frame input is already a CPU rawvideo
+            // stream, and stale Vulkan/D3D device arguments can make FFmpeg exit
+            // before it accepts the first frame.
+            string result = Regex.Replace(
+                userArgs,
+                @"(?<!\S)-(?:init_hw_device|filter_hw_device)(?:(?:\s+|=)(?:""[^""]*""|'[^']*'|\S+))",
+                " ",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            return Regex.Replace(result, @"\s{2,}", " ").Trim();
         }
 
         private static bool IsDesktopCaptureSource(string videoSource)
