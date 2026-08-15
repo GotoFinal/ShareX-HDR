@@ -38,6 +38,11 @@ namespace ShareX
     {
         protected static RegionCaptureType lastRegionCaptureType = RegionCaptureType.Default;
 
+        private bool rectangleSelectionOnly;
+        private Rectangle selectedRectangle;
+        private WindowInfo selectedWindowInfo;
+        private RegionCaptureOptions regionCaptureOptionsOverride;
+
         public RegionCaptureType RegionCaptureType { get; protected set; }
 
         public CaptureRegion()
@@ -47,6 +52,26 @@ namespace ShareX
         public CaptureRegion(RegionCaptureType regionCaptureType)
         {
             RegionCaptureType = regionCaptureType;
+        }
+
+        public static bool GetScreenRecordingRectangle(TaskSettings taskSettings,
+            out Rectangle rectangle, out WindowInfo windowInfo)
+        {
+            var capture = new CaptureRegion
+            {
+                rectangleSelectionOnly = true,
+                regionCaptureOptionsOverride = RegionCaptureTasks.CreateRectangleRegionOptions(
+                    taskSettings.CaptureSettings.SurfaceOptions)
+            };
+
+            RegionCaptureOptions sourceOptions = taskSettings.CaptureSettings.SurfaceOptions;
+            capture.regionCaptureOptionsOverride.UseDimming = sourceOptions.UseDimming;
+            capture.regionCaptureOptionsOverride.BackgroundDimStrength = sourceOptions.BackgroundDimStrength;
+
+            capture.ExecuteRegionCapture(taskSettings);
+            rectangle = capture.selectedRectangle;
+            windowInfo = capture.selectedWindowInfo;
+            return !rectangle.IsEmpty;
         }
 
         protected override TaskMetadata Execute(TaskSettings taskSettings)
@@ -67,7 +92,7 @@ namespace ShareX
         {
             RegionCaptureMode mode;
 
-            if (taskSettings.AdvancedSettings.RegionCaptureDisableAnnotation)
+            if (rectangleSelectionOnly || taskSettings.AdvancedSettings.RegionCaptureDisableAnnotation)
             {
                 mode = RegionCaptureMode.Default;
             }
@@ -77,7 +102,9 @@ namespace ShareX
             }
 
             Bitmap canvas = null;
-            Screenshot screenshot = TaskHelpers.GetScreenshot(taskSettings);
+            Screenshot screenshot = rectangleSelectionOnly
+                ? TaskHelpers.GetScreenshotWithoutCursor(taskSettings)
+                : TaskHelpers.GetScreenshot(taskSettings);
             HdrCaptureSettings hdrSettings =
                 taskSettings.CaptureSettings.HdrSettings ?? new HdrCaptureSettings();
             HdrImageDocument hdrCanvasDocument = null;
@@ -124,7 +151,7 @@ namespace ShareX
             try
             {
                 using (RegionCaptureForm form = new RegionCaptureForm(mode,
-                    taskSettings.CaptureSettingsReference.SurfaceOptions,
+                    regionCaptureOptionsOverride ?? taskSettings.CaptureSettingsReference.SurfaceOptions,
                     canvas,
                     screenshot,
                     allowEmptyCanvas: deferredHdrSurface))
@@ -302,6 +329,16 @@ namespace ShareX
                     form.ShowDialog();
 
                     Rectangle selectedRectangle = form.GetSelectedRectangle();
+                    if (rectangleSelectionOnly)
+                    {
+                        this.selectedRectangle = selectedRectangle;
+                        selectedWindowInfo = form.GetWindowInfo();
+                        DebugHelper.WriteLine(
+                            $"Screen recording region selector | result={form.Result} " +
+                            $"quickCrop={form.Options.QuickCrop} selected={selectedRectangle}");
+                        return null;
+                    }
+
                     HdrImageDocument resultHdrDocument = null;
                     Bitmap result = null;
 

@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Diagnostics;
+using System.Text;
 using System.Windows.Forms;
 using ShareX.ScreenCaptureLib;
 
@@ -120,6 +121,21 @@ public sealed class HdrScreenRecordingIntegrationTests
 
             Assert.True(File.Exists(outputPath));
             Assert.True(new FileInfo(outputPath).Length > 1024);
+
+            if (recordNativeHdr10)
+            {
+                string ffprobePath = Path.Combine(
+                    Path.GetDirectoryName(ffmpegPath!)!,
+                    "ffprobe.exe");
+                if (File.Exists(ffprobePath))
+                {
+                    string metadata = ProbeFirstVideoFrame(ffprobePath, outputPath);
+                    Assert.Contains("\"color_transfer\": \"smpte2084\"", metadata);
+                    Assert.Contains("\"color_primaries\": \"bt2020\"", metadata);
+                    Assert.Contains("\"side_data_type\": \"Mastering display metadata\"", metadata);
+                    Assert.Contains("\"side_data_type\": \"Content light level metadata\"", metadata);
+                }
+            }
         }
         finally
         {
@@ -128,5 +144,45 @@ public sealed class HdrScreenRecordingIntegrationTests
                 File.Delete(outputPath);
             }
         }
+    }
+
+    private static string ProbeFirstVideoFrame(string ffprobePath, string videoPath)
+    {
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = ffprobePath,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
+            }
+        };
+        process.StartInfo.ArgumentList.Add("-v");
+        process.StartInfo.ArgumentList.Add("error");
+        process.StartInfo.ArgumentList.Add("-select_streams");
+        process.StartInfo.ArgumentList.Add("v:0");
+        process.StartInfo.ArgumentList.Add("-read_intervals");
+        process.StartInfo.ArgumentList.Add("%+#1");
+        process.StartInfo.ArgumentList.Add("-show_frames");
+        process.StartInfo.ArgumentList.Add("-show_entries");
+        process.StartInfo.ArgumentList.Add(
+            "frame=color_space,color_primaries,color_transfer,side_data_list,pix_fmt");
+        process.StartInfo.ArgumentList.Add("-of");
+        process.StartInfo.ArgumentList.Add("json");
+        process.StartInfo.ArgumentList.Add(videoPath);
+
+        process.Start();
+        string output = process.StandardOutput.ReadToEnd();
+        string error = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+
+        Assert.True(
+            process.ExitCode == 0,
+            $"ffprobe exited with code {process.ExitCode}: {error}");
+        return output;
     }
 }

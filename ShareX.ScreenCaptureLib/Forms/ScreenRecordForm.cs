@@ -104,22 +104,7 @@ namespace ShareX.ScreenCaptureLib
             borderRectangle0Based = new Rectangle(0, 0, borderRectangle.Width, borderRectangle.Height);
 
             Location = borderRectangle.Location;
-            int windowWidth = Math.Max(borderRectangle.Width, pInfo.Width);
-            Size = new Size(windowWidth, borderRectangle.Height + panelOffset + pInfo.Height);
-            pInfo.Location = new Point(0, borderRectangle.Height + panelOffset);
-
-            Region region = new Region(ClientRectangle);
-            region.Exclude(borderRectangle0Based.Offset(-1));
-            region.Exclude(new Rectangle(0, borderRectangle.Height, windowWidth, panelOffset));
-            if (borderRectangle.Width < pInfo.Width)
-            {
-                region.Exclude(new Rectangle(borderRectangle.Width, 0, pInfo.Width - borderRectangle.Width, borderRectangle.Height));
-            }
-            else if (borderRectangle.Width > pInfo.Width)
-            {
-                region.Exclude(new Rectangle(pInfo.Width, borderRectangle.Height + panelOffset, borderRectangle.Width - pInfo.Width, pInfo.Height));
-            }
-            Region = region;
+            UpdateWindowLayout(false);
 
             Timer = new Stopwatch();
             UpdateTimer();
@@ -127,6 +112,41 @@ namespace ShareX.ScreenCaptureLib
             RecordResetEvent = new ManualResetEvent(false);
 
             ChangeState(ScreenRecordState.Waiting);
+        }
+
+        private void UpdateWindowLayout(bool restoreCaptureLocation)
+        {
+            int scaledPanelOffset = Math.Max(1, LogicalToDeviceUnits(panelOffset));
+            int windowWidth = Math.Max(borderRectangle.Width, pInfo.Width);
+            ClientSize = new Size(windowWidth, borderRectangle.Height + scaledPanelOffset + pInfo.Height);
+            pInfo.Location = new Point(0, borderRectangle.Height + scaledPanelOffset);
+
+            if (restoreCaptureLocation)
+            {
+                Location = borderRectangle.Location;
+            }
+
+            Region region = new Region(ClientRectangle);
+            region.Exclude(borderRectangle0Based.Offset(-1));
+            region.Exclude(new Rectangle(0, borderRectangle.Height, windowWidth, scaledPanelOffset));
+            if (borderRectangle.Width < pInfo.Width)
+            {
+                region.Exclude(new Rectangle(borderRectangle.Width, 0, pInfo.Width - borderRectangle.Width, borderRectangle.Height));
+            }
+            else if (borderRectangle.Width > pInfo.Width)
+            {
+                region.Exclude(new Rectangle(pInfo.Width, borderRectangle.Height + scaledPanelOffset, borderRectangle.Width - pInfo.Width, pInfo.Height));
+            }
+
+            Region oldRegion = Region;
+            Region = region;
+            oldRegion?.Dispose();
+        }
+
+        protected override void OnDpiChanged(DpiChangedEventArgs e)
+        {
+            base.OnDpiChanged(e);
+            UpdateWindowLayout(false);
         }
 
         protected override void Dispose(bool disposing)
@@ -394,6 +414,11 @@ namespace ShareX.ScreenCaptureLib
 
         private void ScreenRegionForm_Shown(object sender, EventArgs e)
         {
+            // Auto-scaling happens after construction. Rebuild the shaped window
+            // using the destination monitor's final DPI so the toolbar is not
+            // clipped out of the form region on mixed-DPI desktops.
+            UpdateWindowLayout(true);
+
             if (ActivateWindow)
             {
                 this.ForceActivate();

@@ -7,6 +7,23 @@ namespace ShareX.ScreenCaptureLib.Tests;
 public sealed class RegionCaptureTasksTests
 {
     [Fact]
+    public void CreateRectangleRegionOptions_UsesQuickCropWithoutMutatingSource()
+    {
+        var source = new RegionCaptureOptions
+        {
+            QuickCrop = false,
+            ShowMagnifier = false
+        };
+
+        RegionCaptureOptions result = RegionCaptureTasks.CreateRectangleRegionOptions(source);
+
+        Assert.NotSame(source, result);
+        Assert.True(result.QuickCrop);
+        Assert.False(result.ShowMagnifier);
+        Assert.False(source.QuickCrop);
+    }
+
+    [Fact]
     public void GetRegionPathArea_UsesRetainedSelectionPathBounds()
     {
         using var selectedRegion = new GraphicsPath();

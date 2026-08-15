@@ -111,7 +111,9 @@ namespace ShareX.ScreenCaptureLib
                 : ShareXFrameInputMode.ToneMappedBgra;
         }
 
-        public string GetFFmpegCommands(ShareXFrameInputMode frameInputMode = ShareXFrameInputMode.None)
+        public string GetFFmpegCommands(
+            ShareXFrameInputMode frameInputMode = ShareXFrameInputMode.None,
+            bool includeHdrStaticMetadata = true)
         {
             string commands;
             bool useShareXFrameInput = frameInputMode != ShareXFrameInputMode.None;
@@ -143,7 +145,9 @@ namespace ShareX.ScreenCaptureLib
             }
             else
             {
-                commands = GetFFmpegArgs(frameInputMode: frameInputMode);
+                commands = GetFFmpegArgs(
+                    frameInputMode: frameInputMode,
+                    includeHdrStaticMetadata: includeHdrStaticMetadata);
             }
 
             return commands.Trim();
@@ -151,7 +155,8 @@ namespace ShareX.ScreenCaptureLib
 
         public string GetFFmpegArgs(
             bool isCustom = false,
-            ShareXFrameInputMode frameInputMode = ShareXFrameInputMode.None)
+            ShareXFrameInputMode frameInputMode = ShareXFrameInputMode.None,
+            bool includeHdrStaticMetadata = true)
         {
             if (IsRecording && !FFmpeg.IsVideoSourceSelected && !FFmpeg.IsAudioSourceSelected)
             {
@@ -181,6 +186,11 @@ namespace ShareX.ScreenCaptureLib
 
                     string width = isCustom ? "$area_width$" : CaptureArea.Width.ToString();
                     string height = isCustom ? "$area_height$" : CaptureArea.Height.ToString();
+
+                    if (isHdr10)
+                    {
+                        AppendHdr10InputMetadata(args, includeHdrStaticMetadata);
+                    }
 
                     args.Append("-f rawvideo ");
                     args.Append("-thread_queue_size 1024 ");
@@ -529,6 +539,43 @@ namespace ShareX.ScreenCaptureLib
 
         private string GetX265HdrParameters()
         {
+            var metadata = GetHdr10StaticMetadata();
+
+            return string.Create(
+                CultureInfo.InvariantCulture,
+                $"hdr10=1:hdr10-opt=1:repeat-headers=1:colorprim=9:transfer=16:colormatrix=9:" +
+                $"master-display=G(8500,39850)B(6550,2300)R(35400,14600)" +
+                $"WP(15635,16450)L({metadata.MaximumLuminance},{metadata.MinimumLuminance}):" +
+                $"max-cll={metadata.MaxCll},{metadata.MaxFall}");
+        }
+
+        private void AppendHdr10InputMetadata(StringBuilder args, bool includeStaticMetadata)
+        {
+            var metadata = GetHdr10StaticMetadata();
+            string masteringDisplay = string.Create(
+                CultureInfo.InvariantCulture,
+                $"G(8500,39850)B(6550,2300)R(35400,14600)" +
+                $"WP(15635,16450)L({metadata.MaximumLuminance},{metadata.MinimumLuminance})");
+
+            // FFmpeg's rawvideo demuxer cannot infer color properties or HDR side
+            // data from P010 bytes. These are input options intentionally placed
+            // before -i pipe:0 so encoders such as NVENC receive BT.2020/PQ frames
+            // and can emit HDR10 mastering-display and content-light SEI messages.
+            args.Append("-color_primaries bt2020 ");
+            args.Append("-color_trc smpte2084 ");
+            args.Append("-colorspace bt2020nc ");
+            args.Append("-color_range tv ");
+
+            if (includeStaticMetadata)
+            {
+                args.Append($"-mastering_display {Helpers.EscapeCLIText(masteringDisplay)} ");
+                args.Append($"-content_light {metadata.MaxCll},{metadata.MaxFall} ");
+            }
+        }
+
+        private (int MaximumLuminance, int MinimumLuminance, int MaxCll, int MaxFall)
+            GetHdr10StaticMetadata()
+        {
             float maximumNits = Math.Clamp(
                 HdrMasteringMaximumNits,
                 HdrFileOutputSettings.MinimumMasteringDisplayNits,
@@ -541,13 +588,7 @@ namespace ShareX.ScreenCaptureLib
             int minimumLuminance = checked((int)MathF.Round(minimumNits * 10000f));
             int maxCll = checked((int)MathF.Round(maximumNits));
             int maxFall = Math.Min(maxCll, 400);
-
-            return string.Create(
-                CultureInfo.InvariantCulture,
-                $"hdr10=1:hdr10-opt=1:repeat-headers=1:colorprim=9:transfer=16:colormatrix=9:" +
-                $"master-display=G(8500,39850)B(6550,2300)R(35400,14600)" +
-                $"WP(15635,16450)L({maximumLuminance},{minimumLuminance}):" +
-                $"max-cll={maxCll},{maxFall}");
+            return (maximumLuminance, minimumLuminance, maxCll, maxFall);
         }
 
         private void AppendInputDevice(StringBuilder args, string inputDevice, bool audioSource)

@@ -86,6 +86,11 @@ namespace ShareX.ScreenCaptureLib
             return !rect.IsEmpty;
         }
 
+        public static RegionCaptureOptions CreateRectangleRegionOptions(RegionCaptureOptions options)
+        {
+            return GetRegionCaptureOptions(options);
+        }
+
         public static bool GetRectangleRegionTransparent(out Rectangle rect)
         {
             using (RegionCaptureLightForm regionCaptureTransparentForm = new RegionCaptureLightForm(null))

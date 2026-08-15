@@ -70,8 +70,17 @@ public sealed class ScreenRecordingOptionsTests
         Assert.Contains("-color_primaries bt2020", args);
         Assert.Contains("-color_trc smpte2084", args);
         Assert.Contains("-colorspace bt2020nc", args);
+        Assert.Contains(
+            "-mastering_display \"G(8500,39850)B(6550,2300)R(35400,14600)" +
+            "WP(15635,16450)L(10000000,5)\"",
+            args);
+        Assert.Contains("-content_light 1000,400", args);
         Assert.Contains("master-display=G(8500,39850)B(6550,2300)R(35400,14600)", args);
         Assert.Contains("max-cll=1000,400", args);
+
+        int metadataIndex = args.IndexOf("-mastering_display", StringComparison.Ordinal);
+        int inputIndex = args.IndexOf("-i pipe:0", StringComparison.Ordinal);
+        Assert.True(metadataIndex >= 0 && metadataIndex < inputIndex);
     }
 
     [Fact]
@@ -87,6 +96,26 @@ public sealed class ScreenRecordingOptionsTests
             options.GetEffectiveVideoCodec(ShareXFrameInputMode.Hdr10P010));
         Assert.Contains("-c:v hevc_nvenc", args);
         Assert.Contains("-profile:v main10 -pix_fmt p010le", args);
+    }
+
+    [Fact]
+    public void Hdr10FrameInput_WithoutNewStaticMetadataOptions_RetainsPqColorSignaling()
+    {
+        ScreenRecordingOptions options = CreateOptions();
+
+        string args = options.GetFFmpegArgs(
+            frameInputMode: ShareXFrameInputMode.Hdr10P010,
+            includeHdrStaticMetadata: false);
+
+        Assert.DoesNotContain("-mastering_display", args);
+        Assert.DoesNotContain("-content_light", args);
+        Assert.Contains("-color_primaries bt2020", args);
+        Assert.Contains("-color_trc smpte2084", args);
+        Assert.Contains("-colorspace bt2020nc", args);
+
+        int colorIndex = args.IndexOf("-color_primaries bt2020", StringComparison.Ordinal);
+        int inputIndex = args.IndexOf("-i pipe:0", StringComparison.Ordinal);
+        Assert.True(colorIndex >= 0 && colorIndex < inputIndex);
     }
 
     [Fact]

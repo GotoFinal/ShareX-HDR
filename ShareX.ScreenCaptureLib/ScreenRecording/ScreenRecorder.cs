@@ -26,6 +26,7 @@
 using ShareX.HelpersLib;
 using ShareX.MediaLib;
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -107,6 +108,8 @@ namespace ShareX.ScreenCaptureLib
         private volatile bool stopRequested;
         private ShareXFrameInputMode frameInputMode;
         private int recordingStartedRaised;
+        private static readonly ConcurrentDictionary<string, bool> hdrInputMetadataSupport =
+            new(StringComparer.OrdinalIgnoreCase);
 
         public ScreenRecorder(ScreenRecordOutput outputType, ScreenRecordingOptions options, Screenshot screenshot, Rectangle captureRectangle)
         {
@@ -163,7 +166,25 @@ namespace ShareX.ScreenCaptureLib
 
                         if (frameInputMode != ShareXFrameInputMode.None)
                         {
-                            string commands = Options.GetFFmpegCommands(frameInputMode);
+                            bool includeHdrStaticMetadata =
+                                frameInputMode != ShareXFrameInputMode.Hdr10P010 ||
+                                SupportsFfmpegHdrInputMetadata(Options.FFmpeg.FFmpegPath);
+                            if (frameInputMode == ShareXFrameInputMode.Hdr10P010)
+                            {
+                                DebugHelper.WriteLine(
+                                    $"HDR10 FFmpeg metadata | staticSei={includeHdrStaticMetadata}");
+                                if (!includeHdrStaticMetadata)
+                                {
+                                    DebugHelper.WriteLine(
+                                        "HDR10 FFmpeg metadata fallback | static mastering-display and " +
+                                        "content-light input options are unavailable; retaining " +
+                                        "10-bit BT.2020/PQ signaling without static HDR SEI");
+                                }
+                            }
+
+                            string commands = Options.GetFFmpegCommands(
+                                frameInputMode,
+                                includeHdrStaticMetadata);
                             RunWithFrameInput(
                                 commands,
                                 frameInputMode == ShareXFrameInputMode.Hdr10P010
@@ -185,6 +206,98 @@ namespace ShareX.ScreenCaptureLib
                 {
                     IsRecording = false;
                 }
+            }
+        }
+
+        private static bool SupportsFfmpegHdrInputMetadata(string ffmpegPath)
+        {
+            if (string.IsNullOrWhiteSpace(ffmpegPath))
+            {
+                return false;
+            }
+
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(ffmpegPath);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+
+            try
+            {
+                var file = new FileInfo(fullPath);
+                string cacheKey = string.Create(
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    $"{fullPath}|{file.Length}|{file.LastWriteTimeUtc.Ticks}");
+                return hdrInputMetadataSupport.GetOrAdd(
+                    cacheKey,
+                    _ => ProbeFfmpegHdrInputMetadata(fullPath));
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private static bool ProbeFfmpegHdrInputMetadata(string ffmpegPath)
+        {
+            if (!File.Exists(ffmpegPath))
+            {
+                return false;
+            }
+
+            try
+            {
+                using var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = ffmpegPath,
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true
+                    }
+                };
+                process.StartInfo.ArgumentList.Add("-hide_banner");
+                process.StartInfo.ArgumentList.Add("-loglevel");
+                process.StartInfo.ArgumentList.Add("error");
+                process.StartInfo.ArgumentList.Add("-mastering_display");
+                process.StartInfo.ArgumentList.Add(
+                    "G(8500,39850)B(6550,2300)R(35400,14600)" +
+                    "WP(15635,16450)L(10000000,5)");
+                process.StartInfo.ArgumentList.Add("-content_light");
+                process.StartInfo.ArgumentList.Add("1000,400");
+                process.StartInfo.ArgumentList.Add("-f");
+                process.StartInfo.ArgumentList.Add("lavfi");
+                process.StartInfo.ArgumentList.Add("-i");
+                process.StartInfo.ArgumentList.Add("color=size=16x16");
+                process.StartInfo.ArgumentList.Add("-frames:v");
+                process.StartInfo.ArgumentList.Add("1");
+                process.StartInfo.ArgumentList.Add("-f");
+                process.StartInfo.ArgumentList.Add("null");
+                process.StartInfo.ArgumentList.Add("NUL");
+
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                if (!process.WaitForExit(5000))
+                {
+                    process.Kill(entireProcessTree: true);
+                    process.WaitForExit();
+                    return false;
+                }
+
+                return process.ExitCode == 0;
+            }
+            catch (Exception ex)
+            {
+                DebugHelper.WriteLine(
+                    $"HDR10 FFmpeg metadata capability probe failed: {ex.Message}");
+                return false;
             }
         }
 
