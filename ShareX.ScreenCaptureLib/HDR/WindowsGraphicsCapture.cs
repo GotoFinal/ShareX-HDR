@@ -29,6 +29,7 @@ using Vortice.DXGI;
 using Windows.Graphics.Capture;
 using Windows.Graphics.DirectX;
 using Windows.Graphics.DirectX.Direct3D11;
+using Windows.Security.Authorization.AppCapabilityAccess;
 using WinRtDirect3DDevice = Windows.Graphics.DirectX.Direct3D11.IDirect3DDevice;
 using WinRtDirect3DSurface = Windows.Graphics.DirectX.Direct3D11.IDirect3DSurface;
 using D3DBox = Vortice.Mathematics.Box;
@@ -40,7 +41,7 @@ namespace ShareX.ScreenCaptureLib
     {
         private const int CaptureTimeoutMilliseconds = 1500;
         private const int FreshFrameGraceMilliseconds = 100;
-        private const int NormalSessionIdleMilliseconds = 10000;
+        private const int NormalContextIdleMilliseconds = 10000;
         private const int RpcEChangedMode = unchecked((int)0x80010106);
         private const uint MonitorDefaultToNearest = 2;
 
@@ -49,7 +50,10 @@ namespace ShareX.ScreenCaptureLib
         private static readonly Guid Direct3DDxgiInterfaceAccessGuid = new Guid("A9B3D012-3DF2-4EE3-B8D1-8695F457D3C1");
         private const string GraphicsCaptureItemRuntimeClass = "Windows.Graphics.Capture.GraphicsCaptureItem";
         private static readonly object normalCaptureWorkerSync = new object();
+        private static readonly object borderlessCaptureAccessSync = new object();
         private static NormalCaptureWorker normalCaptureWorker;
+        private static bool borderlessCaptureAccessRequested;
+        private static bool borderlessCaptureAccessAllowed;
         internal static Action<string> PerformanceLogSink { get; set; }
 
         internal static bool HasActiveHdrDisplay(Rectangle captureRectangle)
@@ -482,6 +486,36 @@ namespace ShareX.ScreenCaptureLib
             }
         }
 
+        private static bool EnsureBorderlessCaptureAccess()
+        {
+            lock (borderlessCaptureAccessSync)
+            {
+                if (borderlessCaptureAccessRequested)
+                {
+                    return borderlessCaptureAccessAllowed;
+                }
+
+                borderlessCaptureAccessRequested = true;
+
+                try
+                {
+                    AppCapabilityAccessStatus status = GraphicsCaptureAccess.RequestAccessAsync(
+                        GraphicsCaptureAccessKind.Borderless).AsTask().GetAwaiter().GetResult();
+                    borderlessCaptureAccessAllowed = status == AppCapabilityAccessStatus.Allowed;
+                    Log(
+                        $"borderless-access status={status} allowed={borderlessCaptureAccessAllowed}");
+                }
+                catch (Exception e)
+                {
+                    Log(
+                        $"borderless-access status=unavailable reason={e.GetType().Name} hresult=0x{e.HResult:X8}");
+                    DebugHelper.WriteException(e, "Borderless Windows Graphics Capture access request failed.");
+                }
+
+                return borderlessCaptureAccessAllowed;
+            }
+        }
+
         private static HdrImageDocument CaptureSingleTargetHdr(
             Rectangle captureRectangle,
             MonitorCaptureTarget target,
@@ -727,6 +761,25 @@ namespace ShareX.ScreenCaptureLib
                 }
             }
 
+            public void ReleaseMonitorSessions(string reason)
+            {
+                if (disposed || monitorSessions.Count == 0)
+                {
+                    return;
+                }
+
+                EnsureOwnerThread();
+                int sessionCount = monitorSessions.Count;
+
+                foreach (D3D11CaptureDevice.MonitorCaptureSession session in monitorSessions.Values)
+                {
+                    session.Dispose();
+                }
+
+                monitorSessions.Clear();
+                Log($"session=release count={sessionCount} reason={reason}");
+            }
+
             public void Prewarm()
             {
                 EnsureInitialized();
@@ -787,12 +840,7 @@ namespace ShareX.ScreenCaptureLib
                     EnsureOwnerThread();
                 }
 
-                foreach (D3D11CaptureDevice.MonitorCaptureSession session in monitorSessions.Values)
-                {
-                    session.Dispose();
-                }
-
-                monitorSessions.Clear();
+                ReleaseMonitorSessions("context-dispose");
                 captureDevice?.Dispose();
                 captureDevice = null;
 
@@ -910,16 +958,31 @@ namespace ShareX.ScreenCaptureLib
                             }
                             finally
                             {
+                                try
+                                {
+                                    // A normal still capture only needs one frame. Retain the
+                                    // expensive D3D device for the short idle cache, but close the
+                                    // Windows capture sessions before returning so the operating
+                                    // system's capture indicator cannot linger after the screenshot.
+                                    captureContext?.ReleaseMonitorSessions("one-shot-complete");
+                                }
+                                catch (Exception e)
+                                {
+                                    DebugHelper.WriteException(
+                                        e,
+                                        "One-shot HDR capture session cleanup failed.");
+                                }
+
                                 request.Completion.Set();
                             }
                         }
                         else if (captureContext != null &&
                             Stopwatch.GetElapsedTime(lastUseTimestamp).TotalMilliseconds >=
-                                NormalSessionIdleMilliseconds)
+                                NormalContextIdleMilliseconds)
                         {
                             captureContext.Dispose();
                             captureContext = null;
-                            Log($"session-cache=expired idleMs={NormalSessionIdleMilliseconds}");
+                            Log($"context-cache=expired idleMs={NormalContextIdleMilliseconds}");
                         }
                     }
                 }
@@ -1301,14 +1364,20 @@ namespace ShareX.ScreenCaptureLib
                         session = framePool.CreateCaptureSession(item);
                         session.IsCursorCaptureEnabled = false;
 
-                        try
+                        if (EnsureBorderlessCaptureAccess())
                         {
-                            session.IsBorderRequired = false;
-                        }
-                        catch
-                        {
-                            // Borderless capture can require explicit OS permission.
-                            // Cursor suppression remains mandatory and independent.
+                            try
+                            {
+                                session.IsBorderRequired = false;
+                            }
+                            catch (Exception e)
+                            {
+                                Log(
+                                    $"borderless-session enabled=False reason={e.GetType().Name} hresult=0x{e.HResult:X8}");
+                                DebugHelper.WriteException(
+                                    e,
+                                    "Disabling the Windows Graphics Capture border failed.");
+                            }
                         }
 
                         session.StartCapture();
