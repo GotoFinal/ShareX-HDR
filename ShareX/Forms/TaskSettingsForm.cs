@@ -64,7 +64,7 @@ namespace ShareX
         private ComboBox cbHdrOpenExrExposure;
         private Label lblHdrEncoderAvailability;
         private CheckBox cbEnableEditorHdrPreview;
-        private CheckBox cbEnableRegionSelectorHdrPreview;
+        private CheckBox cbEnableNativeHdrRegionSelectorPreview;
         private CheckBox cbHdrUploadWithFileUploader;
         private CheckBox cbHdrFlattenTransparencyForUltraHdr;
         private NumericUpDown nudHdrMasteringMaximumNits;
@@ -1823,22 +1823,22 @@ namespace ShareX
             };
             pHdrFileOutput.Controls.Add(cbEnableEditorHdrPreview);
 
-            cbEnableRegionSelectorHdrPreview = new CheckBox
+            cbEnableNativeHdrRegionSelectorPreview = new CheckBox
             {
                 AutoSize = false,
                 Location = new Point(4, 535),
                 Size = new Size(514, 24),
                 Text = "Show the full region selector through the native HDR preview (experimental)"
             };
-            cbEnableRegionSelectorHdrPreview.CheckedChanged += (_, _) =>
+            cbEnableNativeHdrRegionSelectorPreview.CheckedChanged += (_, _) =>
             {
                 if (loaded)
                 {
-                    GetHdrCaptureSettings().EnableRegionSelectorHdrPreview =
-                        cbEnableRegionSelectorHdrPreview.Checked;
+                    GetHdrCaptureSettings().EnableNativeHdrRegionSelectorPreview =
+                        cbEnableNativeHdrRegionSelectorPreview.Checked;
                 }
             };
-            pHdrFileOutput.Controls.Add(cbEnableRegionSelectorHdrPreview);
+            pHdrFileOutput.Controls.Add(cbEnableNativeHdrRegionSelectorPreview);
 
             lblHdrEncoderAvailability = new Label
             {
@@ -1966,8 +1966,8 @@ namespace ShareX
             nudHdrMixedMonitorWhiteNits.SetValue(
                 (decimal)captureSettings.MixedMonitorCustomSdrWhiteNits);
             cbEnableEditorHdrPreview.Checked = captureSettings.EnableEditorHdrPreview;
-            cbEnableRegionSelectorHdrPreview.Checked =
-                captureSettings.EnableRegionSelectorHdrPreview;
+            cbEnableNativeHdrRegionSelectorPreview.Checked =
+                captureSettings.EnableNativeHdrRegionSelectorPreview;
             UpdateHdrFileOutputControlsEnabled();
         }
 

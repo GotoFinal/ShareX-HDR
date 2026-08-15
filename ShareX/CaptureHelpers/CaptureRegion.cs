@@ -116,7 +116,7 @@ namespace ShareX
                 : CaptureHelpers.GetScreenBounds();
             bool deferredHdrSurface = false;
 
-            if (screenshot.UseHDRSupport && hdrSettings.EnableRegionSelectorHdrPreview)
+            if (screenshot.UseHDRSupport && hdrSettings.EnableNativeHdrRegionSelectorPreview)
             {
                 try
                 {
@@ -167,7 +167,7 @@ namespace ShareX
                         });
                     }
 
-                    if (hdrCanvasDocument != null && hdrSettings.EnableRegionSelectorHdrPreview)
+                    if (hdrCanvasDocument != null && hdrSettings.EnableNativeHdrRegionSelectorPreview)
                     {
                         try
                         {
@@ -204,7 +204,8 @@ namespace ShareX
                                         pixels.PixelBytes.Span.Slice(pixelOffset),
                                         pixels.RowBytes,
                                         localBounds.Width,
-                                        localBounds.Height);
+                                        localBounds.Height,
+                                        requireHdrOutput: true);
                                     hdrRegionPreviews.Add((presenter, screenBounds));
                                 }
                                 else
@@ -263,6 +264,11 @@ namespace ShareX
                                     foreach ((WindowsHdrPreviewPresenter presenter, Rectangle bounds) in hdrRegionPreviews)
                                     {
                                         presenter.UpdateLayout(bounds, bounds, form.Handle);
+                                        DebugHelper.WriteLine(
+                                            $"HDR region selector presenter | display={presenter.OutputDeviceName} " +
+                                            $"adapter={presenter.AdapterDescription} " +
+                                            $"outputColorSpace={presenter.OutputColorSpace} " +
+                                            $"present=0x{presenter.LastPresentResultCode:X8}");
                                     }
                                     if (hdrRegionDim != null)
                                     {

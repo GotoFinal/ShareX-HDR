@@ -100,7 +100,13 @@ namespace ShareX.ScreenCaptureLib
         private HdrFileOutputSettings fileOutput = new HdrFileOutputSettings();
 
         public bool EnableEditorHdrPreview { get; set; } = true;
-        public bool EnableRegionSelectorHdrPreview { get; set; } = true;
+
+        // This intentionally has a new serialized name. The original
+        // EnableRegionSelectorHdrPreview option defaulted to true; leaving that
+        // legacy property unmapped resets the experimental presenter to the
+        // safer false default once for existing installations. Users can then
+        // explicitly opt in again through the renamed setting.
+        public bool EnableNativeHdrRegionSelectorPreview { get; set; } = false;
 
         public HdrFileOutputSettings FileOutput
         {

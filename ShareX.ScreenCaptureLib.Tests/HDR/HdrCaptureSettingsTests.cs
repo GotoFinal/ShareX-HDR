@@ -1,3 +1,4 @@
+using Newtonsoft.Json;
 using ShareX.ScreenCaptureLib;
 
 namespace ShareX.ScreenCaptureLib.Tests.HDR;
@@ -12,7 +13,8 @@ public sealed class HdrCaptureSettingsTests
 
         Assert.Equal(HdrProcessingBackend.Gpu, settings.ProcessingBackend);
         Assert.True(settings.EnableEditorHdrPreview);
-        Assert.True(settings.EnableRegionSelectorHdrPreview);
+        Assert.False(settings.EnableNativeHdrRegionSelectorPreview);
+        Assert.Null(typeof(HdrCaptureSettings).GetProperty("EnableRegionSelectorHdrPreview"));
         Assert.Equal(HdrPeakBrightnessMode.Automatic, settings.PeakBrightnessMode);
         Assert.Equal(HdrPaperWhiteMode.Automatic, settings.PaperWhiteMode);
         Assert.Equal(HdrCaptureSettings.DefaultBrightnessNits, settings.PaperWhiteNits);
@@ -27,6 +29,28 @@ public sealed class HdrCaptureSettingsTests
         settings.ProcessingBackend = (HdrProcessingBackend)99;
 
         Assert.Equal(HdrProcessingBackend.Gpu, settings.ProcessingBackend);
+    }
+
+    [Fact]
+    public void LegacyRegionSelectorPreviewSetting_IsResetButCanBeEnabledAgain()
+    {
+        const string legacyJson = """
+            {
+              "EnableRegionSelectorHdrPreview": true
+            }
+            """;
+
+        HdrCaptureSettings? settings =
+            JsonConvert.DeserializeObject<HdrCaptureSettings>(legacyJson);
+
+        Assert.NotNull(settings);
+        Assert.False(settings.EnableNativeHdrRegionSelectorPreview);
+
+        settings.EnableNativeHdrRegionSelectorPreview = true;
+
+        string updatedJson = JsonConvert.SerializeObject(settings);
+        Assert.Contains("\"EnableNativeHdrRegionSelectorPreview\":true", updatedJson);
+        Assert.DoesNotContain("\"EnableRegionSelectorHdrPreview\"", updatedJson);
     }
 
     [Fact]
