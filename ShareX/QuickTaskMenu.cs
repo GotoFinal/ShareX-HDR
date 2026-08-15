@@ -112,12 +112,12 @@ namespace ShareX
 
             cms.Closed += (_, _) =>
             {
-                cms.Dispose();
-
                 if (!accepted)
                 {
                     Cancelled?.Invoke();
                 }
+
+                DisposeMenuDeferred(cms);
             };
 
             ShareXResources.ApplyCustomThemeToContextMenuStrip(cms);
@@ -131,6 +131,32 @@ namespace ShareX
         protected void OnTaskInfoSelected(QuickTaskInfo taskInfo)
         {
             TaskInfoSelected?.Invoke(taskInfo);
+        }
+
+        private static void DisposeMenuDeferred(ContextMenuStrip menu)
+        {
+            // ToolStripDropDown continues accessing its native handle after
+            // raising Closed. Disposing synchronously from that event makes
+            // Close() resume against an already disposed ContextMenuStrip.
+            Control dispatcher = Program.MainForm;
+            if (dispatcher == null || dispatcher.IsDisposed || !dispatcher.IsHandleCreated)
+            {
+                dispatcher = menu;
+            }
+
+            if (!dispatcher.IsDisposed && dispatcher.IsHandleCreated)
+            {
+                try
+                {
+                    dispatcher.BeginInvoke((MethodInvoker)menu.Dispose);
+                }
+                catch (InvalidOperationException)
+                {
+                    // Application shutdown can destroy the dispatcher between
+                    // the handle checks and BeginInvoke. The closed menu can
+                    // then be reclaimed normally with the terminating UI.
+                }
+            }
         }
     }
 }
