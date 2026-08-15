@@ -3,7 +3,7 @@
     <Company>ShareX Team</Company>
     <Product>ShareX</Product>
     <Copyright>Copyright (c) 2007-2026 ShareX Team</Copyright>
-    <Version>21.0.1</Version>
+    <Version>21.0.2</Version>
     <EmbeddedResourceUseDependentUponConvention>true</EmbeddedResourceUseDependentUponConvention>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <AppendPlatformToOutputPath>false</AppendPlatformToOutputPath>
