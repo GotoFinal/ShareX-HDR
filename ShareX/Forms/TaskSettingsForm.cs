@@ -1662,7 +1662,7 @@ namespace ShareX
             {
                 if (loaded && cbHdrOpenExrExposure.SelectedIndex >= 0)
                 {
-                    GetHdrFileOutputSettings().OpenExrExposureMode =
+                    GetHdrFileOutputSettings().OpenExrExportExposureMode =
                         (OpenExrExposureMode)cbHdrOpenExrExposure.SelectedIndex;
                 }
             };
@@ -1951,7 +1951,7 @@ namespace ShareX
             cbHdrFileFormat.SelectedItem = selectedFormat;
             nudHdrMasteringMaximumNits.SetValue((decimal)settings.MasteringDisplayMaximumNits);
             nudHdrMasteringMinimumNits.SetValue((decimal)settings.MasteringDisplayMinimumNits);
-            cbHdrOpenExrExposure.SelectedIndex = (int)settings.OpenExrExposureMode;
+            cbHdrOpenExrExposure.SelectedIndex = (int)settings.OpenExrExportExposureMode;
             nudHdrJpegQuality.SetValue(settings.JpegQuality);
             nudHdrGainMapQuality.SetValue(settings.GainMapQuality);
             nudHdrAvifQuality.SetValue(settings.AvifQuality);

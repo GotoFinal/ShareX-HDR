@@ -1,3 +1,4 @@
+using Newtonsoft.Json;
 using ShareX.ScreenCaptureLib;
 
 namespace ShareX.ScreenCaptureLib.Tests.HDR;
@@ -15,7 +16,8 @@ public class HdrFileOutputSettingsTests
         Assert.Equal(HdrFileFormat.Avif, settings.FileFormat);
         Assert.Equal(HdrClipboardOutputMode.HdrAndSdr, settings.ClipboardOutputMode);
         Assert.Equal(HdrFileFormat.Avif, settings.ClipboardFileFormat);
-        Assert.Equal(OpenExrExposureMode.DisplayReferenced, settings.OpenExrExposureMode);
+        Assert.Equal(OpenExrExposureMode.RawScRgb, settings.OpenExrExportExposureMode);
+        Assert.Null(typeof(HdrFileOutputSettings).GetProperty("OpenExrExposureMode"));
         Assert.Equal(90, settings.AvifQuality);
         Assert.Equal(6, settings.AvifSpeed);
 
@@ -26,6 +28,28 @@ public class HdrFileOutputSettingsTests
         settings.ClipboardFileFormat = (HdrFileFormat)99;
 
         Assert.Equal(HdrFileFormat.Avif, settings.ClipboardFileFormat);
+    }
+
+    [Fact]
+    public void LegacyOpenExrExposureSetting_ResetsToLosslessButCanBeChangedAgain()
+    {
+        const string legacyJson = """
+            {
+              "OpenExrExposureMode": 0
+            }
+            """;
+
+        HdrFileOutputSettings? settings =
+            JsonConvert.DeserializeObject<HdrFileOutputSettings>(legacyJson);
+
+        Assert.NotNull(settings);
+        Assert.Equal(OpenExrExposureMode.RawScRgb, settings.OpenExrExportExposureMode);
+
+        settings.OpenExrExportExposureMode = OpenExrExposureMode.DisplayReferenced;
+
+        string updatedJson = JsonConvert.SerializeObject(settings);
+        Assert.Contains("\"OpenExrExportExposureMode\":0", updatedJson);
+        Assert.DoesNotContain("\"OpenExrExposureMode\":", updatedJson);
     }
 
     [Fact]

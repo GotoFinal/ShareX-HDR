@@ -59,7 +59,7 @@ namespace ShareX.ScreenCaptureLib
 
     public enum OpenExrExposureMode
     {
-        [Description("Match captured display (recommended)")]
+        [Description("Match captured display")]
         DisplayReferenced,
 
         [Description("Raw scRGB samples (lossless)")]
@@ -81,7 +81,7 @@ namespace ShareX.ScreenCaptureLib
         private int gainMapQuality = 90;
         private int avifQuality = 90;
         private int avifSpeed = 6;
-        private OpenExrExposureMode openExrExposureMode = OpenExrExposureMode.DisplayReferenced;
+        private OpenExrExposureMode openExrExportExposureMode = OpenExrExposureMode.RawScRgb;
         private HdrClipboardOutputMode clipboardOutputMode = HdrClipboardOutputMode.HdrAndSdr;
         private HdrFileFormat clipboardFileFormat = HdrFileFormat.Avif;
 
@@ -155,10 +155,16 @@ namespace ShareX.ScreenCaptureLib
             set => avifSpeed = Math.Clamp(value, 0, 10);
         }
 
-        public OpenExrExposureMode OpenExrExposureMode
+        // This intentionally has a new serialized name. The original
+        // OpenExrExposureMode defaulted to display-referenced conversion;
+        // leaving it unmapped resets existing installations once to lossless
+        // raw scRGB while still persisting later explicit user choices.
+        public OpenExrExposureMode OpenExrExportExposureMode
         {
-            get => openExrExposureMode;
-            set => openExrExposureMode = Enum.IsDefined(value) ? value : OpenExrExposureMode.DisplayReferenced;
+            get => openExrExportExposureMode;
+            set => openExrExportExposureMode = Enum.IsDefined(value)
+                ? value
+                : OpenExrExposureMode.RawScRgb;
         }
 
         /// <summary>

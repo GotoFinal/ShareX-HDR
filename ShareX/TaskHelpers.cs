@@ -1682,7 +1682,7 @@ namespace ShareX
             GainMapQuality = source.GainMapQuality,
             AvifQuality = source.AvifQuality,
             AvifSpeed = source.AvifSpeed,
-            OpenExrExposureMode = source.OpenExrExposureMode,
+            OpenExrExportExposureMode = source.OpenExrExportExposureMode,
             FlattenTransparencyForUltraHdr = source.FlattenTransparencyForUltraHdr,
             UploadWithFileUploader = source.UploadWithFileUploader,
             ClipboardOutputMode = source.ClipboardOutputMode,

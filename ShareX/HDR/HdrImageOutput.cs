@@ -71,7 +71,7 @@ namespace ShareX
                 AvifQuality = settings.AvifQuality,
                 AvifSpeed = settings.AvifSpeed,
                 FlattenTransparencyForUltraHdr = settings.FlattenTransparencyForUltraHdr,
-                OpenExrExposureMode = settings.OpenExrExposureMode,
+                OpenExrExposureMode = settings.OpenExrExportExposureMode,
                 OpenExrReferenceWhiteNits = TaskHelpers.GetHdrAnnotationWhiteNits(document)
             };
 
