@@ -1861,8 +1861,9 @@ namespace ShareX
                     "do not get an embedded SDR fallback. OpenEXR can normalize captured display white " +
                     "to 1.0 for conventional viewers, or preserve raw scRGB HALF samples losslessly. " +
                     "HDR PNG stores 16-bit BT.2020/PQ and is experimental because viewer support " +
-                    "is still uneven. HDR and SDR writes a separate -SDR file for EXR/PNG/AVIF; Ultra HDR needs " +
-                    "only its single dual-representation JPEG. Transparent pixels require OpenEXR/HDR PNG/AVIF " +
+                    "is still uneven. HDR and SDR writes a separate -SDR file for EXR/PNG/AVIF when real HDR " +
+                    "pixel headroom is present; SDR-only captures automatically save only the normal SDR file. " +
+                    "Ultra HDR needs only its single dual-representation JPEG. Transparent pixels require OpenEXR/HDR PNG/AVIF " +
                     "unless the explicit Ultra HDR flatten-to-black option is enabled; JPEG cannot preserve alpha. " +
                     "The file-uploader option avoids image hosts that may decode or recompress the upload and " +
                     "discard HDR metadata. Clipboard output has its own independent format selector. HDR-only " +

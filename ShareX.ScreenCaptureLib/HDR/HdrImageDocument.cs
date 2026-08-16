@@ -2648,6 +2648,93 @@ namespace ShareX.ScreenCaptureLib
             };
 
         /// <summary>
+        /// Reports whether an HDR-active source segment contains coherent pixel
+        /// headroom above its SDR paper white. Window/game promotion is not
+        /// treated as HDR content by itself. The normal preview analysis is
+        /// reused when available; Uniform mode performs one content-aware probe.
+        /// </summary>
+        public unsafe bool HasHdrContent(HdrCaptureSettings settings)
+        {
+            ArgumentNullException.ThrowIfNull(settings);
+            HdrRgba16FloatBuffer pixels = MasterPixels;
+
+            // Documents without capture-segment metadata can originate from an
+            // imported HDR file or another producer. Preserve them conservatively.
+            if (sourceSegments.Count == 0)
+            {
+                DebugHelper.WriteLine(
+                    "HDR content classification | result=True reason=source-metadata-unavailable");
+                return true;
+            }
+
+            bool foundHdrSegment = false;
+            HdrCaptureSettings detectionSettings = null;
+
+            fixed (byte* sourceBase = pixels.GetWritablePixelSpan())
+            {
+                for (int segmentIndex = 0; segmentIndex < sourceSegments.Count; segmentIndex++)
+                {
+                    HdrCaptureSourceSegment segment = sourceSegments[segmentIndex];
+                    Rectangle rectangle = segment.DestinationRectangle;
+                    if (!segment.WasHdrActive || rectangle.Width <= 0 || rectangle.Height <= 0)
+                    {
+                        continue;
+                    }
+
+                    foundHdrSegment = true;
+                    IntPtr segmentSource = (IntPtr)(sourceBase +
+                        rectangle.Y * pixels.RowBytes +
+                        rectangle.X * HdrRgba16FloatBuffer.BytesPerPixel);
+                    IReadOnlyList<HdrWindowRegion> segmentWindowRegions =
+                        GetSegmentWindowRegions(rectangle);
+                    HdrToSdrToneMapper.ToneMapInputAnalysis analysis =
+                        GetOrCreatePreviewAnalysis(
+                            segmentIndex,
+                            segmentSource,
+                            pixels.RowBytes,
+                            rectangle,
+                            segment,
+                            settings,
+                            segmentWindowRegions);
+
+                    if (!analysis.ContainsHdrContent.HasValue)
+                    {
+                        detectionSettings ??= new HdrCaptureSettings
+                        {
+                            HdrBrightnessNits = settings.HdrBrightnessNits,
+                            PeakBrightnessMode = settings.PeakBrightnessMode,
+                            ToneMappingMode = HdrToneMappingMode.ContentAware,
+                            PaperWhiteMode = settings.PaperWhiteMode,
+                            PaperWhiteNits = settings.PaperWhiteNits
+                        };
+                        analysis = GetOrCreatePreviewAnalysis(
+                            segmentIndex,
+                            segmentSource,
+                            pixels.RowBytes,
+                            rectangle,
+                            segment,
+                            detectionSettings,
+                            segmentWindowRegions: null);
+                    }
+
+                    if (analysis.ContainsHdrContent != false)
+                    {
+                        DebugHelper.WriteLine(
+                            $"HDR content classification | display={segment.DisplayDeviceName} " +
+                            "result=True reason=coherent-pixel-headroom");
+                        return true;
+                    }
+                }
+            }
+
+            DebugHelper.WriteLine(
+                foundHdrSegment
+                    ? "HDR content classification | result=False reason=no-coherent-pixel-headroom"
+                    : "HDR content classification | result=False reason=all-source-segments-sdr");
+            return false;
+        }
+
+        /// <summary>
         /// Creates an owned SDR derivative for the existing editor and legacy consumers.
         /// Each display segment retains its captured SDR-white calibration.
         /// </summary>

@@ -835,6 +835,90 @@ public class HdrImageDocumentTests
             document.BlurRectangle(new Rectangle(0, 0, 1, 1), HdrImageDocument.MaximumSupportedBlurSigma + 0.01f));
     }
 
+    [Theory]
+    [InlineData(HdrToneMappingMode.ContentAware)]
+    [InlineData(HdrToneMappingMode.PerWindow)]
+    [InlineData(HdrToneMappingMode.Uniform)]
+    public void HasHdrContent_DistinguishesSdrRangeFromRealHeadroom(
+        HdrToneMappingMode toneMappingMode)
+    {
+        var settings = new HdrCaptureSettings
+        {
+            ToneMappingMode = toneMappingMode
+        };
+        using HdrImageDocument sdrRange = CreateUniformContentDocument(
+            203f / 80f,
+            wasHdrActive: true);
+        using HdrImageDocument hdrRange = CreateUniformContentDocument(4f, wasHdrActive: true);
+
+        Assert.False(sdrRange.HasHdrContent(settings));
+        Assert.True(hdrRange.HasHdrContent(settings));
+
+        // Repeat the query to cover reuse of the retained preview analysis.
+        Assert.False(sdrRange.HasHdrContent(settings));
+        Assert.True(hdrRange.HasHdrContent(settings));
+    }
+
+    [Fact]
+    public void HasHdrContent_DoesNotPromoteSdrSourceSegments()
+    {
+        using HdrImageDocument document = CreateUniformContentDocument(4f, wasHdrActive: false);
+
+        Assert.False(document.HasHdrContent(new HdrCaptureSettings()));
+    }
+
+    [Fact]
+    public void HasHdrContent_PreservesDocumentsWithoutSourceMetadata()
+    {
+        using HdrImageDocument document = CreateUniformContentDocument(
+            1f,
+            wasHdrActive: true,
+            includeSourceMetadata: false);
+
+        Assert.True(document.HasHdrContent(new HdrCaptureSettings()));
+    }
+
+    private static HdrImageDocument CreateUniformContentDocument(
+        float value,
+        bool wasHdrActive,
+        bool includeSourceMetadata = true)
+    {
+        const int width = 64;
+        const int height = 64;
+        byte[] sourceBytes = new byte[width * height * HdrRgba16FloatBuffer.BytesPerPixel];
+        for (int pixel = 0; pixel < width * height; pixel++)
+        {
+            WritePixel(
+                sourceBytes,
+                pixel * HdrRgba16FloatBuffer.BytesPerPixel,
+                value,
+                value,
+                value,
+                1f);
+        }
+
+        using HdrRgba16FloatBuffer pixels = HdrRgba16FloatBuffer.CopyFrom(
+            sourceBytes,
+            width * HdrRgba16FloatBuffer.BytesPerPixel,
+            width,
+            height);
+        HdrCaptureSourceSegment[] segments = includeSourceMetadata
+            ? new[]
+            {
+                new HdrCaptureSourceSegment(
+                    new Rectangle(0, 0, width, height),
+                    wasHdrActive ? "HDR" : "SDR",
+                    wasHdrActive,
+                    wasHdrActive ? 203f : 80f,
+                    wasHdrActive ? 1000f : 80f)
+            }
+            : Array.Empty<HdrCaptureSourceSegment>();
+        return new HdrImageDocument(
+            new Rectangle(0, 0, width, height),
+            pixels.Clone(),
+            segments);
+    }
+
     private static HdrImageDocument CreatePatternDocument()
     {
         const int width = 3;

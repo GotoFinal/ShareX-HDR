@@ -237,7 +237,8 @@ namespace ShareX.ScreenCaptureLib
                     clampedWhite * 1.0001f),
                 null,
                 ContentPeakMeasurement.NotMeasured,
-                defaultToneMapAmount: 0f);
+                defaultToneMapAmount: 0f,
+                containsHdrContent: false);
         }
 
         internal static ToneMapParameters CreateToneMapParameters(
@@ -309,7 +310,8 @@ namespace ShareX.ScreenCaptureLib
                 toneMappingMode,
                 windowRegions,
                 peakSamples: null,
-                headroomMask: null);
+                headroomMask: null,
+                out _);
         }
 
         private static byte[] CreateToneMapMaskR8WithWindowRegionsCore(
@@ -321,7 +323,8 @@ namespace ShareX.ScreenCaptureLib
             HdrToneMappingMode toneMappingMode,
             IReadOnlyList<HdrWindowRegion> windowRegions,
             PeakSampleGrid peakSamples,
-            byte[] headroomMask)
+            byte[] headroomMask,
+            out bool? containsHdrContent)
         {
             if (source == IntPtr.Zero)
             {
@@ -342,6 +345,7 @@ namespace ShareX.ScreenCaptureLib
 
             if (toneMappingMode == HdrToneMappingMode.Uniform)
             {
+                containsHdrContent = null;
                 Array.Fill(mask, byte.MaxValue);
                 return mask;
             }
@@ -363,6 +367,7 @@ namespace ShareX.ScreenCaptureLib
                     height,
                     paperWhiteScRgb,
                     mask);
+            containsHdrContent = analysis.ContainsHdrContent;
             frameAnalysisTimer.Stop();
             Stopwatch windowAnalysisTimer = Stopwatch.StartNew();
             List<WindowToneMapDecision> windowDecisions = AnalyzeWindowBoundaries(
@@ -647,6 +652,7 @@ namespace ShareX.ScreenCaptureLib
                     preserveAlpha)
                 : null;
             Stopwatch maskTimer = Stopwatch.StartNew();
+            bool? containsHdrContent = null;
             byte[] toneMapMask = settings.ToneMappingMode != HdrToneMappingMode.Uniform
                 ? CreateToneMapMaskR8WithWindowRegionsCore(
                     source,
@@ -657,7 +663,8 @@ namespace ShareX.ScreenCaptureLib
                     settings.ToneMappingMode,
                     windowRegions,
                     peakSamples,
-                    headroomMask)
+                    headroomMask,
+                    out containsHdrContent)
                 : null;
             maskTimer.Stop();
             Stopwatch peakTimer = Stopwatch.StartNew();
@@ -694,7 +701,11 @@ namespace ShareX.ScreenCaptureLib
                     $"maskMs={maskTimer.Elapsed.TotalMilliseconds:F1} " +
                     $"peakMs={peakTimer.Elapsed.TotalMilliseconds:F1}");
             }
-            return new ToneMapInputAnalysis(parameters, toneMapMask, measurement);
+            return new ToneMapInputAnalysis(
+                parameters,
+                toneMapMask,
+                measurement,
+                containsHdrContent: containsHdrContent);
         }
 
         internal static ToneMapInputAnalysis AnalyzeToneMapInput(
@@ -2001,6 +2012,8 @@ namespace ShareX.ScreenCaptureLib
                 this.regions = regions;
             }
 
+            public bool ContainsHdrContent => regions.Count > 0;
+
             public void ApplyToneMapAmounts(byte[] mask, int width, int height)
             {
                 if (regions.Count == 0)
@@ -2248,17 +2261,20 @@ namespace ShareX.ScreenCaptureLib
             public byte[] ToneMapMask { get; }
             public ContentPeakMeasurement ContentPeak { get; }
             public float DefaultToneMapAmount { get; }
+            public bool? ContainsHdrContent { get; }
 
             public ToneMapInputAnalysis(
                 ToneMapParameters parameters,
                 byte[] toneMapMask,
                 ContentPeakMeasurement contentPeak,
-                float defaultToneMapAmount = 1f)
+                float defaultToneMapAmount = 1f,
+                bool? containsHdrContent = null)
             {
                 Parameters = parameters;
                 ToneMapMask = toneMapMask;
                 ContentPeak = contentPeak;
                 DefaultToneMapAmount = Math.Clamp(defaultToneMapAmount, 0f, 1f);
+                ContainsHdrContent = containsHdrContent;
             }
         }
 

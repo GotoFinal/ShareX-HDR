@@ -772,7 +772,7 @@ namespace ShareX
             if (Info.TaskSettings.AfterCaptureJob.HasFlagAny(AfterCaptureTasks.SaveImageToFile, AfterCaptureTasks.SaveImageToFileWithDialog, AfterCaptureTasks.DoOCR,
                 AfterCaptureTasks.UploadImageToHost, AfterCaptureTasks.AnalyzeImage))
             {
-                bool encodeHdr = hdrImageDocument != null && hdrOutputSettings.OutputMode != HdrOutputMode.SdrOnly;
+                bool encodeHdr = ShouldEncodeHdrFileOutput(hdrOutputSettings);
                 ImageData imageData = encodeHdr
                     ? GetOrEncodeHdrImage(hdrOutputSettings, hdrOutputSettings.FileFormat)
                     : TaskHelpers.PrepareImage(Image, Info.TaskSettings);
@@ -812,7 +812,7 @@ namespace ShareX
                         {
                             DebugHelper.WriteLine("Image saved to file: " + Info.FilePath);
 
-                            if (ShouldWriteSdrCompanion(hdrOutputSettings))
+                            if (encodeHdr && ShouldWriteSdrCompanion(hdrOutputSettings))
                             {
                                 Info.CompanionFilePath = WriteSdrCompanion(Info.FilePath) ??
                                     Info.CompanionFilePath;
@@ -854,7 +854,7 @@ namespace ShareX
 
                                 if (imageSaved)
                                 {
-                                    if (ShouldWriteSdrCompanion(hdrOutputSettings))
+                                    if (encodeHdr && ShouldWriteSdrCompanion(hdrOutputSettings))
                                     {
                                         Info.CompanionFilePath = WriteSdrCompanion(Info.FilePath) ??
                                             Info.CompanionFilePath;
@@ -1038,6 +1038,40 @@ namespace ShareX
             }
 
             DiscardHdrImageDocument($"User chose SDR conversion for unsupported operation: {operation}.");
+            return true;
+        }
+
+        private bool ShouldEncodeHdrFileOutput(HdrFileOutputSettings settings)
+        {
+            if (hdrImageDocument == null || settings.OutputMode == HdrOutputMode.SdrOnly)
+            {
+                return false;
+            }
+
+            if (settings.OutputMode != HdrOutputMode.HdrAndSdr)
+            {
+                return true;
+            }
+
+            try
+            {
+                HdrCaptureSettings captureSettings =
+                    Info.TaskSettings.CaptureSettings.HdrSettings ?? new HdrCaptureSettings();
+                if (!hdrImageDocument.HasHdrContent(captureSettings))
+                {
+                    DebugHelper.WriteLine(
+                        "HDR and SDR output collapsed to SDR only: the capture contains no coherent HDR pixel headroom.");
+                    return false;
+                }
+            }
+            catch (Exception exception)
+            {
+                // Classification must never discard a potentially HDR master.
+                DebugHelper.WriteException(
+                    exception,
+                    "HDR content classification failed; retaining HDR and SDR output.");
+            }
+
             return true;
         }
 
