@@ -12,7 +12,8 @@ public sealed class HdrCaptureSettingsTests
         var screenshot = new Screenshot();
 
         Assert.Equal(HdrProcessingBackend.Gpu, settings.ProcessingBackend);
-        Assert.True(settings.EnableEditorHdrPreview);
+        Assert.False(settings.EnableNativeHdrEditorPreview);
+        Assert.Null(typeof(HdrCaptureSettings).GetProperty("EnableEditorHdrPreview"));
         Assert.False(settings.EnableNativeHdrRegionSelectorPreview);
         Assert.Null(typeof(HdrCaptureSettings).GetProperty("EnableRegionSelectorHdrPreview"));
         Assert.Equal(HdrPeakBrightnessMode.Automatic, settings.PeakBrightnessMode);
@@ -51,6 +52,28 @@ public sealed class HdrCaptureSettingsTests
         string updatedJson = JsonConvert.SerializeObject(settings);
         Assert.Contains("\"EnableNativeHdrRegionSelectorPreview\":true", updatedJson);
         Assert.DoesNotContain("\"EnableRegionSelectorHdrPreview\"", updatedJson);
+    }
+
+    [Fact]
+    public void LegacyEditorPreviewSetting_IsResetButCanBeEnabledAgain()
+    {
+        const string legacyJson = """
+            {
+              "EnableEditorHdrPreview": true
+            }
+            """;
+
+        HdrCaptureSettings? settings =
+            JsonConvert.DeserializeObject<HdrCaptureSettings>(legacyJson);
+
+        Assert.NotNull(settings);
+        Assert.False(settings.EnableNativeHdrEditorPreview);
+
+        settings.EnableNativeHdrEditorPreview = true;
+
+        string updatedJson = JsonConvert.SerializeObject(settings);
+        Assert.Contains("\"EnableNativeHdrEditorPreview\":true", updatedJson);
+        Assert.DoesNotContain("\"EnableEditorHdrPreview\"", updatedJson);
     }
 
     [Fact]

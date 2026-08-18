@@ -107,6 +107,7 @@ namespace ShareX.ImageEditor.Presentation.Views
             // Hide OverlayCanvas (selection handles, crop overlay) during capture
             bool overlayWasVisible = overlayCanvas?.IsVisible ?? false;
             if (overlayCanvas != null) overlayCanvas.IsVisible = false;
+            bool hdrPreviewWasSuspended = SuspendHdrPreviewVisualStateForSnapshot();
 
             try
             {
@@ -164,6 +165,7 @@ namespace ShareX.ImageEditor.Presentation.Views
             {
                 // Restore OverlayCanvas visibility
                 if (overlayCanvas != null) overlayCanvas.IsVisible = overlayWasVisible;
+                ResumeHdrPreviewVisualStateAfterSnapshot(hdrPreviewWasSuspended);
 
                 // Re-trigger layout with current zoom
                 snapshotTarget.InvalidateMeasure();

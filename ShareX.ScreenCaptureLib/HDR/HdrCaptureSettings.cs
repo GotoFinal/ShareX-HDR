@@ -99,7 +99,11 @@ namespace ShareX.ScreenCaptureLib
         private ObsGameCaptureSettings obsGameCapture = new ObsGameCaptureSettings();
         private HdrFileOutputSettings fileOutput = new HdrFileOutputSettings();
 
-        public bool EnableEditorHdrPreview { get; set; } = true;
+        // This intentionally has a new serialized name. The original
+        // EnableEditorHdrPreview option defaulted to true; leaving it unmapped
+        // resets the experimental native presenter to false once for existing
+        // installations. Users can explicitly opt in again afterward.
+        public bool EnableNativeHdrEditorPreview { get; set; } = false;
 
         // This intentionally has a new serialized name. The original
         // EnableRegionSelectorHdrPreview option defaulted to true; leaving that

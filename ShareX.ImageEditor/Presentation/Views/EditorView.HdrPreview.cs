@@ -320,6 +320,30 @@ public partial class EditorView
         _hdrPreviewVisualStateApplied = false;
     }
 
+    /// <summary>
+    /// Off-screen Avalonia exports cannot see the external DXGI presenter. Make
+    /// the retained SDR canvas renderable while GetSnapshot captures the visual
+    /// tree, then restore the native HDR presentation immediately afterward.
+    /// </summary>
+    private bool SuspendHdrPreviewVisualStateForSnapshot()
+    {
+        if (!_hdrPreviewVisualStateApplied)
+        {
+            return false;
+        }
+
+        RestoreHdrPreviewVisualState();
+        return true;
+    }
+
+    private void ResumeHdrPreviewVisualStateAfterSnapshot(bool wasSuspended)
+    {
+        if (wasSuspended && _hdrPreviewPresenter != null)
+        {
+            ApplyHdrPreviewVisualState();
+        }
+    }
+
     private void DisableHdrPreview(string? reason, bool reportDiagnostic)
     {
         _hdrPreviewPresenter?.Dispose();

@@ -63,7 +63,7 @@ namespace ShareX
         private ComboBox cbHdrFileFormat;
         private ComboBox cbHdrOpenExrExposure;
         private Label lblHdrEncoderAvailability;
-        private CheckBox cbEnableEditorHdrPreview;
+        private CheckBox cbEnableNativeHdrEditorPreview;
         private CheckBox cbEnableNativeHdrRegionSelectorPreview;
         private CheckBox cbHdrUploadWithFileUploader;
         private CheckBox cbHdrFlattenTransparencyForUltraHdr;
@@ -1806,22 +1806,22 @@ namespace ShareX
                 }
             };
 
-            cbEnableEditorHdrPreview = new CheckBox
+            cbEnableNativeHdrEditorPreview = new CheckBox
             {
                 AutoSize = false,
                 Location = new Point(4, 506),
                 Size = new Size(514, 24),
                 Text = "Show the retained HDR image in the editor preview (experimental)"
             };
-            cbEnableEditorHdrPreview.CheckedChanged += (_, _) =>
+            cbEnableNativeHdrEditorPreview.CheckedChanged += (_, _) =>
             {
                 if (loaded)
                 {
-                    GetHdrCaptureSettings().EnableEditorHdrPreview =
-                        cbEnableEditorHdrPreview.Checked;
+                    GetHdrCaptureSettings().EnableNativeHdrEditorPreview =
+                        cbEnableNativeHdrEditorPreview.Checked;
                 }
             };
-            pHdrFileOutput.Controls.Add(cbEnableEditorHdrPreview);
+            pHdrFileOutput.Controls.Add(cbEnableNativeHdrEditorPreview);
 
             cbEnableNativeHdrRegionSelectorPreview = new CheckBox
             {
@@ -1966,7 +1966,7 @@ namespace ShareX
                 captureSettings.MixedMonitorBrightnessMode);
             nudHdrMixedMonitorWhiteNits.SetValue(
                 (decimal)captureSettings.MixedMonitorCustomSdrWhiteNits);
-            cbEnableEditorHdrPreview.Checked = captureSettings.EnableEditorHdrPreview;
+            cbEnableNativeHdrEditorPreview.Checked = captureSettings.EnableNativeHdrEditorPreview;
             cbEnableNativeHdrRegionSelectorPreview.Checked =
                 captureSettings.EnableNativeHdrRegionSelectorPreview;
             UpdateHdrFileOutputControlsEnabled();

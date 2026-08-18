@@ -54,9 +54,9 @@ namespace ShareX
             using Bitmap preview = source.CreateSdrPreview(previewSettings);
             SKBitmap skPreview = TaskHelpers.GdiBitmapToSkBitmap(preview);
             DebugHelper.WriteLine(
-                $"HDR editor preview | enabled={previewSettings.EnableEditorHdrPreview} " +
+                $"HDR editor preview | enabled={previewSettings.EnableNativeHdrEditorPreview} " +
                 $"source={source.MasterPixels.Width}x{source.MasterPixels.Height} format=RGBA16F");
-            EditorHdrPreviewSource hdrPreview = previewSettings.EnableEditorHdrPreview
+            EditorHdrPreviewSource hdrPreview = previewSettings.EnableNativeHdrEditorPreview
                 ? EditorHdrPreviewSource.CopyFrom(
                     source.MasterPixels.PixelBytes.Span,
                     source.MasterPixels.RowBytes,
