@@ -17,16 +17,25 @@ permissions:
 
 jobs:
   build:
-    name: Build and test x64 release
-    runs-on: windows-latest
+    name: Build and package ${{ matrix.platform }} release
+    runs-on: windows-2022
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: x64
+            runtime_id: win-x64
+            package_platform: x64
+          - platform: ARM64
+            runtime_id: win-arm64
+            package_platform: arm64
 
     env:
       APP_PROJECT_PATH: ShareX\ShareX.csproj
       SETUP_PROJECT_PATH: ShareX.Setup\ShareX.Setup.csproj
       TEST_PROJECT_PATH: ShareX.ScreenCaptureLib.Tests\ShareX.ScreenCaptureLib.Tests.csproj
       ASSEMBLY_INFO_PATH: Directory.build.props
-      PLATFORM: x64
-      RUNTIME_ID: win-x64
 
     outputs:
       APP_VERSION: ${{ steps.version.outputs.app_version }}
@@ -68,39 +77,49 @@ jobs:
         if: env.API_KEYS != ''
         run: Invoke-WebRequest -Uri "$env:API_KEYS" -OutFile "ShareX.UploadersLib\APIKeys\APIKeysLocal.cs"
 
-      - name: Restore application
-        run: dotnet restore --runtime "${{ env.RUNTIME_ID }}" "${{ env.APP_PROJECT_PATH }}"
+      - name: Build ARM64 AVIF bridge
+        if: matrix.platform == 'ARM64'
+        shell: pwsh
+        run: |
+          & "ShareX.ScreenCaptureLib\Native\Avif\Build-NativeBridge.ps1" `
+            -Architecture ARM64 `
+            -OutputDirectory "ShareX.ScreenCaptureLib\Native\Avif\win-arm64"
 
-      - name: Restore setup
-        run: dotnet restore --runtime "${{ env.RUNTIME_ID }}" "${{ env.SETUP_PROJECT_PATH }}"
+      - name: Restore application
+        run: dotnet restore --runtime "${{ matrix.runtime_id }}" "${{ env.APP_PROJECT_PATH }}"
 
       - name: Build application
-        run: dotnet build --no-restore --configuration Release -p:Platform="${{ env.PLATFORM }}" --self-contained true /m:1 "${{ env.APP_PROJECT_PATH }}"
+        run: dotnet build --no-restore --configuration Release -p:Platform="${{ matrix.platform }}" --self-contained true /m:1 "${{ env.APP_PROJECT_PATH }}"
 
-      - name: Build setup
-        run: dotnet build --no-restore --configuration Release -p:Platform="${{ env.PLATFORM }}" --self-contained true /m:1 "${{ env.SETUP_PROJECT_PATH }}"
+      - name: Restore x64 setup packager
+        run: dotnet restore --runtime "win-x64" "${{ env.SETUP_PROJECT_PATH }}"
+
+      - name: Build x64 setup packager
+        run: dotnet build --no-restore --configuration Release -p:Platform="x64" --self-contained true /m:1 "${{ env.SETUP_PROJECT_PATH }}"
 
       - name: Restore tests
+        if: matrix.platform == 'x64'
         run: dotnet restore "${{ env.TEST_PROJECT_PATH }}"
 
       - name: Run tests
+        if: matrix.platform == 'x64'
         run: dotnet test "${{ env.TEST_PROJECT_PATH }}" --no-restore --configuration Release
 
       - name: Package setup and portable release
-        run: '& "ShareX.Setup\bin\Release\win-x64\ShareX.Setup.exe" -silent -job Release -platform "${{ env.PLATFORM }}"'
+        run: '& "ShareX.Setup\bin\Release\win-x64\ShareX.Setup.exe" -silent -job Release -platform "${{ matrix.package_platform }}"'
 
       - name: Upload setup artifact
         uses: actions/upload-artifact@v7
         with:
-          name: Setup-x64
-          path: Output\ShareX-${{ env.APP_VERSION }}-setup-x64.exe
+          name: Setup-${{ matrix.platform }}
+          path: Output\ShareX-${{ env.APP_VERSION }}-setup-${{ matrix.package_platform }}.exe
           if-no-files-found: error
 
       - name: Upload portable artifact
         uses: actions/upload-artifact@v7
         with:
-          name: Portable-x64
-          path: Output\ShareX-${{ env.APP_VERSION }}-portable-x64.zip
+          name: Portable-${{ matrix.platform }}
+          path: Output\ShareX-${{ env.APP_VERSION }}-portable-${{ matrix.package_platform }}.zip
           if-no-files-found: error
 
   release:
@@ -129,6 +148,18 @@ jobs:
           name: Portable-x64
           path: Output
 
+      - name: Download ARM64 setup artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: Setup-ARM64
+          path: Output
+
+      - name: Download ARM64 portable artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: Portable-ARM64
+          path: Output
+
       - name: Create release body
         shell: pwsh
         run: |
@@ -153,7 +184,9 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             Output/ShareX-${{ env.APP_VERSION }}-setup-x64.exe
+            Output/ShareX-${{ env.APP_VERSION }}-setup-arm64.exe
             Output/ShareX-${{ env.APP_VERSION }}-portable-x64.zip
+            Output/ShareX-${{ env.APP_VERSION }}-portable-arm64.zip
 
       - name: Create stable release draft
         if: startsWith(github.ref, 'refs/tags/v')
@@ -168,4 +201,6 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             Output/ShareX-${{ env.APP_VERSION }}-setup-x64.exe
+            Output/ShareX-${{ env.APP_VERSION }}-setup-arm64.exe
             Output/ShareX-${{ env.APP_VERSION }}-portable-x64.zip
+            Output/ShareX-${{ env.APP_VERSION }}-portable-arm64.zip

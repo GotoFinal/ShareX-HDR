@@ -66,7 +66,8 @@ namespace ShareX.ScreenCaptureLib
             paths = null;
             error = string.Empty;
 
-            if (targetArchitecture != ObsBinaryArchitecture.X86 && targetArchitecture != ObsBinaryArchitecture.X64)
+            if (targetArchitecture is not (ObsBinaryArchitecture.X86 or
+                ObsBinaryArchitecture.X64 or ObsBinaryArchitecture.Arm64))
             {
                 error = $"OBS Game Capture target architecture {targetArchitecture} is not supported yet.";
                 return false;

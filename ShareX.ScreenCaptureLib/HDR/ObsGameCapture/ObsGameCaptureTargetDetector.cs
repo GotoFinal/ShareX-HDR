@@ -188,7 +188,8 @@ namespace ShareX.ScreenCaptureLib
 
                 ObsBinaryArchitecture architecture = GetProcessArchitecture(processId, processPath);
 
-                if (architecture != ObsBinaryArchitecture.X86 && architecture != ObsBinaryArchitecture.X64)
+                if (architecture is not (ObsBinaryArchitecture.X86 or
+                    ObsBinaryArchitecture.X64 or ObsBinaryArchitecture.Arm64))
                 {
                     return false;
                 }

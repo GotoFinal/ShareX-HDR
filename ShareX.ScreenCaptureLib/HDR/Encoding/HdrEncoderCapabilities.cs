@@ -72,6 +72,7 @@ namespace ShareX.ScreenCaptureLib
                 "Ultra HDR JPEG",
                 UltraHdrLibraryFileName,
                 UltraHdrRequiredExports,
+                [Architecture.X64],
                 "Use OpenEXR or HDR PNG on this architecture.",
                 out unavailableReason);
         }
@@ -82,6 +83,7 @@ namespace ShareX.ScreenCaptureLib
                 "HDR AVIF",
                 AvifLibraryFileName,
                 AvifRequiredExports,
+                [Architecture.X64, Architecture.Arm64],
                 "Use OpenEXR or HDR PNG on this architecture.",
                 out unavailableReason);
         }
@@ -90,19 +92,20 @@ namespace ShareX.ScreenCaptureLib
             string featureName,
             string libraryFileName,
             string[] requiredExports,
+            Architecture[] supportedArchitectures,
             string architectureAlternative,
             out string unavailableReason)
         {
             if (!OperatingSystem.IsWindows())
             {
-                unavailableReason = $"{featureName} support is currently available only on Windows x64.";
+                unavailableReason = $"{featureName} support is currently available only on Windows.";
                 return false;
             }
 
-            if (RuntimeInformation.ProcessArchitecture != Architecture.X64)
+            if (Array.IndexOf(supportedArchitectures, RuntimeInformation.ProcessArchitecture) < 0)
             {
                 unavailableReason =
-                    $"{featureName} support requires an x64 process; ShareX is running as " +
+                    $"{featureName} support is not packaged for this architecture; ShareX is running as " +
                     $"{RuntimeInformation.ProcessArchitecture}. {architectureAlternative}";
                 return false;
             }

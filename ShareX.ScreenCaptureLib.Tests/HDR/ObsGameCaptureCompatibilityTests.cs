@@ -139,13 +139,63 @@ public class ObsGameCaptureCompatibilityTests
     }
 
     [Theory]
+    [InlineData(ObsBinaryArchitecture.X86, "32")]
+    [InlineData(ObsBinaryArchitecture.X64, "64")]
+    [InlineData(ObsBinaryArchitecture.Arm64, "64")]
+    public void Discovery_ResolvesHookNamesForSupportedArchitectures(
+        ObsBinaryArchitecture architecture,
+        string suffix)
+    {
+        string root = Path.Combine(Path.GetTempPath(), $"ShareX-ObsArchitecture-{Guid.NewGuid():N}");
+        string captureDirectory = Path.Combine(root, "data", "obs-plugins", "win-capture");
+        Directory.CreateDirectory(captureDirectory);
+
+        try
+        {
+            foreach (string name in new[]
+            {
+                $"graphics-hook{suffix}.dll",
+                $"inject-helper{suffix}.exe",
+                $"get-graphics-offsets{suffix}.exe"
+            })
+            {
+                File.WriteAllBytes(Path.Combine(captureDirectory, name), [0]);
+            }
+
+            Assert.True(ObsGameCaptureDiscovery.TryResolveBinaryPaths(
+                root,
+                architecture,
+                out ObsGameCaptureBinaryPaths? paths,
+                out string error), error);
+            Assert.NotNull(paths);
+            Assert.Equal(architecture, paths.TargetArchitecture);
+            Assert.EndsWith($"graphics-hook{suffix}.dll", paths.GraphicsHookPath);
+            Assert.EndsWith($"inject-helper{suffix}.exe", paths.InjectHelperPath);
+            Assert.EndsWith($"get-graphics-offsets{suffix}.exe", paths.GraphicsOffsetsHelperPath);
+        }
+        finally
+        {
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Theory]
     [InlineData(ObsBinaryArchitecture.X86)]
     [InlineData(ObsBinaryArchitecture.X64)]
+    [InlineData(ObsBinaryArchitecture.Arm64)]
     public async Task InstalledObsProbe_IsCompatibleWhenMatchingBinariesArePresent(ObsBinaryArchitecture architecture)
     {
         IReadOnlyList<string> roots = ObsGameCaptureDiscovery.FindInstallationRoots();
 
-        if (!roots.Any(root => ObsGameCaptureDiscovery.TryResolveBinaryPaths(root, architecture, out _, out _)))
+        if (!roots.Any(root =>
+            ObsGameCaptureDiscovery.TryResolveBinaryPaths(
+                root,
+                architecture,
+                out ObsGameCaptureBinaryPaths? paths,
+                out _) &&
+            ObsGameCaptureBinaryInspector.ReadArchitecture(paths.GraphicsHookPath) == architecture &&
+            ObsGameCaptureBinaryInspector.ReadArchitecture(paths.InjectHelperPath) == architecture &&
+            ObsGameCaptureBinaryInspector.ReadArchitecture(paths.GraphicsOffsetsHelperPath) == architecture))
         {
             return;
         }

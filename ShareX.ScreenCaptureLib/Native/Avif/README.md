@@ -21,13 +21,18 @@ cmake -S . -B build -A x64 -DAVIF_SOURCE_DIR=C:/src/libavif
 cmake --build build --config Release --target sharex_avif --parallel
 ```
 
+The checked-in `Build-NativeBridge.ps1` automates the pinned clone, build, PE
+architecture validation, and output copy for both x64 and ARM64. The release
+workflow uses it to cross-build the ARM64 bridge before publishing the ARM64
+installer and portable archive.
+
 The CMake project disables apps, examples, tests, libyuv, and shared upstream
 libraries; it builds libavif and libaom statically into `ShareX.Avif.dll` with
 the static MSVC runtime. Keep the libavif and libaom notices beside this source
 when updating the packaged binary.
 
-ARM64 packaging is deferred. AVIF availability is reported at runtime, and the
-managed HDR formats remain available on other architectures.
+AVIF availability is reported at runtime. If a matching native bridge is not
+packaged, the managed HDR PNG and OpenEXR formats remain available.
 
 The currently packaged x64 `ShareX.Avif.dll` SHA-256 is
 `5FECC909CA7F55560EC7DE445C0D58331F8296C825A8960282DB5F6E5A848545`.

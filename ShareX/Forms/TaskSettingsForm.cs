@@ -31,6 +31,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -2535,13 +2536,16 @@ namespace ShareX
 
                 ObsBinaryArchitecture[] architectures = visibleMatches.Values
                     .Select(x => x.Architecture)
-                    .Where(x => x is ObsBinaryArchitecture.X86 or ObsBinaryArchitecture.X64)
+                    .Where(x => x is ObsBinaryArchitecture.X86 or
+                        ObsBinaryArchitecture.X64 or ObsBinaryArchitecture.Arm64)
                     .Distinct()
                     .ToArray();
 
                 if (architectures.Length == 0)
                 {
-                    architectures = new[] { ObsBinaryArchitecture.X64 };
+                    architectures = RuntimeInformation.OSArchitecture == Architecture.Arm64
+                        ? new[] { ObsBinaryArchitecture.Arm64, ObsBinaryArchitecture.X64 }
+                        : new[] { ObsBinaryArchitecture.X64 };
                 }
 
                 var reports = new Dictionary<ObsBinaryArchitecture, ObsGameCaptureCompatibilityReport>();
@@ -2609,7 +2613,9 @@ namespace ShareX
             if (visibleMatches.Count == 0)
             {
                 result.AppendLine("Visible configured games: None");
-                result.AppendLine("The OBS binary check below uses x64 because no configured running game architecture could be detected.");
+                result.AppendLine(RuntimeInformation.OSArchitecture == Architecture.Arm64
+                    ? "The OBS binary check below tests native ARM64 and emulated x64 because no configured running game architecture could be detected."
+                    : "The OBS binary check below uses x64 because no configured running game architecture could be detected.");
             }
             else
             {

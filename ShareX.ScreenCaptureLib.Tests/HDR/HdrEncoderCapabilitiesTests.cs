@@ -40,7 +40,11 @@ public class HdrEncoderCapabilitiesTests
             HdrFileFormat.Avif,
             out string? reason);
 
-        if (OperatingSystem.IsWindows() && RuntimeInformation.ProcessArchitecture == Architecture.X64)
+        bool nativeLibraryPresent = File.Exists(Path.Combine(AppContext.BaseDirectory, "ShareX.Avif.dll"));
+
+        if (OperatingSystem.IsWindows() &&
+            RuntimeInformation.ProcessArchitecture is Architecture.X64 or Architecture.Arm64 &&
+            nativeLibraryPresent)
         {
             Assert.True(available, reason);
             Assert.Null(reason);

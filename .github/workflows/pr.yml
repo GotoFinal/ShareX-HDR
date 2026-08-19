@@ -32,6 +32,7 @@ jobs:
 
     env:
       SOLUTION_FILE_PATH: ShareX.sln
+      APP_PROJECT_PATH: ShareX\ShareX.csproj
 
     steps:
       - name: Checkout
@@ -50,11 +51,17 @@ jobs:
 
       - name: Restore NuGet packages
         run: |
-          dotnet restore --runtime "${{ env.RUNTIME_ID }}" "${{ env.SOLUTION_FILE_PATH }}"
           if ("${{ matrix.platform }}" -eq "ARM64") {
-            # ShareX.Setup always builds as x64, so restore win-x64 packages too
-            dotnet restore --runtime "win-x64" "ShareX.Setup\ShareX.Setup.csproj"
+            dotnet restore --runtime "${{ env.RUNTIME_ID }}" "${{ env.APP_PROJECT_PATH }}"
+          } else {
+            dotnet restore --runtime "${{ env.RUNTIME_ID }}" "${{ env.SOLUTION_FILE_PATH }}"
           }
 
       - name: Build
-        run: dotnet build --no-restore --configuration "${{ matrix.configuration }}" -p:Platform="${{ matrix.platform }}" --self-contained true /m:1 "${{ env.SOLUTION_FILE_PATH }}"
+        run: |
+          $project = if ("${{ matrix.platform }}" -eq "ARM64") {
+            "${{ env.APP_PROJECT_PATH }}"
+          } else {
+            "${{ env.SOLUTION_FILE_PATH }}"
+          }
+          dotnet build --no-restore --configuration "${{ matrix.configuration }}" -p:Platform="${{ matrix.platform }}" --self-contained true /m:1 $project

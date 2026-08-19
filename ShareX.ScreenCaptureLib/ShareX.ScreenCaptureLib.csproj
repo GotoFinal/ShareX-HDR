@@ -39,5 +39,12 @@
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
+  <ItemGroup Condition="('$(RuntimeIdentifier)' == 'win-arm64' Or '$(Platform)' == 'ARM64' Or ('$(RuntimeIdentifier)' == '' And '$(Platform)' == 'AnyCPU' And '$(PROCESSOR_ARCHITECTURE)' == 'ARM64')) And Exists('Native\Avif\win-arm64\ShareX.Avif.dll')">
+    <Content Include="Native\Avif\win-arm64\ShareX.Avif.dll">
+      <Link>ShareX.Avif.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
 
 </Project>
