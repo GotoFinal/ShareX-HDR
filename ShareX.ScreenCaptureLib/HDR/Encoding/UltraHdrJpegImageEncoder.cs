@@ -14,6 +14,7 @@
 
 using System;
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -56,9 +57,12 @@ namespace ShareX.ScreenCaptureLib
             }
 
             options ??= new HdrImageEncodingOptions();
+            Stopwatch totalTimer = Stopwatch.StartNew();
+            Stopwatch conversionTimer = Stopwatch.StartNew();
             byte[] normalizedPixels = CreateLibUltraHdrInput(
                 source,
                 options.FlattenTransparencyForUltraHdr);
+            conversionTimer.Stop();
             byte[] errorBuffer = new byte[ErrorBufferBytes];
             IntPtr encodedData = IntPtr.Zero;
 
@@ -67,6 +71,7 @@ namespace ShareX.ScreenCaptureLib
                 fixed (byte* inputPointer = normalizedPixels)
                 fixed (byte* errorPointer = errorBuffer)
                 {
+                    Stopwatch codecTimer = Stopwatch.StartNew();
                     int result = NativeMethods.EncodeRgba16Float(
                         inputPointer,
                         checked((uint)source.Width),
@@ -79,6 +84,7 @@ namespace ShareX.ScreenCaptureLib
                         out nuint encodedSize,
                         errorPointer,
                         ErrorBufferBytes);
+                    codecTimer.Stop();
 
                     if (result != 0)
                     {
@@ -91,7 +97,16 @@ namespace ShareX.ScreenCaptureLib
                         throw new InvalidOperationException("The native Ultra HDR encoder returned an invalid buffer.");
                     }
 
+                    Stopwatch writeTimer = Stopwatch.StartNew();
                     destination.Write(new ReadOnlySpan<byte>(encodedData.ToPointer(), checked((int)encodedSize)));
+                    writeTimer.Stop();
+                    totalTimer.Stop();
+                    HdrEncodingPerformance.Log(
+                        $"HDR Ultra JPEG encode stages | size={source.Width}x{source.Height} " +
+                        $"conversionMs={conversionTimer.Elapsed.TotalMilliseconds:F1} " +
+                        $"codecMs={codecTimer.Elapsed.TotalMilliseconds:F1} " +
+                        $"writeMs={writeTimer.Elapsed.TotalMilliseconds:F1} " +
+                        $"bytes={encodedSize} totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
                     return new HdrEncodedImageInfo(
                         Format,
                         ".jpg",

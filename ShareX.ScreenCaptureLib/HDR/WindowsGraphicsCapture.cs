@@ -461,6 +461,7 @@ namespace ShareX.ScreenCaptureLib
         public static void Prewarm()
         {
             GpuHdrToSdrToneMapper.PrewarmShaders();
+            GpuHdrPqPixelConverter.Prewarm();
             GetNormalCaptureWorker().Prewarm();
         }
 
@@ -476,6 +477,7 @@ namespace ShareX.ScreenCaptureLib
 
             worker?.Dispose();
             GpuHdrToSdrToneMapper.ShutdownSharedSession();
+            GpuHdrPqPixelConverter.Shutdown();
         }
 
         private static NormalCaptureWorker GetNormalCaptureWorker()

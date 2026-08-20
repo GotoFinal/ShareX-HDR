@@ -14,6 +14,7 @@
 
 using System;
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
@@ -27,9 +28,6 @@ namespace ShareX.ScreenCaptureLib
     /// </summary>
     public sealed class HdrPngImageEncoder : IHdrImageEncoder
     {
-        private const float ScRgbToNits = HdrRgba16FloatBuffer.ReferenceWhiteNits;
-        private const float PqMaximumNits = 10000f;
-
         private static readonly byte[] PngSignature = { 137, 80, 78, 71, 13, 10, 26, 10 };
         private static readonly uint[] CrcTable = CreateCrcTable();
 
@@ -49,15 +47,24 @@ namespace ShareX.ScreenCaptureLib
             }
 
             options ??= new HdrImageEncodingOptions();
+            Stopwatch totalTimer = Stopwatch.StartNew();
             float masteringMaximumNits = options.GetValidatedMasteringDisplayMaximumNits();
             float masteringMinimumNits = options.GetValidatedMasteringDisplayMinimumNits(masteringMaximumNits);
+            HdrPqPixelConversionResult conversion = HdrPqPixelConverter.Convert(
+                source,
+                masteringMaximumNits,
+                HdrPqPixelLayout.PngRgba16BigEndian,
+                options.ProcessingBackend);
 
             using var compressedPixels = new MemoryStream();
-            (float maxCll, float maxFall) = CompressPixels(
-                source,
-                compressedPixels,
-                masteringMaximumNits);
+            Stopwatch compressionTimer = Stopwatch.StartNew();
+            using (var zlib = new ZLibStream(compressedPixels, CompressionLevel.SmallestSize, true))
+            {
+                zlib.Write(conversion.Pixels);
+            }
+            compressionTimer.Stop();
 
+            Stopwatch chunkTimer = Stopwatch.StartNew();
             long bytesWritten = 0;
             destination.Write(PngSignature);
             bytesWritten += PngSignature.Length;
@@ -75,7 +82,10 @@ namespace ShareX.ScreenCaptureLib
                 destination,
                 "mDCV",
                 CreateMasteringDisplayMetadata(masteringMaximumNits, masteringMinimumNits));
-            bytesWritten += WriteChunk(destination, "cLLI", CreateContentLightMetadata(maxCll, maxFall));
+            bytesWritten += WriteChunk(
+                destination,
+                "cLLI",
+                CreateContentLightMetadata(conversion.MaxCll, conversion.MaxFall));
 
             if (!compressedPixels.TryGetBuffer(out ArraySegment<byte> compressedBuffer))
             {
@@ -87,6 +97,14 @@ namespace ShareX.ScreenCaptureLib
                 "IDAT",
                 compressedBuffer.AsSpan(0, checked((int)compressedPixels.Length)));
             bytesWritten += WriteChunk(destination, "IEND", ReadOnlySpan<byte>.Empty);
+            chunkTimer.Stop();
+            totalTimer.Stop();
+            HdrEncodingPerformance.Log(
+                $"HDR PNG encode stages | size={source.Width}x{source.Height} " +
+                $"backend={conversion.Backend} conversionMs={conversion.TotalMilliseconds:F1} " +
+                $"compressionMs={compressionTimer.Elapsed.TotalMilliseconds:F1} " +
+                $"chunksMs={chunkTimer.Elapsed.TotalMilliseconds:F1} " +
+                $"bytes={bytesWritten} totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
 
             return new HdrEncodedImageInfo(
                 Format,
@@ -94,115 +112,9 @@ namespace ShareX.ScreenCaptureLib
                 "image/png",
                 false,
                 bytesWritten,
-                maxCll,
-                maxFall);
+                conversion.MaxCll,
+                conversion.MaxFall);
         }
-
-        private static (float MaxCll, float MaxFall) CompressPixels(
-            HdrRgba16FloatBuffer source,
-            MemoryStream destination,
-            float masteringMaximumNits)
-        {
-            float maxCll = 0f;
-            double luminanceSum = 0d;
-            byte[] encodedRow = new byte[checked(1 + source.Width * 8)];
-
-            using (var zlib = new ZLibStream(destination, CompressionLevel.SmallestSize, true))
-            {
-                for (int y = 0; y < source.Height; y++)
-                {
-                    ReadOnlySpan<byte> sourceRow = source.GetRowSpan(y);
-                    Span<byte> outputRow = encodedRow;
-                    outputRow[0] = 0; // PNG filter: None
-
-                    for (int x = 0; x < source.Width; x++)
-                    {
-                        ReadOnlySpan<byte> pixel = sourceRow.Slice(
-                            x * HdrRgba16FloatBuffer.BytesPerPixel,
-                            HdrRgba16FloatBuffer.BytesPerPixel);
-
-                        float alpha = Math.Clamp(ReadFiniteHalf(pixel, 6), 0f, 1f);
-                        float red709 = Unpremultiply(ReadFiniteHalf(pixel, 0), alpha);
-                        float green709 = Unpremultiply(ReadFiniteHalf(pixel, 2), alpha);
-                        float blue709 = Unpremultiply(ReadFiniteHalf(pixel, 4), alpha);
-
-                        ConvertRec709ToRec2020(
-                            red709,
-                            green709,
-                            blue709,
-                            out float red2020,
-                            out float green2020,
-                            out float blue2020);
-
-                        float redNits = Math.Clamp(red2020 * ScRgbToNits, 0f, masteringMaximumNits);
-                        float greenNits = Math.Clamp(green2020 * ScRgbToNits, 0f, masteringMaximumNits);
-                        float blueNits = Math.Clamp(blue2020 * ScRgbToNits, 0f, masteringMaximumNits);
-
-                        maxCll = Math.Max(maxCll, Math.Max(redNits, Math.Max(greenNits, blueNits)));
-                        luminanceSum += 0.2627d * redNits + 0.6780d * greenNits + 0.0593d * blueNits;
-
-                        int outputOffset = 1 + x * 8;
-                        WriteUInt16BigEndian(outputRow, outputOffset, QuantizeUnsigned16(EncodePq(redNits)));
-                        WriteUInt16BigEndian(outputRow, outputOffset + 2, QuantizeUnsigned16(EncodePq(greenNits)));
-                        WriteUInt16BigEndian(outputRow, outputOffset + 4, QuantizeUnsigned16(EncodePq(blueNits)));
-                        WriteUInt16BigEndian(outputRow, outputOffset + 6, QuantizeUnsigned16(alpha));
-                    }
-
-                    zlib.Write(encodedRow);
-                }
-            }
-
-            float maxFall = (float)(luminanceSum / checked((long)source.Width * source.Height));
-            return (maxCll, maxFall);
-        }
-
-        private static float ReadFiniteHalf(ReadOnlySpan<byte> pixel, int offset)
-        {
-            Half value = BitConverter.UInt16BitsToHalf(
-                BinaryPrimitives.ReadUInt16LittleEndian(pixel.Slice(offset, 2)));
-            return Half.IsFinite(value) ? (float)value : 0f;
-        }
-
-        private static float Unpremultiply(float value, float alpha)
-        {
-            if (alpha <= 0f)
-            {
-                return 0f;
-            }
-
-            return value / alpha;
-        }
-
-        private static void ConvertRec709ToRec2020(
-            float red,
-            float green,
-            float blue,
-            out float red2020,
-            out float green2020,
-            out float blue2020)
-        {
-            red2020 = 0.6274039f * red + 0.3292830f * green + 0.0433131f * blue;
-            green2020 = 0.0690973f * red + 0.9195404f * green + 0.0113623f * blue;
-            blue2020 = 0.0163914f * red + 0.0880133f * green + 0.8955953f * blue;
-        }
-
-        private static float EncodePq(float nits)
-        {
-            const double m1 = 2610d / 16384d;
-            const double m2 = 2523d / 32d;
-            const double c1 = 3424d / 4096d;
-            const double c2 = 2413d / 128d;
-            const double c3 = 2392d / 128d;
-
-            double normalized = Math.Clamp(nits / PqMaximumNits, 0d, 1d);
-            double luminancePower = Math.Pow(normalized, m1);
-            return (float)Math.Pow(
-                (c1 + c2 * luminancePower) / (1d + c3 * luminancePower),
-                m2);
-        }
-
-        private static ushort QuantizeUnsigned16(float value) =>
-            checked((ushort)Math.Clamp((int)MathF.Round(value * ushort.MaxValue), 0, ushort.MaxValue));
 
         private static void WriteUInt16BigEndian(Span<byte> destination, int offset, ushort value) =>
             BinaryPrimitives.WriteUInt16BigEndian(destination.Slice(offset, sizeof(ushort)), value);

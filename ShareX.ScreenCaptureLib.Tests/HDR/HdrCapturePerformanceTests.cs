@@ -157,6 +157,96 @@ public sealed class HdrCapturePerformanceTests
                 $"warmTotal={captureTimer.Elapsed.TotalMilliseconds + normalizeTimer.Elapsed.TotalMilliseconds + previewTimes[^1]:F1} ms.");
 
             MeasureBackendComparison(document);
+            MeasureOutputConversionComparison(document);
+        }
+    }
+
+    [Fact]
+    public void WindowsGraphicsCapture_OutputConversionPerformanceProbe()
+    {
+        if (!string.Equals(
+            Environment.GetEnvironmentVariable("SHAREX_RUN_HDR_OUTPUT_PERFORMANCE_TESTS"),
+            "1",
+            StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        Rectangle virtualScreen = SystemInformation.VirtualScreen;
+        bool captured = WindowsGraphicsCapture.TryCaptureHdr(
+            virtualScreen,
+            null,
+            new HdrCaptureSettings(),
+            out HdrImageDocument document);
+        using (document)
+        {
+            Assert.True(captured);
+            MeasureOutputConversionComparison(document);
+            MeasureOutputEncodingComparison(document);
+        }
+    }
+
+    private void MeasureOutputConversionComparison(HdrImageDocument source)
+    {
+        foreach (HdrPqPixelLayout layout in Enum.GetValues<HdrPqPixelLayout>())
+        {
+            foreach (HdrProcessingBackend backend in Enum.GetValues<HdrProcessingBackend>())
+            {
+                var timer = Stopwatch.StartNew();
+                HdrPqPixelConversionResult conversion = HdrPqPixelConverter.Convert(
+                    source.MasterPixels,
+                    1000f,
+                    layout,
+                    backend);
+                timer.Stop();
+                output.WriteLine(
+                    $"HDR output conversion probe: requested={backend}, actual={conversion.Backend}, " +
+                    $"layout={layout}, size={source.MasterPixels.Width}x{source.MasterPixels.Height}, " +
+                    $"bytes={conversion.Pixels.Length}, maxCll={conversion.MaxCll:F1}, " +
+                    $"maxFall={conversion.MaxFall:F1}, elapsed={timer.Elapsed.TotalMilliseconds:F1} ms.");
+            }
+        }
+    }
+
+    private void MeasureOutputEncodingComparison(HdrImageDocument source)
+    {
+        foreach (IHdrImageEncoder encoder in new IHdrImageEncoder[]
+        {
+            new AvifHdrImageEncoder(),
+            new HdrPngImageEncoder()
+        })
+        {
+            if (!HdrEncoderCapabilities.TryGetAvailability(encoder.Format, out _))
+            {
+                continue;
+            }
+
+            foreach (HdrProcessingBackend backend in Enum.GetValues<HdrProcessingBackend>())
+            {
+                using var encoded = new MemoryStream();
+                var options = new HdrImageEncodingOptions
+                {
+                    ProcessingBackend = backend,
+                    MasteringDisplayMaximumNits = 1000f,
+                    AvifQuality = 90,
+                    AvifSpeed = 8
+                };
+                var timer = Stopwatch.StartNew();
+                HdrEncodedImageInfo info = encoder.Encode(
+                    source.MasterPixels,
+                    encoded,
+                    options);
+                timer.Stop();
+                Assert.True(HdrEncodedImageVerifier.Verify(
+                    encoded,
+                    info.Format,
+                    source.MasterPixels.Width,
+                    source.MasterPixels.Height));
+                output.WriteLine(
+                    $"HDR output encode probe: requested={backend}, format={info.Format}, " +
+                    $"size={source.MasterPixels.Width}x{source.MasterPixels.Height}, " +
+                    $"bytes={encoded.Length}, elapsed={timer.Elapsed.TotalMilliseconds:F1} ms.");
+            }
         }
     }
 

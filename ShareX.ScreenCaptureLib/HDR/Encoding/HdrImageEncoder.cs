@@ -176,6 +176,8 @@ namespace ShareX.ScreenCaptureLib
 
     public sealed class HdrImageEncodingOptions
     {
+        public HdrProcessingBackend ProcessingBackend { get; init; } = HdrProcessingBackend.Cpu;
+
         public float MasteringDisplayMaximumNits { get; init; } =
             HdrFileOutputSettings.DefaultMasteringDisplayMaximumNits;
 

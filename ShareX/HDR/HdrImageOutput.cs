@@ -12,8 +12,10 @@
 
 #endregion License Information (GPL v3)
 
+using ShareX.HelpersLib;
 using ShareX.ScreenCaptureLib;
 using System;
+using System.Diagnostics;
 using System.IO;
 
 namespace ShareX
@@ -22,29 +24,45 @@ namespace ShareX
     {
         public static ImageData Encode(
             HdrImageDocument document,
-            HdrFileOutputSettings settings)
+            HdrFileOutputSettings settings,
+            HdrProcessingBackend processingBackend = HdrProcessingBackend.Cpu)
         {
             settings ??= new HdrFileOutputSettings();
-            return Encode(document, settings, settings.FileFormat);
+            return Encode(document, settings, settings.FileFormat, processingBackend);
         }
 
         public static ImageData EncodeClipboard(
             HdrImageDocument document,
-            HdrFileOutputSettings settings)
+            HdrFileOutputSettings settings,
+            HdrProcessingBackend processingBackend = HdrProcessingBackend.Cpu)
         {
             settings ??= new HdrFileOutputSettings();
-            return Encode(document, settings, settings.ClipboardFileFormat);
+            return Encode(document, settings, settings.ClipboardFileFormat, processingBackend);
         }
 
         public static ImageData Encode(
             HdrImageDocument document,
             HdrFileOutputSettings settings,
-            HdrFileFormat format)
+            HdrFileFormat format,
+            HdrProcessingBackend processingBackend = HdrProcessingBackend.Cpu)
         {
             ArgumentNullException.ThrowIfNull(document);
             settings ??= new HdrFileOutputSettings();
+            Stopwatch totalTimer = Stopwatch.StartNew();
+            Stopwatch capabilityTimer = Stopwatch.StartNew();
             HdrEncoderCapabilities.EnsureAvailable(format);
-            return Encode(document, settings, CreateEncoder(format));
+            capabilityTimer.Stop();
+            Stopwatch encodeTimer = Stopwatch.StartNew();
+            ImageData result = Encode(document, settings, CreateEncoder(format), processingBackend);
+            encodeTimer.Stop();
+            totalTimer.Stop();
+            DebugHelper.WriteLine(
+                $"HDR output stages | format={format} requestedBackend={processingBackend} " +
+                $"size={document.MasterPixels.Width}x{document.MasterPixels.Height} " +
+                $"capabilityMs={capabilityTimer.Elapsed.TotalMilliseconds:F1} " +
+                $"encodeAndVerifyMs={encodeTimer.Elapsed.TotalMilliseconds:F1} " +
+                $"totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
+            return result;
         }
 
         private static IHdrImageEncoder CreateEncoder(HdrFileFormat format) =>
@@ -60,10 +78,12 @@ namespace ShareX
         private static ImageData Encode(
             HdrImageDocument document,
             HdrFileOutputSettings settings,
-            IHdrImageEncoder encoder)
+            IHdrImageEncoder encoder,
+            HdrProcessingBackend processingBackend)
         {
             HdrImageEncodingOptions options = new HdrImageEncodingOptions
             {
+                ProcessingBackend = processingBackend,
                 MasteringDisplayMaximumNits = settings.MasteringDisplayMaximumNits,
                 MasteringDisplayMinimumNits = settings.MasteringDisplayMinimumNits,
                 Quality = settings.JpegQuality,
@@ -79,9 +99,24 @@ namespace ShareX
 
             try
             {
+                Stopwatch encoderTimer = Stopwatch.StartNew();
                 HdrEncodedImageInfo info = encoder.Encode(document.MasterPixels, stream, options);
+                encoderTimer.Stop();
 
-                if (!HdrEncodedImageVerifier.Verify(stream, info.Format, document.MasterPixels.Width, document.MasterPixels.Height))
+                Stopwatch verifierTimer = Stopwatch.StartNew();
+                bool verified = HdrEncodedImageVerifier.Verify(
+                    stream,
+                    info.Format,
+                    document.MasterPixels.Width,
+                    document.MasterPixels.Height);
+                verifierTimer.Stop();
+                DebugHelper.WriteLine(
+                    $"HDR output validation | format={info.Format} " +
+                    $"encoderMs={encoderTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"verifyMs={verifierTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"bytes={stream.Length} verified={verified}");
+
+                if (!verified)
                 {
                     throw new InvalidDataException("The HDR encoder produced an invalid artifact.");
                 }

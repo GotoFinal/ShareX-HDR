@@ -24,6 +24,7 @@
 #endregion License Information (GPL v3)
 
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
@@ -157,6 +158,8 @@ namespace ShareX.HelpersLib
 
             try
             {
+                Stopwatch totalTimer = Stopwatch.StartNew();
+                Stopwatch encodedCopyTimer = Stopwatch.StartNew();
                 byte[] encodedBytes;
                 long originalPosition = hdrImage.CanSeek ? hdrImage.Position : 0;
 
@@ -183,6 +186,7 @@ namespace ShareX.HelpersLib
                 {
                     return false;
                 }
+                encodedCopyTimer.Stop();
 
                 IDataObject dataObject = new DataObject();
                 Bitmap opaqueFallback = null;
@@ -192,14 +196,20 @@ namespace ShareX.HelpersLib
 
                 try
                 {
+                    double fallbackFillMilliseconds = 0d;
+                    double dibMilliseconds = 0d;
+                    double sdrPngMilliseconds = 0d;
                     Image bitmapFallback = sdrFallback;
                     if (sdrFallback != null && HelpersOptions.DefaultCopyImageFillBackground)
                     {
+                        Stopwatch fallbackFillTimer = Stopwatch.StartNew();
                         opaqueFallback = sdrFallback.CreateEmptyBitmap(PixelFormat.Format24bppRgb);
                         using Graphics graphics = Graphics.FromImage(opaqueFallback);
                         graphics.Clear(Color.White);
                         graphics.DrawImage(sdrFallback, 0, 0, sdrFallback.Width, sdrFallback.Height);
                         bitmapFallback = opaqueFallback;
+                        fallbackFillTimer.Stop();
+                        fallbackFillMilliseconds = fallbackFillTimer.Elapsed.TotalMilliseconds;
                     }
 
                     // Ultra HDR JPEG has a normal SDR JPEG base, so applications
@@ -212,16 +222,22 @@ namespace ShareX.HelpersLib
                     if (bitmapFallback != null)
                     {
                         dataObject.SetData(DataFormats.Bitmap, true, bitmapFallback);
+                        Stopwatch dibTimer = Stopwatch.StartNew();
                         dibStream = new MemoryStream(ClipboardHelpersEx.ConvertToDib(bitmapFallback));
                         dataObject.SetData(DataFormats.Dib, false, dibStream);
+                        dibTimer.Stop();
+                        dibMilliseconds = dibTimer.Elapsed.TotalMilliseconds;
 
                         // Many applications prefer the registered PNG format to
                         // Bitmap/DIB. Give it SDR bytes in compatibility mode so
                         // recognizing PNG cannot lead to a failed HDR decode.
+                        Stopwatch sdrPngTimer = Stopwatch.StartNew();
                         sdrPngStream = new MemoryStream();
                         bitmapFallback.Save(sdrPngStream, ImageFormat.Png);
                         sdrPngStream.Position = 0;
                         dataObject.SetData(FORMAT_PNG, false, sdrPngStream);
+                        sdrPngTimer.Stop();
+                        sdrPngMilliseconds = sdrPngTimer.Elapsed.TotalMilliseconds;
 
                         if (HelpersOptions.UseAlternativeClipboardCopyImage &&
                             !string.IsNullOrEmpty(fileName))
@@ -255,7 +271,19 @@ namespace ShareX.HelpersLib
                     encodedStreams.Add(extensionStream);
                     dataObject.SetData(FORMAT_SHAREX_HDR_FILE_EXTENSION, false, extensionStream);
 
-                    return CopyData(dataObject);
+                    Stopwatch publishTimer = Stopwatch.StartNew();
+                    bool copied = CopyData(dataObject);
+                    publishTimer.Stop();
+                    totalTimer.Stop();
+                    DebugHelper.WriteLine(
+                        $"HDR clipboard stages | encodedBytes={encodedBytes.Length} " +
+                        $"sdrFallback={bitmapFallback != null} " +
+                        $"encodedCopyMs={encodedCopyTimer.Elapsed.TotalMilliseconds:F1} " +
+                        $"fallbackFillMs={fallbackFillMilliseconds:F1} " +
+                        $"dibMs={dibMilliseconds:F1} sdrPngMs={sdrPngMilliseconds:F1} " +
+                        $"publishMs={publishTimer.Elapsed.TotalMilliseconds:F1} " +
+                        $"totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
+                    return copied;
 
                     void AddEncodedFormat(string format)
                     {

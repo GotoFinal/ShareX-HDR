@@ -26,6 +26,7 @@
 using ShareX.HelpersLib;
 using ShareX.Properties;
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Windows.Forms;
 
@@ -46,7 +47,18 @@ namespace ShareX
             {
                 if (ImageStream != null && !string.IsNullOrEmpty(filePath))
                 {
-                    return ImageStream.WriteToFileAtomic(filePath, FileVerifier);
+                    Stopwatch timer = Stopwatch.StartNew();
+                    bool written = ImageStream.WriteToFileAtomic(filePath, FileVerifier);
+                    timer.Stop();
+                    if (IsHdr)
+                    {
+                        DebugHelper.WriteLine(
+                            $"HDR file write stages | extension={FileExtension} " +
+                            $"bytes={ImageStream.Length} verified={written} " +
+                            $"writeAndVerifyMs={timer.Elapsed.TotalMilliseconds:F1}");
+                    }
+
+                    return written;
                 }
             }
             catch (Exception e)

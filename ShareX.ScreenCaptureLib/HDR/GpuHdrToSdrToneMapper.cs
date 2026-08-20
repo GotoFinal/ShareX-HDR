@@ -1018,6 +1018,13 @@ namespace ShareX.ScreenCaptureLib
                 CompileShader(analysisSource, AnalysisShaderResourceName, "HeadroomMain", "cs_5_0"));
         }
 
+        internal static byte[] CompileComputeShaderResource(string resourceName, string entryPoint)
+        {
+            Assembly assembly = typeof(GpuHdrToSdrToneMapper).Assembly;
+            string source = ReadEmbeddedShader(assembly, resourceName);
+            return CompileShader(source, resourceName, entryPoint, "cs_5_0");
+        }
+
         private static string ReadEmbeddedShader(Assembly assembly, string resourceName)
         {
             using Stream stream = assembly.GetManifestResourceStream(resourceName)

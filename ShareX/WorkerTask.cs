@@ -73,6 +73,9 @@ namespace ShareX
         private HdrFileFormat cachedHdrFormat;
         private Guid cachedHdrDocumentId;
         private int cachedHdrDocumentRevision;
+        private Guid cachedHdrClassificationDocumentId;
+        private int cachedHdrClassificationDocumentRevision;
+        private bool? cachedHdrContainsHdrContent;
 
         #region Constructors
 
@@ -900,12 +903,15 @@ namespace ShareX
 
         private HdrFileOutputSettings GetHdrFileOutputSettings()
         {
-            HdrCaptureSettings hdrSettings = Info.TaskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
-            return hdrSettings.FileOutput ??= new HdrFileOutputSettings();
+            return GetHdrCaptureSettings().FileOutput ??= new HdrFileOutputSettings();
         }
+
+        private HdrCaptureSettings GetHdrCaptureSettings() =>
+            Info.TaskSettings.CaptureSettings.HdrSettings ??= new HdrCaptureSettings();
 
         private void CopyCapturedImageToClipboard(HdrFileOutputSettings settings)
         {
+            Stopwatch totalTimer = Stopwatch.StartNew();
             if (hdrImageDocument == null ||
                 settings.ClipboardOutputMode == HdrClipboardOutputMode.SdrOnly)
             {
@@ -914,19 +920,42 @@ namespace ShareX
                     DebugHelper.WriteLine("SDR image copied to clipboard.");
                 }
 
+                totalTimer.Stop();
+                DebugHelper.WriteLine(
+                    $"Clipboard output stages | mode=SDR totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
+
                 return;
             }
 
             bool includeSdrFallback =
                 settings.ClipboardOutputMode == HdrClipboardOutputMode.HdrAndSdr;
+            if (includeSdrFallback && !HasHdrContent(GetHdrCaptureSettings()))
+            {
+                if (ClipboardHelpers.CopyImage(Image, Info.FileName))
+                {
+                    DebugHelper.WriteLine(
+                        "HDR and SDR clipboard output collapsed to SDR only: " +
+                        "the capture contains no coherent HDR pixel headroom.");
+                }
+
+                totalTimer.Stop();
+                DebugHelper.WriteLine(
+                    $"Clipboard output stages | mode=HDR+SDR collapsedTo=SDR " +
+                    $"totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
+                return;
+            }
 
             try
             {
+                HdrProcessingBackend processingBackend = GetHdrCaptureSettings().ProcessingBackend;
                 bool canReuseForFile = settings.ClipboardFileFormat == settings.FileFormat &&
                     settings.OutputMode != HdrOutputMode.SdrOnly;
                 ImageData hdrClipboardImage = canReuseForFile
                     ? GetOrEncodeHdrImage(settings, settings.ClipboardFileFormat)
-                    : HdrImageOutput.EncodeClipboard(hdrImageDocument, settings);
+                    : HdrImageOutput.EncodeClipboard(
+                        hdrImageDocument,
+                        settings,
+                        processingBackend);
 
                 try
                 {
@@ -941,10 +970,15 @@ namespace ShareX
 
                     if (copied)
                     {
+                        totalTimer.Stop();
                         DebugHelper.WriteLine(
                             includeSdrFallback
                                 ? $"HDR {settings.ClipboardFileFormat} and SDR fallback copied to clipboard."
                                 : $"HDR {settings.ClipboardFileFormat} copied to clipboard without an SDR fallback.");
+                        DebugHelper.WriteLine(
+                            $"Clipboard output stages | mode={settings.ClipboardOutputMode} " +
+                            $"format={settings.ClipboardFileFormat} " +
+                            $"reused={canReuseForFile} totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
                         return;
                     }
                 }
@@ -972,6 +1006,12 @@ namespace ShareX
             {
                 DebugHelper.WriteLine("HDR clipboard copy failed.");
             }
+
+            totalTimer.Stop();
+            DebugHelper.WriteLine(
+                $"Clipboard output stages | mode={settings.ClipboardOutputMode} " +
+                $"format={settings.ClipboardFileFormat} failed=True " +
+                $"totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
         }
 
         private ImageData GetOrEncodeHdrImage(
@@ -990,7 +1030,11 @@ namespace ShareX
             }
 
             cachedHdrImageData?.Dispose();
-            cachedHdrImageData = HdrImageOutput.Encode(hdrImageDocument, settings, format);
+            cachedHdrImageData = HdrImageOutput.Encode(
+                hdrImageDocument,
+                settings,
+                format,
+                GetHdrCaptureSettings().ProcessingBackend);
             cachedHdrOutputSettings = settings;
             cachedHdrFormat = format;
             cachedHdrDocumentId = hdrImageDocument.DocumentId;
@@ -1055,9 +1099,7 @@ namespace ShareX
 
             try
             {
-                HdrCaptureSettings captureSettings =
-                    Info.TaskSettings.CaptureSettings.HdrSettings ?? new HdrCaptureSettings();
-                if (!hdrImageDocument.HasHdrContent(captureSettings))
+                if (!HasHdrContent(GetHdrCaptureSettings()))
                 {
                     DebugHelper.WriteLine(
                         "HDR and SDR output collapsed to SDR only: the capture contains no coherent HDR pixel headroom.");
@@ -1073,6 +1115,42 @@ namespace ShareX
             }
 
             return true;
+        }
+
+        private bool HasHdrContent(HdrCaptureSettings settings)
+        {
+            if (cachedHdrContainsHdrContent.HasValue &&
+                cachedHdrClassificationDocumentId == hdrImageDocument.DocumentId &&
+                cachedHdrClassificationDocumentRevision == hdrImageDocument.Revision)
+            {
+                DebugHelper.WriteLine(
+                    $"HDR content classification cache | hit=True " +
+                    $"result={cachedHdrContainsHdrContent.Value}");
+                return cachedHdrContainsHdrContent.Value;
+            }
+
+            Stopwatch timer = Stopwatch.StartNew();
+            bool containsHdrContent;
+            try
+            {
+                containsHdrContent = hdrImageDocument.HasHdrContent(settings);
+            }
+            catch (Exception exception)
+            {
+                DebugHelper.WriteException(
+                    exception,
+                    "HDR content classification failed; retaining HDR output.");
+                containsHdrContent = true;
+            }
+
+            timer.Stop();
+            cachedHdrClassificationDocumentId = hdrImageDocument.DocumentId;
+            cachedHdrClassificationDocumentRevision = hdrImageDocument.Revision;
+            cachedHdrContainsHdrContent = containsHdrContent;
+            DebugHelper.WriteLine(
+                $"HDR content classification stages | hit=False result={containsHdrContent} " +
+                $"totalMs={timer.Elapsed.TotalMilliseconds:F1}");
+            return containsHdrContent;
         }
 
         private bool ShouldWriteSdrCompanion(HdrFileOutputSettings settings) =>
@@ -1721,6 +1799,7 @@ namespace ShareX
             cachedHdrImageData?.Dispose();
             cachedHdrImageData = null;
             cachedHdrOutputSettings = null;
+            cachedHdrContainsHdrContent = null;
 
             if (!KeepImage && Image != null)
             {
