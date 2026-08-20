@@ -135,7 +135,22 @@ bool validate_hdr_image(const avifImage* image) noexcept {
 
 int thread_count() noexcept {
   const unsigned int hardware_threads = std::thread::hardware_concurrency();
-  return static_cast<int>(std::clamp(hardware_threads == 0 ? 1u : hardware_threads, 1u, 16u));
+  unsigned int thread_limit = 16u;
+  char configured_limit[16]{};
+  size_t configured_length = 0;
+  if (getenv_s(&configured_length, configured_limit, sizeof(configured_limit),
+               "SHAREX_AVIF_MAX_THREADS") == 0 &&
+      configured_length > 1) {
+    char* end = nullptr;
+    const long parsed_limit = std::strtol(configured_limit, &end, 10);
+    if (end != configured_limit && *end == '\0' && parsed_limit >= 1 &&
+        parsed_limit <= 64) {
+      thread_limit = static_cast<unsigned int>(parsed_limit);
+    }
+  }
+
+  return static_cast<int>(std::clamp(
+      hardware_threads == 0 ? 1u : hardware_threads, 1u, thread_limit));
 }
 
 struct ImageGuard {

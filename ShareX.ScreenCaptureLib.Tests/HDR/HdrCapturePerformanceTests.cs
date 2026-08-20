@@ -1,3 +1,4 @@
+using ShareX.HelpersLib;
 using ShareX.ScreenCaptureLib;
 using System.Buffers.Binary;
 using System.Diagnostics;
@@ -183,6 +184,8 @@ public sealed class HdrCapturePerformanceTests
             Assert.True(captured);
             MeasureOutputConversionComparison(document);
             MeasureOutputEncodingComparison(document);
+            MeasureAvifSpeedAndThreadComparison(document);
+            MeasureConcurrentClipboardPreparation(document);
         }
     }
 
@@ -247,6 +250,100 @@ public sealed class HdrCapturePerformanceTests
                     $"size={source.MasterPixels.Width}x{source.MasterPixels.Height}, " +
                     $"bytes={encoded.Length}, elapsed={timer.Elapsed.TotalMilliseconds:F1} ms.");
             }
+        }
+    }
+
+    private void MeasureAvifSpeedAndThreadComparison(HdrImageDocument source)
+    {
+        if (!HdrEncoderCapabilities.TryGetAvailability(HdrFileFormat.Avif, out _))
+        {
+            return;
+        }
+
+        string? previousThreadLimit = Environment.GetEnvironmentVariable("SHAREX_AVIF_MAX_THREADS");
+        try
+        {
+            foreach (int threadLimit in new[] { 16, 32 })
+            {
+                Environment.SetEnvironmentVariable(
+                    "SHAREX_AVIF_MAX_THREADS",
+                    threadLimit.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                foreach (int speed in new[] { 8, 10 })
+                {
+                    using var encoded = new MemoryStream();
+                    var options = new HdrImageEncodingOptions
+                    {
+                        ProcessingBackend = HdrProcessingBackend.Gpu,
+                        MasteringDisplayMaximumNits = 1000f,
+                        AvifQuality = 90,
+                        AvifSpeed = speed
+                    };
+                    var timer = Stopwatch.StartNew();
+                    new AvifHdrImageEncoder().Encode(source.MasterPixels, encoded, options);
+                    timer.Stop();
+                    output.WriteLine(
+                        $"HDR AVIF tuning probe: threads={threadLimit}, speed={speed}, " +
+                        $"bytes={encoded.Length}, elapsed={timer.Elapsed.TotalMilliseconds:F1} ms.");
+                }
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("SHAREX_AVIF_MAX_THREADS", previousThreadLimit);
+        }
+    }
+
+    private void MeasureConcurrentClipboardPreparation(HdrImageDocument source)
+    {
+        if (!HdrEncoderCapabilities.TryGetAvailability(HdrFileFormat.Avif, out _))
+        {
+            return;
+        }
+
+        using Bitmap sdrPreview = source.CreateSdrPreview(new HdrCaptureSettings
+        {
+            ProcessingBackend = HdrProcessingBackend.Gpu
+        });
+        var options = new HdrImageEncodingOptions
+        {
+            ProcessingBackend = HdrProcessingBackend.Gpu,
+            MasteringDisplayMaximumNits = 1000f,
+            AvifQuality = 90,
+            AvifSpeed = 8
+        };
+
+        var sequentialTimer = Stopwatch.StartNew();
+        using (var encoded = new MemoryStream())
+        {
+            new AvifHdrImageEncoder().Encode(source.MasterPixels, encoded, options);
+        }
+        using (HdrClipboardFallbackData fallback = PrepareFallback())
+        {
+        }
+        sequentialTimer.Stop();
+
+        var concurrentTimer = Stopwatch.StartNew();
+        Task<HdrClipboardFallbackData> preparationTask = Task.Run(PrepareFallback);
+        using (var encoded = new MemoryStream())
+        {
+            new AvifHdrImageEncoder().Encode(source.MasterPixels, encoded, options);
+        }
+        using (HdrClipboardFallbackData fallback = preparationTask.GetAwaiter().GetResult())
+        {
+        }
+        concurrentTimer.Stop();
+
+        output.WriteLine(
+            $"HDR clipboard overlap probe: size={source.MasterPixels.Width}x{source.MasterPixels.Height}, " +
+            $"sequential={sequentialTimer.Elapsed.TotalMilliseconds:F1} ms, " +
+            $"concurrent={concurrentTimer.Elapsed.TotalMilliseconds:F1} ms, " +
+            $"saved={sequentialTimer.Elapsed.TotalMilliseconds - concurrentTimer.Elapsed.TotalMilliseconds:F1} ms.");
+
+        HdrClipboardFallbackData PrepareFallback()
+        {
+            using var companionPng = new MemoryStream();
+            sdrPreview.Save(companionPng, ImageFormat.Png);
+            return ClipboardHelpers.PrepareHdrClipboardFallback(sdrPreview, companionPng);
         }
     }
 

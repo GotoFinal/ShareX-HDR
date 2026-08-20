@@ -38,6 +38,7 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace ShareX
@@ -76,6 +77,7 @@ namespace ShareX
         private Guid cachedHdrClassificationDocumentId;
         private int cachedHdrClassificationDocumentRevision;
         private bool? cachedHdrContainsHdrContent;
+        private ImageData cachedSdrCompanionImageData;
 
         #region Constructors
 
@@ -945,6 +947,12 @@ namespace ShareX
                 return;
             }
 
+            Task<HdrClipboardPreparation> preparationTask = includeSdrFallback
+                ? Task.Run(() => PrepareHdrClipboardOutput(settings))
+                : null;
+            HdrClipboardPreparation preparation = null;
+            Stopwatch preparationWaitTimer = new Stopwatch();
+
             try
             {
                 HdrProcessingBackend processingBackend = GetHdrCaptureSettings().ProcessingBackend;
@@ -959,12 +967,20 @@ namespace ShareX
 
                 try
                 {
-                    bool copied = ClipboardHelpers.CopyHdrImage(
+                    if (preparationTask != null)
+                    {
+                        preparationWaitTimer.Start();
+                        preparation = preparationTask.GetAwaiter().GetResult();
+                        preparationWaitTimer.Stop();
+                        CacheSdrCompanion(preparation.DetachSdrCompanion());
+                    }
+
+                    bool copied = ClipboardHelpers.CopyPreparedHdrImage(
                         hdrClipboardImage.ImageStream,
                         GetHdrClipboardFormatName(settings.ClipboardFileFormat),
                         hdrClipboardImage.MediaType,
                         hdrClipboardImage.FileExtension,
-                        includeSdrFallback ? Image : null,
+                        preparation?.ClipboardFallback,
                         Info.FileName,
                         settings.ClipboardFileFormat == HdrFileFormat.UltraHdrJpeg);
 
@@ -978,7 +994,9 @@ namespace ShareX
                         DebugHelper.WriteLine(
                             $"Clipboard output stages | mode={settings.ClipboardOutputMode} " +
                             $"format={settings.ClipboardFileFormat} " +
-                            $"reused={canReuseForFile} totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
+                            $"reused={canReuseForFile} " +
+                            $"fallbackWaitMs={preparationWaitTimer.Elapsed.TotalMilliseconds:F1} " +
+                            $"totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
                         return;
                     }
                 }
@@ -996,6 +1014,28 @@ namespace ShareX
                     e,
                     $"HDR {settings.ClipboardFileFormat} clipboard encoding failed.");
             }
+            finally
+            {
+                if (preparation == null && preparationTask != null)
+                {
+                    try
+                    {
+                        preparationWaitTimer.Start();
+                        preparation = preparationTask.GetAwaiter().GetResult();
+                        preparationWaitTimer.Stop();
+                        CacheSdrCompanion(preparation.DetachSdrCompanion());
+                    }
+                    catch (Exception exception)
+                    {
+                        preparationWaitTimer.Stop();
+                        DebugHelper.WriteException(
+                            exception,
+                            "Preparing the SDR clipboard fallback failed.");
+                    }
+                }
+
+                preparation?.Dispose();
+            }
 
             if (includeSdrFallback && ClipboardHelpers.CopyImage(Image, Info.FileName))
             {
@@ -1012,6 +1052,89 @@ namespace ShareX
                 $"Clipboard output stages | mode={settings.ClipboardOutputMode} " +
                 $"format={settings.ClipboardFileFormat} failed=True " +
                 $"totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
+        }
+
+        private HdrClipboardPreparation PrepareHdrClipboardOutput(HdrFileOutputSettings settings)
+        {
+            Stopwatch totalTimer = Stopwatch.StartNew();
+            ImageData sdrCompanion = null;
+            HdrClipboardFallbackData clipboardFallback = null;
+
+            try
+            {
+                Stopwatch companionTimer = Stopwatch.StartNew();
+                if (ShouldPrepareSdrCompanion(settings))
+                {
+                    sdrCompanion = TaskHelpers.PrepareImage(Image, Info.TaskSettings);
+                }
+                companionTimer.Stop();
+
+                bool canReusePng = sdrCompanion?.ImageStream != null &&
+                    string.Equals(sdrCompanion.MediaType, "image/png", StringComparison.OrdinalIgnoreCase) &&
+                    (!HelpersOptions.DefaultCopyImageFillBackground ||
+                        Image is Bitmap bitmap && !ImageHelpers.IsImageTransparent(bitmap));
+                clipboardFallback = ClipboardHelpers.PrepareHdrClipboardFallback(
+                    Image,
+                    canReusePng ? sdrCompanion.ImageStream : null);
+                totalTimer.Stop();
+                DebugHelper.WriteLine(
+                    $"HDR clipboard preparation overlap | companionPrepared={sdrCompanion != null} " +
+                    $"companionPngReused={canReusePng} " +
+                    $"companionMs={companionTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
+                return new HdrClipboardPreparation(clipboardFallback, sdrCompanion);
+            }
+            catch
+            {
+                clipboardFallback?.Dispose();
+                sdrCompanion?.Dispose();
+                throw;
+            }
+        }
+
+        private bool ShouldPrepareSdrCompanion(HdrFileOutputSettings settings) =>
+            ShouldWriteSdrCompanion(settings) &&
+            Info.TaskSettings.AfterCaptureJob.HasFlagAny(
+                AfterCaptureTasks.SaveImageToFile,
+                AfterCaptureTasks.SaveImageToFileWithDialog,
+                AfterCaptureTasks.AnalyzeImage);
+
+        private void CacheSdrCompanion(ImageData imageData)
+        {
+            if (imageData == null)
+            {
+                return;
+            }
+
+            cachedSdrCompanionImageData?.Dispose();
+            cachedSdrCompanionImageData = imageData;
+        }
+
+        private sealed class HdrClipboardPreparation : IDisposable
+        {
+            public HdrClipboardFallbackData ClipboardFallback { get; }
+            private ImageData sdrCompanion;
+
+            public HdrClipboardPreparation(
+                HdrClipboardFallbackData clipboardFallback,
+                ImageData sdrCompanion)
+            {
+                ClipboardFallback = clipboardFallback;
+                this.sdrCompanion = sdrCompanion;
+            }
+
+            public ImageData DetachSdrCompanion()
+            {
+                ImageData result = sdrCompanion;
+                sdrCompanion = null;
+                return result;
+            }
+
+            public void Dispose()
+            {
+                ClipboardFallback?.Dispose();
+                sdrCompanion?.Dispose();
+            }
         }
 
         private ImageData GetOrEncodeHdrImage(
@@ -1160,20 +1283,29 @@ namespace ShareX
 
         private string WriteSdrCompanion(string hdrFilePath)
         {
-            using ImageData sdrImageData = TaskHelpers.PrepareImage(Image, Info.TaskSettings);
-            string extension = string.IsNullOrWhiteSpace(sdrImageData.FileExtension)
-                ? sdrImageData.ImageFormat.GetDescription()
-                : sdrImageData.FileExtension;
-            string folder = Path.GetDirectoryName(hdrFilePath);
-            string fileName = Path.GetFileNameWithoutExtension(hdrFilePath) + "-SDR." + extension;
-            string companionPath = TaskHelpers.HandleExistsFile(
-                Path.Combine(folder, fileName),
-                Info.TaskSettings);
-
-            if (!string.IsNullOrEmpty(companionPath) && sdrImageData.Write(companionPath))
+            bool reused = cachedSdrCompanionImageData != null;
+            ImageData sdrImageData = cachedSdrCompanionImageData;
+            cachedSdrCompanionImageData = null;
+            using (sdrImageData ??= TaskHelpers.PrepareImage(Image, Info.TaskSettings))
             {
-                DebugHelper.WriteLine("SDR companion image saved to file: " + companionPath);
-                return companionPath;
+                Stopwatch timer = Stopwatch.StartNew();
+                string extension = string.IsNullOrWhiteSpace(sdrImageData.FileExtension)
+                    ? sdrImageData.ImageFormat.GetDescription()
+                    : sdrImageData.FileExtension;
+                string folder = Path.GetDirectoryName(hdrFilePath);
+                string fileName = Path.GetFileNameWithoutExtension(hdrFilePath) + "-SDR." + extension;
+                string companionPath = TaskHelpers.HandleExistsFile(
+                    Path.Combine(folder, fileName),
+                    Info.TaskSettings);
+
+                if (!string.IsNullOrEmpty(companionPath) && sdrImageData.Write(companionPath))
+                {
+                    timer.Stop();
+                    DebugHelper.WriteLine(
+                        $"SDR companion image saved to file: {companionPath} " +
+                        $"reused={reused} writeMs={timer.Elapsed.TotalMilliseconds:F1}");
+                    return companionPath;
+                }
             }
 
             return null;
@@ -1800,6 +1932,9 @@ namespace ShareX
             cachedHdrImageData = null;
             cachedHdrOutputSettings = null;
             cachedHdrContainsHdrContent = null;
+
+            cachedSdrCompanionImageData?.Dispose();
+            cachedSdrCompanionImageData = null;
 
             if (!KeepImage && Image != null)
             {

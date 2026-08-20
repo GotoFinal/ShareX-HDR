@@ -35,6 +35,61 @@ using System.Windows.Forms;
 
 namespace ShareX.HelpersLib
 {
+    public sealed class HdrClipboardFallbackData : IDisposable
+    {
+        internal Image BitmapFallback { get; }
+        internal byte[] DibBytes { get; }
+        internal ArraySegment<byte> PngBytes { get; }
+        internal bool OwnsBitmapFallback { get; }
+
+        public bool ReusedPngBytes { get; }
+        public int DibLength => DibBytes?.Length ?? 0;
+        public int PngLength => PngBytes.Count;
+        public double FillMilliseconds { get; }
+        public double DibMilliseconds { get; }
+        public double PngMilliseconds { get; }
+        public double TotalMilliseconds { get; }
+
+        internal HdrClipboardFallbackData(
+            Image bitmapFallback,
+            bool ownsBitmapFallback,
+            byte[] dibBytes,
+            ArraySegment<byte> pngBytes,
+            bool reusedPngBytes,
+            double fillMilliseconds,
+            double dibMilliseconds,
+            double pngMilliseconds,
+            double totalMilliseconds)
+        {
+            BitmapFallback = bitmapFallback;
+            OwnsBitmapFallback = ownsBitmapFallback;
+            DibBytes = dibBytes;
+            PngBytes = pngBytes;
+            ReusedPngBytes = reusedPngBytes;
+            FillMilliseconds = fillMilliseconds;
+            DibMilliseconds = dibMilliseconds;
+            PngMilliseconds = pngMilliseconds;
+            TotalMilliseconds = totalMilliseconds;
+        }
+
+        internal MemoryStream CreateDibStream() => new MemoryStream(DibBytes, writable: false);
+
+        internal MemoryStream CreatePngStream() => new MemoryStream(
+            PngBytes.Array,
+            PngBytes.Offset,
+            PngBytes.Count,
+            writable: false,
+            publiclyVisible: true);
+
+        public void Dispose()
+        {
+            if (OwnsBitmapFallback)
+            {
+                BitmapFallback?.Dispose();
+            }
+        }
+    }
+
     public static class ClipboardHelpers
     {
         public const string FORMAT_PNG = "PNG";
@@ -150,6 +205,116 @@ namespace ShareX.HelpersLib
             string fileName = null,
             bool encodedImageContainsSdrFallback = false)
         {
+            try
+            {
+                using HdrClipboardFallbackData preparedFallback =
+                    PrepareHdrClipboardFallback(sdrFallback);
+                return CopyPreparedHdrImage(
+                    hdrImage,
+                    encodedClipboardFormat,
+                    mediaType,
+                    fileExtension,
+                    preparedFallback,
+                    fileName,
+                    encodedImageContainsSdrFallback);
+            }
+            catch (Exception e)
+            {
+                DebugHelper.WriteException(e, "HDR image clipboard copy failed.");
+                return false;
+            }
+        }
+
+        public static HdrClipboardFallbackData PrepareHdrClipboardFallback(
+            Image sdrFallback,
+            Stream reusableSdrPng = null)
+        {
+            if (sdrFallback == null)
+            {
+                return null;
+            }
+
+            Stopwatch totalTimer = Stopwatch.StartNew();
+            Image bitmapFallback = sdrFallback;
+            bool ownsBitmapFallback = false;
+
+            try
+            {
+                Stopwatch fillTimer = Stopwatch.StartNew();
+                if (HelpersOptions.DefaultCopyImageFillBackground)
+                {
+                    Bitmap opaqueFallback = sdrFallback.CreateEmptyBitmap(PixelFormat.Format24bppRgb);
+                    using Graphics graphics = Graphics.FromImage(opaqueFallback);
+                    graphics.Clear(Color.White);
+                    graphics.DrawImage(sdrFallback, 0, 0, sdrFallback.Width, sdrFallback.Height);
+                    bitmapFallback = opaqueFallback;
+                    ownsBitmapFallback = true;
+                }
+                fillTimer.Stop();
+
+                Stopwatch dibTimer = Stopwatch.StartNew();
+                byte[] dibBytes = ClipboardHelpersEx.ConvertToDib(bitmapFallback);
+                dibTimer.Stop();
+
+                Stopwatch pngTimer = Stopwatch.StartNew();
+                bool reusedPngBytes = TryGetStreamBytes(reusableSdrPng, out ArraySegment<byte> pngBytes);
+                if (!reusedPngBytes)
+                {
+                    using var pngStream = new MemoryStream();
+                    bitmapFallback.Save(pngStream, ImageFormat.Png);
+                    if (!pngStream.TryGetBuffer(out pngBytes))
+                    {
+                        byte[] pngCopy = pngStream.ToArray();
+                        pngBytes = new ArraySegment<byte>(pngCopy);
+                    }
+                    else
+                    {
+                        pngBytes = new ArraySegment<byte>(
+                            pngBytes.Array,
+                            pngBytes.Offset,
+                            checked((int)pngStream.Length));
+                    }
+                }
+                pngTimer.Stop();
+                totalTimer.Stop();
+
+                DebugHelper.WriteLine(
+                    $"HDR clipboard fallback preparation | size={sdrFallback.Width}x{sdrFallback.Height} " +
+                    $"pngReused={reusedPngBytes} fillMs={fillTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"dibMs={dibTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"pngMs={pngTimer.Elapsed.TotalMilliseconds:F1} " +
+                    $"totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
+                return new HdrClipboardFallbackData(
+                    bitmapFallback,
+                    ownsBitmapFallback,
+                    dibBytes,
+                    pngBytes,
+                    reusedPngBytes,
+                    fillTimer.Elapsed.TotalMilliseconds,
+                    dibTimer.Elapsed.TotalMilliseconds,
+                    pngTimer.Elapsed.TotalMilliseconds,
+                    totalTimer.Elapsed.TotalMilliseconds);
+            }
+            catch
+            {
+                if (ownsBitmapFallback)
+                {
+                    bitmapFallback?.Dispose();
+                }
+
+                throw;
+            }
+        }
+
+        public static bool CopyPreparedHdrImage(
+            Stream hdrImage,
+            string encodedClipboardFormat,
+            string mediaType,
+            string fileExtension,
+            HdrClipboardFallbackData sdrFallback = null,
+            string fileName = null,
+            bool encodedImageContainsSdrFallback = false)
+        {
             if (hdrImage == null || !hdrImage.CanRead ||
                 string.IsNullOrWhiteSpace(encodedClipboardFormat))
             {
@@ -189,29 +354,12 @@ namespace ShareX.HelpersLib
                 encodedCopyTimer.Stop();
 
                 IDataObject dataObject = new DataObject();
-                Bitmap opaqueFallback = null;
                 MemoryStream dibStream = null;
                 MemoryStream sdrPngStream = null;
                 var encodedStreams = new System.Collections.Generic.List<MemoryStream>();
 
                 try
                 {
-                    double fallbackFillMilliseconds = 0d;
-                    double dibMilliseconds = 0d;
-                    double sdrPngMilliseconds = 0d;
-                    Image bitmapFallback = sdrFallback;
-                    if (sdrFallback != null && HelpersOptions.DefaultCopyImageFillBackground)
-                    {
-                        Stopwatch fallbackFillTimer = Stopwatch.StartNew();
-                        opaqueFallback = sdrFallback.CreateEmptyBitmap(PixelFormat.Format24bppRgb);
-                        using Graphics graphics = Graphics.FromImage(opaqueFallback);
-                        graphics.Clear(Color.White);
-                        graphics.DrawImage(sdrFallback, 0, 0, sdrFallback.Width, sdrFallback.Height);
-                        bitmapFallback = opaqueFallback;
-                        fallbackFillTimer.Stop();
-                        fallbackFillMilliseconds = fallbackFillTimer.Elapsed.TotalMilliseconds;
-                    }
-
                     // Ultra HDR JPEG has a normal SDR JPEG base, so applications
                     // that only understand JPEG can still consume these bytes.
                     if (sdrFallback == null || encodedImageContainsSdrFallback)
@@ -219,25 +367,17 @@ namespace ShareX.HelpersLib
                         AddEncodedFormat(encodedClipboardFormat);
                     }
 
-                    if (bitmapFallback != null)
+                    if (sdrFallback != null)
                     {
-                        dataObject.SetData(DataFormats.Bitmap, true, bitmapFallback);
-                        Stopwatch dibTimer = Stopwatch.StartNew();
-                        dibStream = new MemoryStream(ClipboardHelpersEx.ConvertToDib(bitmapFallback));
+                        dataObject.SetData(DataFormats.Bitmap, true, sdrFallback.BitmapFallback);
+                        dibStream = sdrFallback.CreateDibStream();
                         dataObject.SetData(DataFormats.Dib, false, dibStream);
-                        dibTimer.Stop();
-                        dibMilliseconds = dibTimer.Elapsed.TotalMilliseconds;
 
                         // Many applications prefer the registered PNG format to
                         // Bitmap/DIB. Give it SDR bytes in compatibility mode so
                         // recognizing PNG cannot lead to a failed HDR decode.
-                        Stopwatch sdrPngTimer = Stopwatch.StartNew();
-                        sdrPngStream = new MemoryStream();
-                        bitmapFallback.Save(sdrPngStream, ImageFormat.Png);
-                        sdrPngStream.Position = 0;
+                        sdrPngStream = sdrFallback.CreatePngStream();
                         dataObject.SetData(FORMAT_PNG, false, sdrPngStream);
-                        sdrPngTimer.Stop();
-                        sdrPngMilliseconds = sdrPngTimer.Elapsed.TotalMilliseconds;
 
                         if (HelpersOptions.UseAlternativeClipboardCopyImage &&
                             !string.IsNullOrEmpty(fileName))
@@ -252,7 +392,7 @@ namespace ShareX.HelpersLib
                     // registered name already carries SDR PNG in combined mode;
                     // its HDR bytes remain available through image/png and the
                     // explicit ShareX HDR format below.
-                    if (!(bitmapFallback != null &&
+                    if (!(sdrFallback != null &&
                         string.Equals(encodedClipboardFormat, FORMAT_PNG, StringComparison.OrdinalIgnoreCase)))
                     {
                         AddEncodedFormat(encodedClipboardFormat);
@@ -277,10 +417,10 @@ namespace ShareX.HelpersLib
                     totalTimer.Stop();
                     DebugHelper.WriteLine(
                         $"HDR clipboard stages | encodedBytes={encodedBytes.Length} " +
-                        $"sdrFallback={bitmapFallback != null} " +
+                        $"sdrFallback={sdrFallback != null} " +
                         $"encodedCopyMs={encodedCopyTimer.Elapsed.TotalMilliseconds:F1} " +
-                        $"fallbackFillMs={fallbackFillMilliseconds:F1} " +
-                        $"dibMs={dibMilliseconds:F1} sdrPngMs={sdrPngMilliseconds:F1} " +
+                        $"fallbackPreparedMs={(sdrFallback?.TotalMilliseconds ?? 0d):F1} " +
+                        $"sdrPngReused={sdrFallback?.ReusedPngBytes ?? false} " +
                         $"publishMs={publishTimer.Elapsed.TotalMilliseconds:F1} " +
                         $"totalMs={totalTimer.Elapsed.TotalMilliseconds:F1}");
                     return copied;
@@ -306,7 +446,6 @@ namespace ShareX.HelpersLib
 
                     sdrPngStream?.Dispose();
                     dibStream?.Dispose();
-                    opaqueFallback?.Dispose();
                 }
             }
             catch (Exception e)
@@ -315,6 +454,51 @@ namespace ShareX.HelpersLib
             }
 
             return false;
+        }
+
+        private static bool TryGetStreamBytes(Stream source, out ArraySegment<byte> bytes)
+        {
+            bytes = default;
+            if (source == null || !source.CanRead)
+            {
+                return false;
+            }
+
+            if (source is MemoryStream memoryStream && memoryStream.TryGetBuffer(out ArraySegment<byte> buffer))
+            {
+                if (memoryStream.Length <= 0 || memoryStream.Length > int.MaxValue)
+                {
+                    return false;
+                }
+
+                bytes = new ArraySegment<byte>(
+                    buffer.Array,
+                    buffer.Offset,
+                    checked((int)memoryStream.Length));
+                return true;
+            }
+
+            long originalPosition = source.CanSeek ? source.Position : 0;
+            try
+            {
+                if (source.CanSeek)
+                {
+                    source.Position = 0;
+                }
+
+                using var copy = new MemoryStream();
+                source.CopyTo(copy);
+                byte[] copiedBytes = copy.ToArray();
+                bytes = new ArraySegment<byte>(copiedBytes);
+                return copiedBytes.Length > 0;
+            }
+            finally
+            {
+                if (source.CanSeek)
+                {
+                    source.Position = originalPosition;
+                }
+            }
         }
 
         private static bool CopyImageDefault(Image img)
