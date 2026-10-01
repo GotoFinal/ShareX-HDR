@@ -358,32 +358,46 @@ namespace ShareX.ScreenCaptureLib
                         target,
                         targets,
                         settings);
-                    float sourceWhiteNits = float.IsFinite(target.SdrWhiteNits) &&
-                        target.SdrWhiteNits > 0f
-                        ? target.SdrWhiteNits
-                        : HdrRgba16FloatBuffer.ReferenceWhiteNits;
-                    float rgbScale = target.IsHdrActive
-                        ? 1f
-                        : normalizedWhiteNits / sourceWhiteNits;
-                    captureContext.CaptureMonitorHdrInto(
-                        target.Monitor,
-                        target.MonitorBounds,
-                        target.Intersection,
-                        canvas,
-                        destinationRectangle,
-                        rgbScale);
+                    if (target.IsHdrActive)
+                    {
+                        captureContext.CaptureMonitorHdrInto(
+                            target.Monitor,
+                            target.MonitorBounds,
+                            target.Intersection,
+                            canvas,
+                            destinationRectangle);
+                    }
+                    else
+                    {
+                        // Do not depend on SDR-display FP16 white scaling in WGC
+                        // on older Windows versions. Preserve the established
+                        // SDR capture bytes and embed them at the selected white.
+                        // The document-level cursor compositor remains the owner.
+                        Stopwatch sdrTimer = Stopwatch.StartNew();
+                        using Bitmap sdrBitmap = Screenshot.CaptureRectangleNative(target.Intersection);
+                        double captureMs = sdrTimer.Elapsed.TotalMilliseconds;
+                        BitmapData data = sdrBitmap.LockBits(
+                            new Rectangle(Point.Empty, sdrBitmap.Size),
+                            ImageLockMode.ReadOnly,
+                            PixelFormat.Format32bppRgb);
+                        try
+                        {
+                            canvas.CopyFromOpaqueSdrBgra8(data.Scan0, data.Stride,
+                                sdrBitmap.Width, sdrBitmap.Height,
+                                destinationRectangle.Location, normalizedWhiteNits);
+                        }
+                        finally
+                        {
+                            sdrBitmap.UnlockBits(data);
+                        }
+                        Log($"sdr-native display={target.DeviceName} size={sdrBitmap.Width}x{sdrBitmap.Height} embeddingWhite={normalizedWhiteNits:F1}nits captureMs={captureMs:F1} importMs={sdrTimer.Elapsed.TotalMilliseconds - captureMs:F1}");
+                    }
                     segments.Add(new HdrCaptureSourceSegment(
                         destinationRectangle,
                         target.DeviceName,
                         target.IsHdrActive,
                         normalizedWhiteNits,
                         target.MaxLuminanceNits));
-
-                    if (!target.IsHdrActive && Math.Abs(rgbScale - 1f) > 0.0001f)
-                    {
-                        Log(
-                            $"normalization=fused display={target.DeviceName} sourceWhite={sourceWhiteNits:F1}nits targetWhite={normalizedWhiteNits:F1}nits scale={rgbScale:F3}");
-                    }
                 }
 
                 return new HdrImageDocument(captureRectangle, canvas, segments);

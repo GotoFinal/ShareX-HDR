@@ -1,11 +1,13 @@
 using ShareX.HelpersLib;
 using ShareX.ScreenCaptureLib;
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using Vortice.DXGI;
 
 namespace ShareX.ScreenCaptureLib.Tests.HDR;
 
@@ -16,6 +18,294 @@ public sealed class HdrCapturePerformanceTests
     public HdrCapturePerformanceTests(ITestOutputHelper output)
     {
         this.output = output;
+    }
+
+    [Fact]
+    public void WindowsGraphicsCapture_MixedDesktopRepeatedPerformanceProbe()
+    {
+        if (Environment.GetEnvironmentVariable("SHAREX_RUN_HDR_CAPTURE_PERFORMANCE_TESTS") != "1")
+        {
+            return;
+        }
+
+        // Initialize the test process before Screen or the capture worker caches
+        // coordinates. Otherwise a mixed-DPI desktop can be measured at a
+        // smaller, virtualized size instead of its physical pixel dimensions.
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        Dictionary<string, Rectangle> physicalBounds = GetPhysicalDisplayBounds();
+        foreach (Screen screen in Screen.AllScreens)
+        {
+            Assert.Equal(physicalBounds[screen.DeviceName], screen.Bounds);
+            output.WriteLine($"Physical display probe: {screen.DeviceName} bounds={screen.Bounds} " +
+                $"hdr={WindowsGraphicsCapture.HasActiveHdrDisplay(screen.Bounds)}.");
+        }
+
+        Screen? hdrScreen = Screen.AllScreens.FirstOrDefault(screen =>
+            WindowsGraphicsCapture.HasActiveHdrDisplay(screen.Bounds));
+        Assert.True(hdrScreen != null, "Enable an HDR display before running the mixed-HDR performance comparison.");
+        Assert.Contains(Screen.AllScreens, screen =>
+            !WindowsGraphicsCapture.HasActiveHdrDisplay(screen.Bounds));
+        WindowsGraphicsCapture.Prewarm();
+
+        if (Environment.GetEnvironmentVariable("SHAREX_HDR_CAPTURE_PROBE_SCOPE") != "mixed")
+        {
+            Rectangle small = CenterRectangle(hdrScreen!.Bounds,
+                Math.Min(1280, hdrScreen.Bounds.Width), Math.Min(720, hdrScreen.Bounds.Height));
+            MeasureRepeatedPipeline("hdr-region", small, requireHeadroom: false);
+            MeasureRepeatedPipeline("hdr-monitor", hdrScreen.Bounds, requireHeadroom: true);
+        }
+        MeasureRepeatedPipeline("mixed-desktop", SystemInformation.VirtualScreen, requireHeadroom: true);
+    }
+
+    private void MeasureRepeatedPipeline(string name, Rectangle bounds, bool requireHeadroom)
+    {
+        const int repetitions = 7;
+        var captureStages = new ConcurrentQueue<string>();
+        using Process process = Process.GetCurrentProcess();
+        foreach (HdrProcessingBackend backend in Enum.GetValues<HdrProcessingBackend>())
+        {
+            var settings = new HdrCaptureSettings { ProcessingBackend = backend };
+            var captures = new List<double>();
+            var freshPreviews = new List<double>();
+            var cachedPreviews = new List<double>();
+            var cpuTimes = new List<double>();
+            var allocations = new List<double>();
+            for (int iteration = -3; iteration < repetitions; iteration++)
+            {
+                long allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+                TimeSpan cpuBefore = process.TotalProcessorTime;
+                var timer = Stopwatch.StartNew();
+                Action<string> previousSink = WindowsGraphicsCapture.PerformanceLogSink;
+                WindowsGraphicsCapture.PerformanceLogSink = message =>
+                {
+                    if (message.Contains("sdr-native", StringComparison.Ordinal) ||
+                        message.Contains("hdr-readback", StringComparison.Ordinal))
+                    {
+                        captureStages.Enqueue(message);
+                    }
+                };
+                bool captured;
+                HdrImageDocument document;
+                try
+                {
+                    captured = WindowsGraphicsCapture.TryCaptureHdr(bounds, null, settings, out document);
+                }
+                finally
+                {
+                    WindowsGraphicsCapture.PerformanceLogSink = previousSink;
+                }
+                double captureMs = timer.Elapsed.TotalMilliseconds;
+                Assert.True(captured);
+                using (document)
+                {
+                    Assert.Equal(bounds.Size, new Size(document.MasterPixels.Width, document.MasterPixels.Height));
+                    timer.Restart();
+                    document.NormalizeMixedMonitorBrightness(settings);
+                    double normalizeMs = timer.Elapsed.TotalMilliseconds;
+                    timer.Restart();
+                    document.CaptureWindowRegions(settings);
+                    double windowsMs = timer.Elapsed.TotalMilliseconds;
+                    timer.Restart();
+                    using Bitmap fresh = CreateVerifiedPreview(document, settings, out int freshGpuSegments);
+                    double freshMs = timer.Elapsed.TotalMilliseconds;
+                    timer.Restart();
+                    using Bitmap cached = CreateVerifiedPreview(document, settings, out int cachedGpuSegments);
+                    double cachedMs = timer.Elapsed.TotalMilliseconds;
+                    double cpuMs = (process.TotalProcessorTime - cpuBefore).TotalMilliseconds;
+                    long allocated = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
+
+                    if (iteration < 0)
+                    {
+                        captureStages.Clear();
+                        continue;
+                    }
+
+                    captures.Add(captureMs);
+                    freshPreviews.Add(freshMs);
+                    cachedPreviews.Add(cachedMs);
+                    cpuTimes.Add(cpuMs);
+                    allocations.Add(allocated / 1048576d);
+                    output.WriteLine($"Repeated HDR probe: name={name} requestedBackend={backend} iteration={iteration} " +
+                        $"size={bounds.Width}x{bounds.Height} capture={captureMs:F2} normalize={normalizeMs:F2} " +
+                        $"windows={windowsMs:F2} freshPreview={freshMs:F2} cachedPreview={cachedMs:F2} " +
+                        $"cpu={cpuMs:F2}ms allocated={allocated / 1048576d:F2}MiB " +
+                        $"gpuSegments={freshGpuSegments}/{cachedGpuSegments}.");
+                    while (captureStages.TryDequeue(out string? stage))
+                    {
+                        output.WriteLine($"Repeated capture stage: name={name} backend={backend} iteration={iteration} {stage}");
+                    }
+                    if (iteration == 0 || iteration == repetitions - 1)
+                    {
+                        HdrContentProbe content = MeasureHdrContent(document);
+                        output.WriteLine($"Repeated HDR content: name={name} backend={backend} " +
+                            $"iteration={iteration} sampled={content.SampleCount} headroom={content.HeadroomSampleCount} " +
+                            $"({content.HeadroomPercentage:F3}%) peak={content.ObservedPeakNits:F2}nits " +
+                            $"hdrFingerprint={content.HeadroomFingerprint:X16}.");
+                        if (requireHeadroom)
+                        {
+                            Assert.True(content.HeadroomSampleCount >= 20,
+                                "The comparison requires visible HDR content, not merely an HDR-enabled monitor.");
+                        }
+                        foreach (PreviewSegmentProbe segment in MeasurePreviewSegments(fresh, document.SourceSegments))
+                        {
+                            output.WriteLine($"Repeated preview content: name={name} backend={backend} " +
+                                $"iteration={iteration} display={segment.DisplayDeviceName} hdr={segment.WasHdrActive} " +
+                                $"meanLuma={segment.MeanLuma:F3} nearWhite={segment.NearWhitePercentage:F3}%.");
+                        }
+                    }
+                }
+            }
+
+            output.WriteLine($"Repeated HDR summary: name={name} backend={backend} " +
+                $"capture={Summarize(captures)} freshPreview={Summarize(freshPreviews)} " +
+                $"cachedPreview={Summarize(cachedPreviews)} cpu={Summarize(cpuTimes)} " +
+                $"allocatedMiB={Summarize(allocations)} (median/min/max).");
+        }
+    }
+
+    [Fact]
+    public void WindowsGraphicsCapture_NativeSdrCorrectnessProbe()
+    {
+        if (Environment.GetEnvironmentVariable("SHAREX_RUN_HDR_CAPTURE_PERFORMANCE_TESTS") != "1")
+        {
+            return;
+        }
+
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        Screen sdrScreen = Screen.AllScreens.First(screen =>
+            !WindowsGraphicsCapture.HasActiveHdrDisplay(screen.Bounds));
+        using Bitmap before = Screenshot.CaptureRectangleNative(sdrScreen.Bounds);
+        Rectangle bounds = SystemInformation.VirtualScreen;
+        Assert.True(WindowsGraphicsCapture.TryCaptureHdr(bounds, null, new HdrCaptureSettings(),
+            out HdrImageDocument document));
+        using (document)
+        {
+            Assert.True(MeasureHdrContent(document).HeadroomSampleCount >= 20,
+                "The live correctness probe requires visible HDR content.");
+            using Bitmap after = Screenshot.CaptureRectangleNative(sdrScreen.Bounds);
+            byte[] beforePixels = ReadBgrx(before, new Rectangle(Point.Empty, before.Size));
+            byte[] afterPixels = ReadBgrx(after, new Rectangle(Point.Empty, after.Size));
+            Rectangle destination = new Rectangle(sdrScreen.Bounds.X - bounds.X,
+                sdrScreen.Bounds.Y - bounds.Y, sdrScreen.Bounds.Width, sdrScreen.Bounds.Height);
+            foreach (HdrProcessingBackend backend in Enum.GetValues<HdrProcessingBackend>())
+            {
+                using Bitmap preview = CreateVerifiedPreview(document,
+                    new HdrCaptureSettings { ProcessingBackend = backend }, out int gpuSegments);
+                byte[] previewPixels = ReadBgrx(preview, destination);
+                int stablePixels = 0, mismatchedPixels = 0, changedPixels = 0, maxDifference = 0;
+                for (int offset = 0; offset < beforePixels.Length; offset += 4 * 16)
+                {
+                    if (!beforePixels.AsSpan(offset, 3).SequenceEqual(afterPixels.AsSpan(offset, 3)))
+                    {
+                        changedPixels++;
+                        continue;
+                    }
+                    stablePixels++;
+                    int difference = 0;
+                    for (int channel = 0; channel < 3; channel++)
+                    {
+                        difference = Math.Max(difference, Math.Abs(beforePixels[offset + channel] - previewPixels[offset + channel]));
+                    }
+                    if (difference != 0)
+                    {
+                        mismatchedPixels++;
+                    }
+                    maxDifference = Math.Max(maxDifference, difference);
+                }
+                output.WriteLine($"Native SDR correctness: requestedBackend={backend} gpuSegments={gpuSegments} " +
+                    $"stablePixels={stablePixels} changedPixels={changedPixels} " +
+                    $"mismatchedPixels={mismatchedPixels} maxChannelDifference={maxDifference}.");
+                Assert.True(stablePixels >= 1000);
+                // Matching endpoint references cannot exclude a transient frame
+                // during capture. Report live differences; the deterministic
+                // importer tests enforce exact SDR byte preservation.
+            }
+        }
+    }
+
+    private static Bitmap CreateVerifiedPreview(HdrImageDocument document, HdrCaptureSettings settings,
+        out int gpuSegments)
+    {
+        int successfulGpuSegments = 0;
+        Action<string> previousSink = GpuHdrToSdrToneMapper.PerformanceLogSink;
+        GpuHdrToSdrToneMapper.PerformanceLogSink = message =>
+        {
+            if (message.StartsWith("HDR GPU preview input |", StringComparison.Ordinal))
+            {
+                successfulGpuSegments++;
+            }
+        };
+        Bitmap preview = null!;
+        try
+        {
+            preview = document.CreateSdrPreview(settings);
+            if (settings.ProcessingBackend == HdrProcessingBackend.Gpu)
+            {
+                Assert.Equal(document.SourceSegments.Count, successfulGpuSegments);
+            }
+            gpuSegments = successfulGpuSegments;
+            return preview;
+        }
+        catch
+        {
+            preview?.Dispose();
+            throw;
+        }
+        finally
+        {
+            GpuHdrToSdrToneMapper.PerformanceLogSink = previousSink;
+        }
+    }
+
+    private static byte[] ReadBgrx(Bitmap bitmap, Rectangle bounds)
+    {
+        BitmapData data = bitmap.LockBits(bounds, ImageLockMode.ReadOnly, PixelFormat.Format32bppRgb);
+        try
+        {
+            int rowBytes = checked(bounds.Width * 4);
+            byte[] pixels = new byte[checked(rowBytes * bounds.Height)];
+            for (int y = 0; y < bounds.Height; y++)
+            {
+                Marshal.Copy(IntPtr.Add(data.Scan0, y * data.Stride), pixels, y * rowBytes, rowBytes);
+            }
+            return pixels;
+        }
+        finally
+        {
+            bitmap.UnlockBits(data);
+        }
+    }
+
+    private static string Summarize(List<double> values)
+    {
+        double[] sorted = values.Order().ToArray();
+        return $"{sorted[sorted.Length / 2]:F2}/{sorted[0]:F2}/{sorted[^1]:F2}";
+    }
+
+    private static Dictionary<string, Rectangle> GetPhysicalDisplayBounds()
+    {
+        var bounds = new Dictionary<string, Rectangle>(StringComparer.OrdinalIgnoreCase);
+        using IDXGIFactory1 factory = DXGI.CreateDXGIFactory1<IDXGIFactory1>();
+        for (uint adapterIndex = 0; factory.EnumAdapters1(adapterIndex, out IDXGIAdapter1 adapter).Success; adapterIndex++)
+        {
+            using (adapter)
+            {
+                for (uint outputIndex = 0; adapter.EnumOutputs(outputIndex, out IDXGIOutput display).Success; outputIndex++)
+                {
+                    using (display)
+                    {
+                        OutputDescription description = display.Description;
+                        if (description.AttachedToDesktop)
+                        {
+                            bounds[description.DeviceName] = Rectangle.FromLTRB(
+                                description.DesktopCoordinates.Left, description.DesktopCoordinates.Top,
+                                description.DesktopCoordinates.Right, description.DesktopCoordinates.Bottom);
+                        }
+                    }
+                }
+            }
+        }
+        return bounds;
     }
 
     [Fact]
@@ -33,6 +323,7 @@ public sealed class HdrCapturePerformanceTests
         WindowsGraphicsCapture.PerformanceLogSink = message => output.WriteLine(message);
         try
         {
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             // ShareX performs this asynchronously at startup. Keep shader/device
             // initialization out of the capture-path numbers while retaining the
             // first allocation and analysis cost for each captured size.
@@ -173,6 +464,7 @@ public sealed class HdrCapturePerformanceTests
             return;
         }
 
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Rectangle virtualScreen = SystemInformation.VirtualScreen;
         bool captured = WindowsGraphicsCapture.TryCaptureHdr(
             virtualScreen,
@@ -440,6 +732,7 @@ public sealed class HdrCapturePerformanceTests
         int sampleCount = 0;
         int headroomSampleCount = 0;
         float observedPeakNits = 0f;
+        ulong headroomFingerprint = 14695981039346656037;
 
         foreach (HdrCaptureSourceSegment segment in document.SourceSegments)
         {
@@ -472,6 +765,11 @@ public sealed class HdrCapturePerformanceTests
                     if (maximum > headroomThreshold)
                     {
                         headroomSampleCount++;
+                        // Check the actual retained HDR highlights, including
+                        // placement, rather than comparing only an enabled flag.
+                        headroomFingerprint = unchecked((headroomFingerprint ^
+                            BinaryPrimitives.ReadUInt64LittleEndian(row.Slice(offset, 8))) * 1099511628211);
+                        headroomFingerprint = unchecked((headroomFingerprint ^ (uint)x ^ ((ulong)(uint)y << 32)) * 1099511628211);
                     }
 
                     observedPeakNits = Math.Max(
@@ -481,7 +779,7 @@ public sealed class HdrCapturePerformanceTests
             }
         }
 
-        return new HdrContentProbe(sampleCount, headroomSampleCount, observedPeakNits);
+        return new HdrContentProbe(sampleCount, headroomSampleCount, observedPeakNits, headroomFingerprint);
     }
 
     private static float ReadHalf(ReadOnlySpan<byte> bytes, int offset) =>
@@ -560,7 +858,8 @@ public sealed class HdrCapturePerformanceTests
     private readonly record struct HdrContentProbe(
         int SampleCount,
         int HeadroomSampleCount,
-        float ObservedPeakNits)
+        float ObservedPeakNits,
+        ulong HeadroomFingerprint)
     {
         public double HeadroomPercentage => SampleCount > 0
             ? HeadroomSampleCount * 100d / SampleCount

@@ -246,6 +246,88 @@ namespace ShareX.ScreenCaptureLib
             }
         }
 
+        /// <summary>
+        /// Imports opaque SDR display bytes directly into this scRGB canvas.
+        /// The BGRX high byte is not alpha; the supplied white is the chosen
+        /// HDR embedding reference, not a measurement of SDR panel luminance.
+        /// </summary>
+        internal unsafe void CopyFromOpaqueSdrBgra8(
+            IntPtr source,
+            int sourceRowBytes,
+            int width,
+            int height,
+            Point destinationLocation,
+            float sdrWhiteNits)
+        {
+            ObjectDisposedException.ThrowIf(pixels == null, this);
+            if (source == IntPtr.Zero)
+            {
+                throw new ArgumentNullException(nameof(source));
+            }
+
+            ValidateDimensions(width, height);
+            if (Math.Abs((long)sourceRowBytes) < checked(width * 4))
+            {
+                throw new ArgumentOutOfRangeException(nameof(sourceRowBytes));
+            }
+            ValidateRectangle(new Rectangle(destinationLocation, new Size(width, height)),
+                Width, Height, nameof(destinationLocation));
+            if (!float.IsFinite(sdrWhiteNits) || sdrWhiteNits <= 0f || sdrWhiteNits > 10000f)
+            {
+                throw new ArgumentOutOfRangeException(nameof(sdrWhiteNits));
+            }
+
+            // Fuse sRGB decoding, white scaling and FP16 conversion in a small
+            // lookup table. No intermediate full-size SDR or FP16 array is needed.
+            ushort* decoded = stackalloc ushort[256];
+            float whiteScale = sdrWhiteNits / ReferenceWhiteNits;
+            for (int value = 0; value < 256; value++)
+            {
+                float encoded = value / 255f;
+                float linear = encoded <= 0.04045f
+                    ? encoded / 12.92f
+                    : MathF.Pow((encoded + 0.055f) / 1.055f, 2.4f);
+                decoded[value] = BitConverter.HalfToUInt16Bits((Half)(linear * whiteScale));
+            }
+
+            nint sourceAddress = (nint)source;
+            nint lookupAddress = (nint)decoded;
+            fixed (byte* destinationBase = pixels)
+            {
+                nint destinationAddress = (nint)destinationBase;
+                void CopyRow(int y)
+                {
+                    byte* sourcePixel = (byte*)sourceAddress + (long)y * sourceRowBytes;
+                    ushort* destinationPixel = (ushort*)((byte*)destinationAddress +
+                        (destinationLocation.Y + y) * RowBytes + destinationLocation.X * BytesPerPixel);
+                    ushort* lookup = (ushort*)lookupAddress;
+                    for (int x = 0; x < width; x++)
+                    {
+                        destinationPixel[0] = lookup[sourcePixel[2]];
+                        destinationPixel[1] = lookup[sourcePixel[1]];
+                        destinationPixel[2] = lookup[sourcePixel[0]];
+                        destinationPixel[3] = 0x3C00; // Opaque FP16 alpha = 1.
+                        sourcePixel += 4;
+                        destinationPixel += 4;
+                    }
+                }
+
+                if (height >= 64)
+                {
+                    // Parallel.For completes before the bitmap lock, canvas pin
+                    // and stack lookup table are released by the caller/method.
+                    Parallel.For(0, height, CopyRow);
+                }
+                else
+                {
+                    for (int y = 0; y < height; y++)
+                    {
+                        CopyRow(y);
+                    }
+                }
+            }
+        }
+
         public ReadOnlySpan<byte> GetRowSpan(int y)
         {
             ObjectDisposedException.ThrowIf(pixels == null, this);
