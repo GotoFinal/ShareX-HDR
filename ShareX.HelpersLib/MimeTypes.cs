@@ -86,12 +86,16 @@ namespace ShareX.HelpersLib
                 mimeType.Equals(Mappings["jpeg"], StringComparison.OrdinalIgnoreCase) ||
                 mimeType.Equals(Mappings["gif"], StringComparison.OrdinalIgnoreCase) ||
                 mimeType.Equals(Mappings["bmp"], StringComparison.OrdinalIgnoreCase) ||
-                mimeType.Equals(Mappings["tiff"], StringComparison.OrdinalIgnoreCase));
+                mimeType.Equals(Mappings["tiff"], StringComparison.OrdinalIgnoreCase) ||
+                mimeType.Equals(Mappings["avif"], StringComparison.OrdinalIgnoreCase) ||
+                mimeType.Equals(Mappings["exr"], StringComparison.OrdinalIgnoreCase));
         }
 
         // http://svn.apache.org/repos/asf/httpd/httpd/trunk/docs/conf/mime.types
         private static Dictionary<string, string> Mappings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
+            { "avif", "image/avif" },
+            { "exr", "image/x-exr" },
             { "123", "application/vnd.lotus-1-2-3" },
             { "3dml", "text/vnd.in3d.3dml" },
             { "3ds", "image/x-3ds" },

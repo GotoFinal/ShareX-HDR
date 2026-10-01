@@ -99,6 +99,10 @@ namespace ShareX.ScreenCaptureLib
         private ObsGameCaptureSettings obsGameCapture = new ObsGameCaptureSettings();
         private HdrFileOutputSettings fileOutput = new HdrFileOutputSettings();
 
+        // Native SDR pixels avoid OS-dependent FP16 white scaling on SDR
+        // displays. Disabling this preserves the original WGC capture path.
+        public bool UseNativeSdrCapture { get; set; } = true;
+
         // This intentionally has a new serialized name. The original
         // EnableEditorHdrPreview option defaulted to true; leaving it unmapped
         // resets the experimental native presenter to false once for existing

@@ -1,15 +1,23 @@
 # ShareX AVIF native bridge
 
-This x64 bridge exposes only packed RGBA10 HDR encode/decode, HDR probing, and
-matching free calls. It wraps pinned `libavif` **v1.4.2**, commit
+This bridge exposes packed RGBA10 HDR encode/decode and HDR probing, plus
+separate BGRA8 SDR encode/decode and SDR probing, with matching free calls.
+It wraps pinned `libavif` **v1.4.2**, commit
 `c5240fc79fe5c2407e10afd35f5505ef6333ea49`, with its pinned local libaom
 dependency. ShareX performs the scRGB/BT.2020/PQ conversion and validates the
 returned dimensions and metadata around this narrow ABI.
 
-The encoded files use 10-bit full-range YUV 4:4:4, BT.2020 primaries, ST 2084
+The HDR encoded files use 10-bit full-range YUV 4:4:4, BT.2020 primaries, ST 2084
 PQ, BT.2020 non-constant-luminance matrix coefficients, lossless alpha, CLLI,
 and an opaque AVIF `mdcv` mastering-display property. 4:4:4 is intentional for
 screenshot text and UI edges.
+
+Ordinary SDR AVIF uses a separate 8-bit full-range 4:4:4 path, Rec.709 primaries,
+sRGB transfer, identity matrix, and straight lossless alpha, without PQ, CLLI,
+or mastering metadata. Identity matrix avoids RGB/YUV rounding at quality 100.
+The SDR decoder accepts only this single-frame subset and rejects unmanaged
+color profiles, transforms, gain maps, and HDR variants. The existing HDR ABI
+and metadata remain independent of the ordinary image-format setting.
 
 Example x64 build:
 
@@ -35,6 +43,6 @@ AVIF availability is reported at runtime. If a matching native bridge is not
 packaged, the managed HDR PNG and OpenEXR formats remain available.
 
 The currently packaged x64 `ShareX.Avif.dll` SHA-256 is
-`5FECC909CA7F55560EC7DE445C0D58331F8296C825A8960282DB5F6E5A848545`.
+`E91B35B5B619923907D0F8044E5D48E8FD300149824B52DFFE2F33224A0E2629`.
 Dependency inspection shows only `KERNEL32.dll`; libavif, libaom, and the MSVC
 runtime are statically linked.

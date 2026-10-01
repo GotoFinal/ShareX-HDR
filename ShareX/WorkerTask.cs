@@ -125,7 +125,15 @@ namespace ShareX
                 task.Info.FileName = TaskHelpers.GetFileName(task.Info.TaskSettings, ext);
             }
 
-            if (task.Info.TaskSettings.AdvancedSettings.ProcessImagesDuringFileUpload && task.Info.DataType == EDataType.Image)
+            string extension = Path.GetExtension(filePath);
+            bool processImage = task.Info.TaskSettings.AdvancedSettings.ProcessImagesDuringFileUpload &&
+                task.Info.DataType == EDataType.Image;
+            bool retainEncodedFile = processImage &&
+                ((extension.Equals(".avif", StringComparison.OrdinalIgnoreCase) &&
+                    !SdrAvifImageCodec.IsSupportedFile(filePath)) ||
+                (extension.Equals(".exr", StringComparison.OrdinalIgnoreCase) &&
+                    !new OpenExrHdrImageDecoder().IsSdrFile(filePath)));
+            if (processImage && !retainEncodedFile)
             {
                 task.Info.Job = TaskJob.Job;
                 task.Image = ImageHelpers.LoadImage(task.Info.FilePath);

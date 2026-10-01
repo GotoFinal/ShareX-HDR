@@ -352,6 +352,7 @@ namespace ShareX
         private static void Run()
         {
             ApplicationConfiguration.Initialize();
+            SdrImageCodecs.RegisterImageHelpers();
 
             DebugHelper.WriteLine("ShareX starting.");
             DebugHelper.WriteLine("Version: " + VersionText);

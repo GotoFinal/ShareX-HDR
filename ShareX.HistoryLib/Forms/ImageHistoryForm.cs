@@ -48,11 +48,13 @@ namespace ShareX.HistoryLib
         private string defaultTitle;
         private List<HistoryItem> allHistoryItems;
         private int index;
+        private readonly ImageHistoryFileAdaptor imageFileAdaptor = new ImageHistoryFileAdaptor();
 
         public ImageHistoryForm(HistoryManagerSQLite historyManager, ImageHistorySettings settings, Action<string> uploadFile = null,
             Action<string> editImage = null, Action<string> pinToScreen = null, Action<string> analyzeImage = null)
         {
             InitializeComponent();
+            Disposed += (_, _) => imageFileAdaptor.Dispose();
             tsMain.Renderer = new ToolStripRoundedEdgeRenderer();
 
             HistoryManager = historyManager;
@@ -205,7 +207,7 @@ namespace ShareX.HistoryLib
                 index = i + 1;
 
                 ImageListViewItem[] ilvItems = filteredHistoryItems.Select(hi => new ImageListViewItem(hi.FilePath) { Tag = hi }).ToArray();
-                ilvImages.Items.AddRange(ilvItems);
+                ilvImages.Items.AddRange(ilvItems, imageFileAdaptor);
 
                 UpdateTitle(allHistoryItems.Count, ilvImages.Items.Count);
             }

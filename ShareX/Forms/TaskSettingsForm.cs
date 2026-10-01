@@ -87,6 +87,15 @@ namespace ShareX
         private Label lblScreenRecordingHdrMode;
         private ComboBox cbScreenRecordingHdrMode;
         private Label lblScreenRecordingHdrInfo;
+        private ComboBox cbImageSizeFallbackFormat;
+        private Label lblImageSizeFallbackFormat;
+        private NumericUpDown nudImageAvifQuality;
+        private NumericUpDown nudImageAvifSpeed;
+        private Label lblImageAvifQuality;
+        private Label lblImageAvifSpeed;
+        private Label lblImageAvifAvailability;
+        private CheckBox cbUseNativeSdrCapture;
+        private ToolTip taskSettingsToolTip;
 
         private sealed class HdrFileFormatItem
         {
@@ -133,6 +142,7 @@ namespace ShareX
         public TaskSettingsForm(TaskSettings hotkeySetting, bool isDefault = false)
         {
             InitializeComponent();
+            InitializeImageFormatControls();
             TaskSettings = hotkeySetting;
             IsDefault = isDefault;
             InitializeHdrScreenRecordingControls();
@@ -331,9 +341,17 @@ namespace ShareX
             cbImageAutoJPEGQuality.Enabled = TaskSettings.ImageSettings.ImageAutoUseJPEG;
             nudImageAutoUseJPEGSize.SetValue(TaskSettings.ImageSettings.ImageAutoUseJPEGSize);
             cbImageAutoJPEGQuality.Checked = TaskSettings.ImageSettings.ImageAutoJPEGQuality;
+            EImageFormat fallbackFormat = TaskSettings.ImageSettings.ImageSizeFallbackFormat is EImageFormat.JPEG or EImageFormat.AVIF
+                ? TaskSettings.ImageSettings.ImageSizeFallbackFormat
+                : EImageFormat.JPEG;
+            cbImageSizeFallbackFormat.SelectedItem = fallbackFormat;
+            TaskSettings.ImageSettings.ImageSizeFallbackFormat = fallbackFormat;
+            nudImageAvifQuality.SetValue(TaskSettings.ImageSettings.ImageAVIFQuality);
+            nudImageAvifSpeed.SetValue(TaskSettings.ImageSettings.ImageAVIFSpeed);
             cbImageFileExist.Items.Clear();
             cbImageFileExist.Items.AddRange(Helpers.GetLocalizedEnumDescriptions<FileExistAction>());
             cbImageFileExist.SelectedIndex = (int)TaskSettings.ImageSettings.FileExistAction;
+            UpdateImageFormatControls();
 
             #endregion General
 
@@ -630,6 +648,162 @@ namespace ShareX
             if (IsDefault && (tabPage == tpGeneralMain || tabPage == tpUploadMain))
             {
                 tttvMain.SelectChildNode();
+            }
+        }
+
+        private void InitializeImageFormatControls()
+        {
+            taskSettingsToolTip = new ToolTip(components);
+
+            cbImageAutoUseJPEG.Text = "Use a fallback format if the image exceeds the size limit:";
+            cbImageAutoUseJPEG.Size = new Size(530, 17);
+            cbImageAutoJPEGQuality.Text = "Adjust JPEG quality automatically to stay closer to the size limit";
+            cbImageAutoJPEGQuality.Size = new Size(530, 17);
+
+            lblImageSizeFallbackFormat = new Label
+            {
+                AutoSize = true,
+                Location = new Point(124, 228),
+                Text = "Fallback format:"
+            };
+            cbImageSizeFallbackFormat = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Location = new Point(220, 224),
+                Size = new Size(150, 21)
+            };
+            cbImageSizeFallbackFormat.Items.Add(EImageFormat.JPEG);
+            cbImageSizeFallbackFormat.Items.Add(EImageFormat.AVIF);
+            cbImageSizeFallbackFormat.SelectedItem = EImageFormat.JPEG;
+            cbImageSizeFallbackFormat.SelectedIndexChanged += (_, _) =>
+            {
+                if (loaded && cbImageSizeFallbackFormat.SelectedItem is EImageFormat format)
+                {
+                    TaskSettings.ImageSettings.ImageSizeFallbackFormat = format;
+                }
+
+                UpdateImageFormatControls();
+            };
+            taskSettingsToolTip.SetToolTip(
+                cbImageSizeFallbackFormat,
+                "When enabled, images over the size limit are encoded in this format.");
+            pImage.Controls.Add(lblImageSizeFallbackFormat);
+            pImage.Controls.Add(cbImageSizeFallbackFormat);
+
+            lblImageAvifQuality = new Label
+            {
+                AutoSize = true,
+                Location = new Point(5, 280),
+                Text = "AVIF quality (0–100):"
+            };
+            nudImageAvifQuality = new NumericUpDown
+            {
+                Location = new Point(8, 296),
+                Minimum = 0,
+                Maximum = 100,
+                Value = 90,
+                Size = new Size(64, 20)
+            };
+            nudImageAvifQuality.ValueChanged += (_, _) =>
+            {
+                if (loaded)
+                {
+                    TaskSettings.ImageSettings.ImageAVIFQuality = (int)nudImageAvifQuality.Value;
+                }
+            };
+
+            lblImageAvifSpeed = new Label
+            {
+                AutoSize = true,
+                Location = new Point(5, 322),
+                Text = "AVIF speed (0 slow–10 fast):"
+            };
+            nudImageAvifSpeed = new NumericUpDown
+            {
+                Location = new Point(8, 338),
+                Minimum = 0,
+                Maximum = 10,
+                Value = 6,
+                Size = new Size(64, 20)
+            };
+            nudImageAvifSpeed.ValueChanged += (_, _) =>
+            {
+                if (loaded)
+                {
+                    TaskSettings.ImageSettings.ImageAVIFSpeed = (int)nudImageAvifSpeed.Value;
+                }
+            };
+
+            lblImageAvifAvailability = new Label
+            {
+                AutoSize = false,
+                Location = new Point(5, 366),
+                Size = new Size(530, 17)
+            };
+            pImage.Controls.Add(lblImageAvifQuality);
+            pImage.Controls.Add(nudImageAvifQuality);
+            pImage.Controls.Add(lblImageAvifSpeed);
+            pImage.Controls.Add(nudImageAvifSpeed);
+            pImage.Controls.Add(lblImageAvifAvailability);
+
+            taskSettingsToolTip.SetToolTip(
+                cbImageAutoJPEGQuality,
+                "Only applies when JPEG is selected as the size-limit fallback.");
+        }
+
+        private void UpdateImageFormatControls()
+        {
+            if (cbImageSizeFallbackFormat == null || nudImageAvifQuality == null)
+            {
+                return;
+            }
+
+            bool fallbackEnabled = cbImageAutoUseJPEG.Checked;
+            EImageFormat fallbackFormat = cbImageSizeFallbackFormat.SelectedItem is EImageFormat selectedFallback
+                ? selectedFallback
+                : EImageFormat.JPEG;
+            EImageFormat selectedFormat = cbImageFormat.SelectedIndex >= 0
+                ? (EImageFormat)cbImageFormat.SelectedIndex
+                : EImageFormat.PNG;
+            bool avifRelevant = selectedFormat == EImageFormat.AVIF ||
+                (fallbackEnabled && fallbackFormat == EImageFormat.AVIF);
+            string unavailableReason = string.Empty;
+            bool avifAvailable = !avifRelevant ||
+                SdrAvifImageCodec.TryGetAvailability(out unavailableReason);
+
+            cbImageSizeFallbackFormat.Enabled = fallbackEnabled;
+            nudImageAutoUseJPEGSize.Enabled = fallbackEnabled;
+            lblImageSizeFallbackFormat.Enabled = fallbackEnabled;
+            cbImageAutoJPEGQuality.Enabled = fallbackEnabled && fallbackFormat == EImageFormat.JPEG;
+
+            lblImageAvifQuality.Visible = avifRelevant;
+            nudImageAvifQuality.Visible = avifRelevant;
+            nudImageAvifQuality.Enabled = avifRelevant && avifAvailable;
+            lblImageAvifSpeed.Visible = avifRelevant;
+            nudImageAvifSpeed.Visible = avifRelevant;
+            nudImageAvifSpeed.Enabled = avifRelevant && avifAvailable;
+            lblImageAvifAvailability.Visible = avifRelevant;
+            if (avifRelevant)
+            {
+                lblImageAvifAvailability.Text = avifAvailable
+                    ? "SDR AVIF encoding is available."
+                    : selectedFormat == EImageFormat.AVIF
+                        ? "SDR AVIF is unavailable; PNG will be used instead."
+                        : "SDR AVIF fallback is unavailable; the original format will be kept.";
+                lblImageAvifAvailability.ForeColor = avifAvailable
+                    ? ShareXResources.Theme.TextColor
+                    : Color.Firebrick;
+                taskSettingsToolTip.SetToolTip(
+                    lblImageAvifAvailability,
+                    avifAvailable ? "" : unavailableReason);
+                lblImageFileExist.Location = new Point(5, 386);
+                cbImageFileExist.Location = new Point(8, 402);
+            }
+            else
+            {
+                taskSettingsToolTip.SetToolTip(lblImageAvifAvailability, "");
+                lblImageFileExist.Location = new Point(5, 280);
+                cbImageFileExist.Location = new Point(8, 296);
             }
         }
 
@@ -1144,6 +1318,7 @@ namespace ShareX
         private void cbImageFormat_SelectedIndexChanged(object sender, EventArgs e)
         {
             TaskSettings.ImageSettings.ImageFormat = (EImageFormat)cbImageFormat.SelectedIndex;
+            UpdateImageFormatControls();
         }
 
         private void cbImagePNGBitDepth_SelectedIndexChanged(object sender, EventArgs e)
@@ -1164,8 +1339,7 @@ namespace ShareX
         private void cbImageAutoUseJPEG_CheckedChanged(object sender, EventArgs e)
         {
             TaskSettings.ImageSettings.ImageAutoUseJPEG = cbImageAutoUseJPEG.Checked;
-            nudImageAutoUseJPEGSize.Enabled = TaskSettings.ImageSettings.ImageAutoUseJPEG;
-            cbImageAutoJPEGQuality.Enabled = TaskSettings.ImageSettings.ImageAutoUseJPEG;
+            UpdateImageFormatControls();
         }
 
         private void nudImageAutoUseJPEGSize_ValueChanged(object sender, EventArgs e)
@@ -1807,10 +1981,29 @@ namespace ShareX
                 }
             };
 
-            cbEnableNativeHdrEditorPreview = new CheckBox
+            cbUseNativeSdrCapture = new CheckBox
             {
                 AutoSize = false,
                 Location = new Point(4, 506),
+                Size = new Size(514, 24),
+                Text = "Use native SDR capture on mixed HDR desktops (recommended)"
+            };
+            cbUseNativeSdrCapture.CheckedChanged += (_, _) =>
+            {
+                if (loaded)
+                {
+                    GetHdrCaptureSettings().UseNativeSdrCapture = cbUseNativeSdrCapture.Checked;
+                }
+            };
+            pHdrFileOutput.Controls.Add(cbUseNativeSdrCapture);
+            taskSettingsToolTip.SetToolTip(
+                cbUseNativeSdrCapture,
+                "For SDR displays in mixed HDR captures, use the native SDR capture path. Turn this off to restore the legacy WGC FP16 path. The paths can differ in color rendering and capture overhead; compare them on your setup.");
+
+            cbEnableNativeHdrEditorPreview = new CheckBox
+            {
+                AutoSize = false,
+                Location = new Point(4, 535),
                 Size = new Size(514, 24),
                 Text = "Show the retained HDR image in the editor preview (experimental)"
             };
@@ -1827,7 +2020,7 @@ namespace ShareX
             cbEnableNativeHdrRegionSelectorPreview = new CheckBox
             {
                 AutoSize = false,
-                Location = new Point(4, 535),
+                Location = new Point(4, 564),
                 Size = new Size(514, 24),
                 Text = "Show the full region selector through the native HDR preview (experimental)"
             };
@@ -1844,41 +2037,11 @@ namespace ShareX
             lblHdrEncoderAvailability = new Label
             {
                 AutoSize = false,
-                Location = new Point(4, 568),
+                Location = new Point(4, 597),
                 Size = new Size(514, 42)
             };
             pHdrFileOutput.Controls.Add(lblHdrEncoderAvailability);
             UpdateHdrEncoderAvailabilityLabel();
-
-            var details = new Label
-            {
-                AutoSize = false,
-                Location = new Point(4, 615),
-                Size = new Size(514, 285),
-                Text =
-                    "Ultra HDR JPEG is the recommended shareable format: HDR-aware viewers use its gain map, " +
-                    "and other viewers show the embedded SDR JPEG. HDR AVIF stores a compact 10-bit BT.2020/PQ " +
-                    "4:4:4 image with alpha, CICP, CLLI, and mastering metadata; viewers without HDR AVIF support " +
-                    "do not get an embedded SDR fallback. OpenEXR can normalize captured display white " +
-                    "to 1.0 for conventional viewers, or preserve raw scRGB HALF samples losslessly. " +
-                    "HDR PNG stores 16-bit BT.2020/PQ and is experimental because viewer support " +
-                    "is still uneven. HDR and SDR writes a separate -SDR file for EXR/PNG/AVIF when real HDR " +
-                    "pixel headroom is present; SDR-only captures automatically save only the normal SDR file. " +
-                    "Ultra HDR needs only its single dual-representation JPEG. Transparent pixels require OpenEXR/HDR PNG/AVIF " +
-                    "unless the explicit Ultra HDR flatten-to-black option is enabled; JPEG cannot preserve alpha. " +
-                    "The file-uploader option avoids image hosts that may decode or recompress the upload and " +
-                    "discard HDR metadata. Clipboard output has its own independent format selector. HDR-only " +
-                    "publishes the selected encoded file under its native registered name plus MIME and ShareX " +
-                    "formats. The recommended HDR + SDR mode places ordinary SDR Bitmap, DIB, and PNG data in " +
-                    "the standard compatibility slots, while retaining the selected HDR bytes in explicit MIME " +
-                    "and ShareX formats. Ultra HDR JPEG can also remain a normal JPEG because it contains its own " +
-                    "SDR base. Windows has no universal negotiated HDR clipboard bitmap format, so applications " +
-                    "must understand the selected encoded format to paste the HDR representation. In mixed-monitor " +
-                    "captures, Match nearest HDR display raises SDR-monitor paper white to the nearest HDR display's " +
-                    "Windows SDR brightness while respecting foreground HDR/game boundaries. Preserve keeps the " +
-                    "captured absolute luminance; Custom uses the entered paper-white value."
-            };
-            pHdrFileOutput.Controls.Add(details);
         }
 
         private Label AddHdrOutputLabel(string text, int x, int y)
@@ -1967,6 +2130,7 @@ namespace ShareX
                 captureSettings.MixedMonitorBrightnessMode);
             nudHdrMixedMonitorWhiteNits.SetValue(
                 (decimal)captureSettings.MixedMonitorCustomSdrWhiteNits);
+            cbUseNativeSdrCapture.Checked = captureSettings.UseNativeSdrCapture;
             cbEnableNativeHdrEditorPreview.Checked = captureSettings.EnableNativeHdrEditorPreview;
             cbEnableNativeHdrRegionSelectorPreview.Checked =
                 captureSettings.EnableNativeHdrRegionSelectorPreview;
@@ -2034,25 +2198,22 @@ namespace ShareX
 
         private void UpdateHdrEncoderAvailabilityLabel()
         {
-            string ultraHdrStatus;
-            if (HdrEncoderCapabilities.TryGetAvailability(
+            bool ultraHdrAvailable = HdrEncoderCapabilities.TryGetAvailability(
                 HdrFileFormat.UltraHdrJpeg,
-                out string unavailableReason))
-            {
-                ultraHdrStatus = "Ultra HDR JPEG: available";
-            }
-            else
-            {
-                ultraHdrStatus = unavailableReason;
-            }
-
-            string avifStatus = HdrEncoderCapabilities.TryGetAvailability(
+                out string ultraHdrUnavailableReason);
+            bool avifAvailable = HdrEncoderCapabilities.TryGetAvailability(
                 HdrFileFormat.Avif,
-                out string avifUnavailableReason)
-                ? "HDR AVIF: available"
-                : avifUnavailableReason;
+                out string avifUnavailableReason);
             lblHdrEncoderAvailability.Text =
-                $"{ultraHdrStatus}. {avifStatus}. OpenEXR and HDR PNG are managed and architecture-independent.";
+                $"Ultra HDR JPEG {(ultraHdrAvailable ? "available" : "unavailable")}; " +
+                $"HDR AVIF {(avifAvailable ? "available" : "unavailable")}. OpenEXR and HDR PNG are managed.";
+            taskSettingsToolTip.SetToolTip(
+                lblHdrEncoderAvailability,
+                string.Join(
+                    Environment.NewLine,
+                    ultraHdrAvailable ? "Ultra HDR JPEG: available." : $"Ultra HDR JPEG: {ultraHdrUnavailableReason}",
+                    avifAvailable ? "HDR AVIF: available." : $"HDR AVIF: {avifUnavailableReason}",
+                    "OpenEXR and HDR PNG are managed and architecture-independent."));
         }
 
         private void InitializeHdrToneMappingControls()

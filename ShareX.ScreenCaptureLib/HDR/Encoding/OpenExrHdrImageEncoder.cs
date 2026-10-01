@@ -39,6 +39,14 @@ namespace ShareX.ScreenCaptureLib
             HdrRgba16FloatBuffer source,
             Stream destination,
             HdrImageEncodingOptions options = null)
+            => EncodeCore(source, destination, options, isSdr: false);
+
+        internal HdrEncodedImageInfo EncodeSdr(HdrRgba16FloatBuffer source, Stream destination)
+            => EncodeCore(source, destination,
+                new HdrImageEncodingOptions { OpenExrExposureMode = OpenExrExposureMode.RawScRgb }, isSdr: true);
+
+        private HdrEncodedImageInfo EncodeCore(HdrRgba16FloatBuffer source, Stream destination,
+            HdrImageEncodingOptions options, bool isSdr)
         {
             ArgumentNullException.ThrowIfNull(source);
             ArgumentNullException.ThrowIfNull(destination);
@@ -54,7 +62,7 @@ namespace ShareX.ScreenCaptureLib
                 ? options.GetValidatedOpenExrReferenceWhiteNits()
                 : HdrRgba16FloatBuffer.ReferenceWhiteNits;
             float rgbScale = HdrRgba16FloatBuffer.ReferenceWhiteNits / whiteLuminance;
-            using MemoryStream header = CreateHeader(source.Width, source.Height, whiteLuminance, rgbScale);
+            using MemoryStream header = CreateHeader(source.Width, source.Height, whiteLuminance, rgbScale, isSdr);
             int scanlineDataSize = checked(source.Width * ChannelCount * BytesPerSample);
             long firstChunkOffset = checked(header.Length + (long)source.Height * sizeof(long));
             long chunkSize = checked(sizeof(int) + sizeof(int) + scanlineDataSize);
@@ -83,7 +91,7 @@ namespace ShareX.ScreenCaptureLib
                 bytesWritten);
         }
 
-        private static MemoryStream CreateHeader(int width, int height, float whiteLuminance, float rgbScale)
+        private static MemoryStream CreateHeader(int width, int height, float whiteLuminance, float rgbScale, bool isSdr)
         {
             var stream = new MemoryStream(512);
             WriteInt32(stream, OpenExrMagic);
@@ -110,6 +118,7 @@ namespace ShareX.ScreenCaptureLib
                     WriteFloat(value, rgbScale));
             }
             WriteStringAttribute(stream, "software", "ShareX");
+            if (isSdr) WriteStringAttribute(stream, "shareXDynamicRange", "SDR");
             WriteStringAttribute(
                 stream,
                 "comments",

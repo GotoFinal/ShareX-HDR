@@ -10,12 +10,16 @@
   </PropertyGroup>
   <ItemGroup>
     <Using Include="Xunit" />
+    <Reference Include="ImageListView">
+      <HintPath>..\Libs\ImageListView.dll</HintPath>
+    </Reference>
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="SkiaSharp" />
     <PackageReference Include="xunit.v3.mtp-v2" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\ShareX\ShareX.csproj" />
     <ProjectReference Include="..\ShareX.ScreenCaptureLib\ShareX.ScreenCaptureLib.csproj" />
     <ProjectReference Include="..\ShareX.HistoryLib\ShareX.HistoryLib.csproj" />
     <ProjectReference Include="..\ShareX.ImageEditor\ShareX.ImageEditor.csproj" />

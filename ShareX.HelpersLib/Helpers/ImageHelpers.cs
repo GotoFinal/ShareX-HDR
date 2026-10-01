@@ -24,6 +24,7 @@
 #endregion License Information (GPL v3)
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -41,6 +42,21 @@ namespace ShareX.HelpersLib
     public static class ImageHelpers
     {
         private const InterpolationMode DefaultInterpolationMode = InterpolationMode.HighQualityBicubic;
+
+        private sealed record ImageFileCodec(
+            string Name, Action<Image, Stream> Encode, Func<Stream, Bitmap> Decode, Func<bool> CanEncode);
+        private static readonly ConcurrentDictionary<string, ImageFileCodec> imageFileCodecs =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Registers a non-GDI codec without introducing a dependency on capture libraries.</summary>
+        public static void RegisterImageFileCodec(string extension, string name,
+            Action<Image, Stream> encode, Func<Stream, Bitmap> decode, Func<bool> canEncode = null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(extension);
+            ArgumentNullException.ThrowIfNull(encode);
+            ArgumentNullException.ThrowIfNull(decode);
+            imageFileCodecs[extension.TrimStart('.')] = new ImageFileCodec(name, encode, decode, canEncode);
+        }
 
         public static Bitmap ResizeImage(Bitmap bmp, int width, int height, InterpolationMode interpolationMode = DefaultInterpolationMode)
         {
@@ -2136,7 +2152,7 @@ namespace ShareX.HelpersLib
         {
             using (OpenFileDialog ofd = new OpenFileDialog())
             {
-                ofd.Filter = "Image files (*.png, *.jpg, *.jpeg, *.jpe, *.jfif, *.gif, *.bmp, *.tif, *.tiff)|*.png;*.jpg;*.jpeg;*.jpe;*.jfif;*.gif;*.bmp;*.tif;*.tiff|" +
+                ofd.Filter = "Image files (*.png, *.jpg, *.jpeg, *.jpe, *.jfif, *.gif, *.bmp, *.tif, *.tiff, *.avif, *.exr)|*.png;*.jpg;*.jpeg;*.jpe;*.jfif;*.gif;*.bmp;*.tif;*.tiff;*.avif;*.exr|" +
                     "PNG (*.png)|*.png|JPEG (*.jpg, *.jpeg, *.jpe, *.jfif)|*.jpg;*.jpeg;*.jpe;*.jfif|GIF (*.gif)|*.gif|BMP (*.bmp)|*.bmp|TIFF (*.tif, *.tiff)|*.tif;*.tiff";
 
                 ofd.Multiselect = multiselect;
@@ -2190,12 +2206,29 @@ namespace ShareX.HelpersLib
 
         public static bool SaveImage(Image img, string filePath)
         {
-            FileHelpers.CreateDirectoryFromFilePath(filePath);
-            ImageFormat imageFormat = GetImageFormat(filePath);
-
             try
             {
-                img.Save(filePath, imageFormat);
+                string extension = FileHelpers.GetFileNameExtension(filePath);
+                if (imageFileCodecs.TryGetValue(extension, out ImageFileCodec codec))
+                {
+                    // Finish encoding before touching an existing destination.
+                    using var encoded = new MemoryStream();
+                    codec.Encode(img, encoded);
+                    FileHelpers.CreateDirectoryFromFilePath(filePath);
+                    using var file = File.Create(filePath);
+                    encoded.Position = 0;
+                    encoded.CopyTo(file);
+                }
+                else if (extension.Equals("avif", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals("exr", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new NotSupportedException($"No image encoder is registered for .{extension}.");
+                }
+                else
+                {
+                    FileHelpers.CreateDirectoryFromFilePath(filePath);
+                    img.Save(filePath, GetImageFormat(filePath));
+                }
                 return true;
             }
             catch (Exception e)
@@ -2212,6 +2245,12 @@ namespace ShareX.HelpersLib
             using (SaveFileDialog sfd = new SaveFileDialog())
             {
                 sfd.Filter = "PNG (*.png)|*.png|JPEG (*.jpg, *.jpeg, *.jpe, *.jfif)|*.jpg;*.jpeg;*.jpe;*.jfif|GIF (*.gif)|*.gif|BMP (*.bmp)|*.bmp|TIFF (*.tif, *.tiff)|*.tif;*.tiff";
+                var additionalCodecs = imageFileCodecs.OrderBy(x => x.Key)
+                    .Where(x => x.Value.CanEncode?.Invoke() != false).ToArray();
+                foreach (var codec in additionalCodecs)
+                {
+                    sfd.Filter += $"|{codec.Value.Name} (*.{codec.Key})|*.{codec.Key}";
+                }
                 sfd.DefaultExt = "png";
 
                 string initialDirectory = null;
@@ -2259,6 +2298,11 @@ namespace ShareX.HelpersLib
                             case "tiff":
                                 sfd.FilterIndex = 5;
                                 break;
+                            default:
+                                int codecIndex = Array.FindIndex(additionalCodecs,
+                                    x => x.Key.Equals(ext, StringComparison.OrdinalIgnoreCase));
+                                if (codecIndex >= 0) sfd.FilterIndex = codecIndex + 6;
+                                break;
                         }
                     }
                 }
@@ -2267,9 +2311,11 @@ namespace ShareX.HelpersLib
 
                 if (sfd.ShowDialog() == DialogResult.OK && !string.IsNullOrEmpty(sfd.FileName))
                 {
-                    SaveImage(img, sfd.FileName);
-                    HelpersOptions.LastSaveDirectory = Path.GetDirectoryName(sfd.FileName);
-                    return sfd.FileName;
+                    if (SaveImage(img, sfd.FileName))
+                    {
+                        HelpersOptions.LastSaveDirectory = Path.GetDirectoryName(sfd.FileName);
+                        return sfd.FileName;
+                    }
                 }
             }
 
@@ -2295,6 +2341,11 @@ namespace ShareX.HelpersLib
 
                     if (!string.IsNullOrEmpty(filePath) && FileHelpers.IsImageFile(filePath) && File.Exists(filePath))
                     {
+                        if (imageFileCodecs.TryGetValue(FileHelpers.GetFileNameExtension(filePath), out ImageFileCodec codec))
+                        {
+                            using var encoded = File.OpenRead(filePath);
+                            return codec.Decode(encoded);
+                        }
                         // http://stackoverflow.com/questions/788335/why-does-image-fromfile-keep-a-file-handle-open-sometimes
                         Bitmap bmp = (Bitmap)Image.FromStream(new MemoryStream(File.ReadAllBytes(filePath)));
 

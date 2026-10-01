@@ -88,7 +88,7 @@ namespace ShareX.ScreenCaptureLib
                 out unavailableReason);
         }
 
-        private static bool TryGetNativeAvailability(
+        internal static bool TryGetNativeAvailability(
             string featureName,
             string libraryFileName,
             string[] requiredExports,

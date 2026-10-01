@@ -79,7 +79,24 @@ namespace ShareX.ScreenCaptureLib
         /// validation remains the responsibility of <see cref="Decode(Stream)"/>.
         /// </summary>
         public bool IsSupported(Stream source)
+            => IsSupported(source, out _);
+
+        public bool IsSdr(Stream source) => IsSupported(source, out bool isSdr) && isSdr;
+
+        public bool IsSdrFile(string filePath)
         {
+            try
+            {
+                using var source = File.OpenRead(filePath);
+                return IsSdr(source);
+            }
+            catch (IOException) { return false; }
+            catch (UnauthorizedAccessException) { return false; }
+        }
+
+        private bool IsSupported(Stream source, out bool isSdr)
+        {
+            isSdr = false;
             ArgumentNullException.ThrowIfNull(source);
             if (!source.CanRead || !source.CanSeek)
             {
@@ -169,6 +186,7 @@ namespace ShareX.ScreenCaptureLib
                         case "screenWindowWidth" when type == "float": validScreenWindowWidth = HasSingleFloatBits(value, 1f); break;
                         case "chromaticities" when type == "chromaticities": validChromaticities = ValidateRec709Chromaticities(value); break;
                         case "whiteLuminance" when type == "float": TryReadSingleFloat(value, out whiteLuminance); break;
+                        case "shareXDynamicRange" when type == "string": isSdr = value.AsSpan().SequenceEqual("SDR"u8); break;
                         case "shareXScRgbScale" when type == "float" && TryReadSingleFloat(value, out float scale): encodedRgbScale = scale; break;
                     }
                 }

@@ -164,6 +164,38 @@ public sealed class HdrCapturePerformanceTests
     }
 
     [Fact]
+    public void WindowsGraphicsCapture_MixedDesktopCaptureOptionSelectsBackend()
+    {
+        if (Environment.GetEnvironmentVariable("SHAREX_RUN_HDR_CAPTURE_PERFORMANCE_TESTS") != "1") return;
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        Rectangle bounds = SystemInformation.VirtualScreen;
+        var messages = new ConcurrentQueue<string>();
+        Action<string> previousSink = WindowsGraphicsCapture.PerformanceLogSink;
+        try
+        {
+            WindowsGraphicsCapture.PerformanceLogSink = messages.Enqueue;
+            foreach (bool useNative in new[] { false, true })
+            {
+                messages.Clear();
+                Assert.True(WindowsGraphicsCapture.TryCaptureHdr(bounds, null,
+                    new HdrCaptureSettings { UseNativeSdrCapture = useNative }, out HdrImageDocument document));
+                using (document)
+                {
+                    Assert.Contains(document.SourceSegments, x => x.WasHdrActive);
+                    Assert.Contains(document.SourceSegments, x => !x.WasHdrActive);
+                    Assert.True(MeasureHdrContent(document).HeadroomSampleCount >= 20);
+                    string expectedPrefix = useNative ? "sdr-native " : "sdr-fp16 ";
+                    string unexpectedPrefix = useNative ? "sdr-fp16 " : "sdr-native ";
+                    Assert.Contains(messages, x => x.Contains(expectedPrefix, StringComparison.Ordinal));
+                    Assert.DoesNotContain(messages, x => x.Contains(unexpectedPrefix, StringComparison.Ordinal));
+                    output.WriteLine($"Mixed capture option native={useNative}: verified {expectedPrefix.Trim()} backend with retained HDR headroom.");
+                }
+            }
+        }
+        finally { WindowsGraphicsCapture.PerformanceLogSink = previousSink; }
+    }
+
+    [Fact]
     public void WindowsGraphicsCapture_NativeSdrCorrectnessProbe()
     {
         if (Environment.GetEnvironmentVariable("SHAREX_RUN_HDR_CAPTURE_PERFORMANCE_TESTS") != "1")

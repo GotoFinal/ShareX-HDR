@@ -133,6 +133,20 @@ bool validate_hdr_image(const avifImage* image) noexcept {
          image->matrixCoefficients == AVIF_MATRIX_COEFFICIENTS_BT2020_NCL;
 }
 
+bool validate_sdr_image(const avifImage* image) noexcept {
+  // Deliberately accept only the SDR subset produced by this bridge. Other
+  // AVIF variants require color management/transform handling we do not do.
+  return image != nullptr && image->width > 0 && image->height > 0 &&
+         image->depth == 8 && image->yuvFormat == AVIF_PIXEL_FORMAT_YUV444 &&
+         image->yuvRange == AVIF_RANGE_FULL &&
+         image->colorPrimaries == AVIF_COLOR_PRIMARIES_BT709 &&
+         image->transferCharacteristics == AVIF_TRANSFER_CHARACTERISTICS_SRGB &&
+         image->matrixCoefficients == AVIF_MATRIX_COEFFICIENTS_IDENTITY &&
+         image->alphaPremultiplied == AVIF_FALSE && image->icc.size == 0 &&
+         image->transformFlags == AVIF_TRANSFORM_NONE && image->gainMap == nullptr &&
+         image->clli.maxCLL == 0 && image->clli.maxPALL == 0;
+}
+
 int thread_count() noexcept {
   const unsigned int hardware_threads = std::thread::hardware_concurrency();
   unsigned int thread_limit = 16u;
@@ -455,4 +469,180 @@ SHAREX_AVIF_EXPORT int sharex_avif_decode_rgba10(
 
 SHAREX_AVIF_EXPORT void sharex_avif_free(void* allocation) noexcept {
   std::free(allocation);
+}
+
+SHAREX_AVIF_EXPORT int sharex_avif_encode_bgra8(
+    const uint8_t* bgra8, uint32_t width, uint32_t height, uint32_t row_bytes,
+    int quality, int speed, void** encoded_data, size_t* encoded_size,
+    char* error, size_t error_capacity) noexcept {
+  if (encoded_data != nullptr) *encoded_data = nullptr;
+  if (encoded_size != nullptr) *encoded_size = 0;
+  if (error != nullptr && error_capacity > 0) error[0] = '\0';
+  if (bgra8 == nullptr || width == 0 || height == 0 || encoded_data == nullptr ||
+      encoded_size == nullptr || width > std::numeric_limits<uint32_t>::max() / 4 ||
+      row_bytes < width * 4 || static_cast<size_t>(row_bytes) > kMaximumDecodedBytes / height) {
+    write_error(error, error_capacity, "Invalid ShareX SDR AVIF encoder arguments");
+    return kInvalidArgument;
+  }
+
+  try {
+    avifImage* image = avifImageCreate(width, height, 8, AVIF_PIXEL_FORMAT_YUV444);
+    if (image == nullptr) {
+      write_error(error, error_capacity, "libavif could not allocate an SDR image");
+      return kAllocationFailure;
+    }
+    ImageGuard image_guard{image};
+    image->yuvRange = AVIF_RANGE_FULL;
+    image->colorPrimaries = AVIF_COLOR_PRIMARIES_BT709;
+    image->transferCharacteristics = AVIF_TRANSFER_CHARACTERISTICS_SRGB;
+    // Identity 4:4:4 avoids an irreversible RGB/YUV rounding step at quality 100.
+    image->matrixCoefficients = AVIF_MATRIX_COEFFICIENTS_IDENTITY;
+    image->alphaPremultiplied = AVIF_FALSE;
+
+    avifRGBImage rgb{};
+    avifRGBImageSetDefaults(&rgb, image);
+    rgb.format = AVIF_RGB_FORMAT_BGRA;
+    rgb.depth = 8;
+    rgb.alphaPremultiplied = AVIF_FALSE;
+    rgb.pixels = const_cast<uint8_t*>(bgra8);
+    rgb.rowBytes = row_bytes;
+    avifResult result = avifImageRGBToYUV(image, &rgb);
+    if (result != AVIF_RESULT_OK) {
+      return write_codec_error("Could not convert SDR RGB samples", result, nullptr, error, error_capacity);
+    }
+
+    avifEncoder* encoder = avifEncoderCreate();
+    if (encoder == nullptr) {
+      write_error(error, error_capacity, "libavif could not allocate an encoder");
+      return kAllocationFailure;
+    }
+    EncoderGuard encoder_guard{encoder};
+    encoder->maxThreads = thread_count();
+    encoder->quality = std::clamp(quality, AVIF_QUALITY_WORST, AVIF_QUALITY_BEST);
+    encoder->qualityAlpha = AVIF_QUALITY_LOSSLESS;
+    encoder->speed = std::clamp(speed, AVIF_SPEED_SLOWEST, AVIF_SPEED_FASTEST);
+    encoder->autoTiling = AVIF_TRUE;
+
+    avifRWData output = AVIF_DATA_EMPTY;
+    struct OutputGuard {
+      avifRWData* value;
+      ~OutputGuard() { avifRWDataFree(value); }
+    } output_guard{&output};
+    result = avifEncoderWrite(encoder, image, &output);
+    if (result != AVIF_RESULT_OK) {
+      return write_codec_error("SDR AVIF encoding failed", result, &encoder->diag, error, error_capacity);
+    }
+    void* copy = std::malloc(output.size);
+    if (copy == nullptr || output.size == 0) {
+      std::free(copy);
+      write_error(error, error_capacity, "Could not allocate the encoded SDR AVIF output");
+      return kAllocationFailure;
+    }
+    std::memcpy(copy, output.data, output.size);
+    *encoded_data = copy;
+    *encoded_size = output.size;
+    return kSuccess;
+  } catch (const std::exception& exception) {
+    write_error(error, error_capacity, exception.what());
+    return kUnexpectedFailure;
+  } catch (...) {
+    write_error(error, error_capacity, "Unexpected native SDR AVIF encoder failure");
+    return kUnexpectedFailure;
+  }
+}
+
+SHAREX_AVIF_EXPORT int sharex_avif_probe_sdr(
+    const void* encoded_data, size_t encoded_size, uint32_t* width, uint32_t* height) noexcept {
+  if (width != nullptr) *width = 0;
+  if (height != nullptr) *height = 0;
+  if (encoded_data == nullptr || encoded_size == 0 || width == nullptr || height == nullptr) return 0;
+  try {
+    avifDecoder* decoder = avifDecoderCreate();
+    if (decoder == nullptr) return 0;
+    DecoderGuard decoder_guard{decoder};
+    decoder->strictFlags = AVIF_STRICT_ENABLED;
+    decoder->imageSizeLimit = static_cast<uint32_t>(kMaximumDecodedBytes / 4);
+    if (avifDecoderSetIOMemory(decoder, static_cast<const uint8_t*>(encoded_data), encoded_size) != AVIF_RESULT_OK ||
+        avifDecoderParse(decoder) != AVIF_RESULT_OK || decoder->imageCount != 1 ||
+        !validate_sdr_image(decoder->image)) return 0;
+    *width = decoder->image->width;
+    *height = decoder->image->height;
+    return 1;
+  } catch (...) {
+    return 0;
+  }
+}
+
+SHAREX_AVIF_EXPORT int sharex_avif_decode_bgra8(
+    const void* encoded_data, size_t encoded_size, void** bgra8_data,
+    uint32_t* width, uint32_t* height, char* error, size_t error_capacity) noexcept {
+  if (bgra8_data != nullptr) *bgra8_data = nullptr;
+  if (width != nullptr) *width = 0;
+  if (height != nullptr) *height = 0;
+  if (error != nullptr && error_capacity > 0) error[0] = '\0';
+  if (encoded_data == nullptr || encoded_size == 0 || bgra8_data == nullptr || width == nullptr || height == nullptr) {
+    write_error(error, error_capacity, "Invalid ShareX SDR AVIF decoder arguments");
+    return kInvalidArgument;
+  }
+  try {
+    avifDecoder* decoder = avifDecoderCreate();
+    if (decoder == nullptr) {
+      write_error(error, error_capacity, "libavif could not allocate a decoder");
+      return kAllocationFailure;
+    }
+    DecoderGuard decoder_guard{decoder};
+    decoder->strictFlags = AVIF_STRICT_ENABLED;
+    decoder->maxThreads = thread_count();
+    decoder->imageSizeLimit = static_cast<uint32_t>(kMaximumDecodedBytes / 4);
+    avifResult result = avifDecoderSetIOMemory(decoder, static_cast<const uint8_t*>(encoded_data), encoded_size);
+    if (result == AVIF_RESULT_OK) result = avifDecoderParse(decoder);
+    if (result != AVIF_RESULT_OK) return write_codec_error("SDR AVIF parsing failed", result, &decoder->diag, error, error_capacity);
+    if (decoder->imageCount != 1 || !validate_sdr_image(decoder->image)) {
+      write_error(error, error_capacity, "Only single-frame 8-bit full-range 4:4:4 sRGB identity-matrix AVIF images are supported");
+      return kCodecFailure;
+    }
+    result = avifDecoderNextImage(decoder);
+    if (result != AVIF_RESULT_OK) return write_codec_error("SDR AVIF decoding failed", result, &decoder->diag, error, error_capacity);
+    // The bitstream/grid decoder may correct container-declared metadata.
+    // Validate the decoded identity again before converting/allocating RGB.
+    if (!validate_sdr_image(decoder->image)) {
+      write_error(error, error_capacity, "Decoded AVIF pixels are outside the supported SDR subset");
+      return kCodecFailure;
+    }
+
+    avifRGBImage rgb{};
+    avifRGBImageSetDefaults(&rgb, decoder->image);
+    rgb.format = AVIF_RGB_FORMAT_BGRA;
+    rgb.depth = 8;
+    rgb.alphaPremultiplied = AVIF_FALSE;
+    result = avifRGBImageAllocatePixels(&rgb);
+    if (result != AVIF_RESULT_OK) return write_codec_error("Could not allocate SDR RGB pixels", result, nullptr, error, error_capacity);
+    struct RgbGuard {
+      avifRGBImage* value;
+      ~RgbGuard() { avifRGBImageFreePixels(value); }
+    } rgb_guard{&rgb};
+    result = avifImageYUVToRGB(decoder->image, &rgb);
+    if (result != AVIF_RESULT_OK) return write_codec_error("Could not convert SDR AVIF pixels", result, nullptr, error, error_capacity);
+    const size_t row_bytes = static_cast<size_t>(decoder->image->width) * 4;
+    const size_t output_bytes = row_bytes * decoder->image->height;
+    void* output = std::malloc(output_bytes);
+    if (output == nullptr) {
+      write_error(error, error_capacity, "Could not allocate decoded SDR AVIF output");
+      return kAllocationFailure;
+    }
+    for (uint32_t y = 0; y < decoder->image->height; ++y) {
+      std::memcpy(static_cast<uint8_t*>(output) + static_cast<size_t>(y) * row_bytes,
+                  rgb.pixels + static_cast<size_t>(y) * rgb.rowBytes, row_bytes);
+    }
+    *bgra8_data = output;
+    *width = decoder->image->width;
+    *height = decoder->image->height;
+    return kSuccess;
+  } catch (const std::exception& exception) {
+    write_error(error, error_capacity, exception.what());
+    return kUnexpectedFailure;
+  } catch (...) {
+    write_error(error, error_capacity, "Unexpected native SDR AVIF decoder failure");
+    return kUnexpectedFailure;
+  }
 }

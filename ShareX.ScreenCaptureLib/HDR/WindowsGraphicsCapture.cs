@@ -358,14 +358,26 @@ namespace ShareX.ScreenCaptureLib
                         target,
                         targets,
                         settings);
-                    if (target.IsHdrActive)
+                    if (target.IsHdrActive || settings?.UseNativeSdrCapture == false)
                     {
+                        float sourceWhiteNits = float.IsFinite(target.SdrWhiteNits) &&
+                            target.SdrWhiteNits > 0f
+                            ? target.SdrWhiteNits
+                            : HdrRgba16FloatBuffer.ReferenceWhiteNits;
+                        float rgbScale = target.IsHdrActive
+                            ? 1f
+                            : normalizedWhiteNits / sourceWhiteNits;
                         captureContext.CaptureMonitorHdrInto(
                             target.Monitor,
                             target.MonitorBounds,
                             target.Intersection,
                             canvas,
-                            destinationRectangle);
+                            destinationRectangle,
+                            rgbScale);
+                        if (!target.IsHdrActive)
+                        {
+                            Log($"sdr-fp16 display={target.DeviceName} sourceWhite={sourceWhiteNits:F1}nits targetWhite={normalizedWhiteNits:F1}nits scale={rgbScale:F3}");
+                        }
                     }
                     else
                     {

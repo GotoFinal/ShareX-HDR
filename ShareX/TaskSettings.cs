@@ -343,6 +343,9 @@ namespace ShareX
         public bool ImageAutoUseJPEG = true;
         public int ImageAutoUseJPEGSize = 2048;
         public bool ImageAutoJPEGQuality = false;
+        public EImageFormat ImageSizeFallbackFormat = EImageFormat.JPEG;
+        public int ImageAVIFQuality = 90;
+        public int ImageAVIFSpeed = 6;
         public FileExistAction FileExistAction = FileExistAction.Ask;
 
         #endregion Image / General

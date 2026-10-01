@@ -389,35 +389,55 @@ namespace ShareX
 
         public static ImageData PrepareImage(Image img, TaskSettings taskSettings)
         {
-            ImageData imageData = new ImageData();
-            imageData.ImageStream = SaveImageAsStream(img, taskSettings.ImageSettings.ImageFormat, taskSettings);
-            imageData.ImageFormat = taskSettings.ImageSettings.ImageFormat;
-            imageData.FileExtension = imageData.ImageFormat.GetDescription();
-            imageData.MediaType = GetImageMediaType(imageData.ImageFormat);
-
-            if (taskSettings.ImageSettings.ImageAutoUseJPEG && taskSettings.ImageSettings.ImageFormat != EImageFormat.JPEG &&
-                imageData.ImageStream.Length > taskSettings.ImageSettings.ImageAutoUseJPEGSize * 1000)
+            EImageFormat format = GetAvailableSdrImageFormat(taskSettings.ImageSettings.ImageFormat);
+            var imageData = new ImageData();
+            try
             {
-                imageData.ImageStream.Dispose();
-
-                using (Bitmap newImage = ImageHelpers.FillBackground(img, Color.White))
+                imageData.ImageStream = SaveImageAsStream(img, format, taskSettings);
+                EImageFormat fallbackFormat = taskSettings.ImageSettings.ImageSizeFallbackFormat is EImageFormat.JPEG or EImageFormat.AVIF
+                    ? taskSettings.ImageSettings.ImageSizeFallbackFormat
+                    : EImageFormat.JPEG;
+                bool fallbackAvailable = fallbackFormat != EImageFormat.AVIF ||
+                    SdrAvifImageCodec.TryGetAvailability(out _);
+                long thresholdBytes = Math.Max(0L, taskSettings.ImageSettings.ImageAutoUseJPEGSize) * 1000L;
+                if (taskSettings.ImageSettings.ImageAutoUseJPEG && fallbackAvailable && format != fallbackFormat &&
+                    imageData.ImageStream.Length > thresholdBytes)
                 {
-                    if (taskSettings.ImageSettings.ImageAutoJPEGQuality)
+                    MemoryStream fallback;
+                    if (fallbackFormat == EImageFormat.JPEG && taskSettings.ImageSettings.ImageAutoJPEGQuality)
                     {
-                        imageData.ImageStream = ImageHelpers.SaveJPEGAutoQuality(newImage, taskSettings.ImageSettings.ImageAutoUseJPEGSize * 1000, 2, 70, 100);
+                        using Bitmap newImage = ImageHelpers.FillBackground(img, Color.White);
+                        fallback = ImageHelpers.SaveJPEGAutoQuality(newImage, (int)Math.Min(thresholdBytes, int.MaxValue), 2, 70, 100);
                     }
                     else
                     {
-                        imageData.ImageStream = ImageHelpers.SaveJPEG(newImage, taskSettings.ImageSettings.ImageJPEGQuality);
+                        fallback = SaveImageAsStream(img, fallbackFormat, taskSettings);
                     }
+                    imageData.ImageStream.Dispose();
+                    imageData.ImageStream = fallback;
+                    format = fallbackFormat;
                 }
-
-                imageData.ImageFormat = EImageFormat.JPEG;
+                else if (taskSettings.ImageSettings.ImageAutoUseJPEG && !fallbackAvailable &&
+                    imageData.ImageStream.Length > thresholdBytes)
+                {
+                    DebugHelper.WriteLine("SDR AVIF size fallback is unavailable; keeping the original encoded image.");
+                }
+                imageData.ImageFormat = format;
                 imageData.FileExtension = imageData.ImageFormat.GetDescription();
                 imageData.MediaType = GetImageMediaType(imageData.ImageFormat);
+                return imageData;
             }
+            catch { imageData.Dispose(); throw; }
+        }
 
-            return imageData;
+        private static EImageFormat GetAvailableSdrImageFormat(EImageFormat format)
+        {
+            if (format == EImageFormat.AVIF && !SdrAvifImageCodec.TryGetAvailability(out string reason))
+            {
+                DebugHelper.WriteLine($"SDR AVIF is unavailable; saving PNG instead. {reason}");
+                return EImageFormat.PNG;
+            }
+            return format;
         }
 
         private static string GetImageMediaType(EImageFormat imageFormat) => imageFormat switch
@@ -427,6 +447,8 @@ namespace ShareX
             EImageFormat.GIF => "image/gif",
             EImageFormat.BMP => "image/bmp",
             EImageFormat.TIFF => "image/tiff",
+            EImageFormat.AVIF => "image/avif",
+            EImageFormat.EXR => "image/x-exr",
             _ => "application/octet-stream"
         };
 
@@ -456,11 +478,12 @@ namespace ShareX
         public static MemoryStream SaveImageAsStream(Image img, EImageFormat imageFormat, TaskSettings taskSettings)
         {
             return SaveImageAsStream(img, imageFormat, taskSettings.ImageSettings.ImagePNGBitDepth,
-                taskSettings.ImageSettings.ImageJPEGQuality, taskSettings.ImageSettings.ImageGIFQuality);
+                taskSettings.ImageSettings.ImageJPEGQuality, taskSettings.ImageSettings.ImageGIFQuality,
+                taskSettings.ImageSettings.ImageAVIFQuality, taskSettings.ImageSettings.ImageAVIFSpeed);
         }
 
         public static MemoryStream SaveImageAsStream(Image img, EImageFormat imageFormat, PNGBitDepth pngBitDepth = PNGBitDepth.Automatic,
-            int jpegQuality = 90, GIFQuality gifQuality = GIFQuality.Default)
+            int jpegQuality = 90, GIFQuality gifQuality = GIFQuality.Default, int avifQuality = 90, int avifSpeed = 6)
         {
             MemoryStream ms = new MemoryStream();
 
@@ -471,7 +494,7 @@ namespace ShareX
                     case EImageFormat.PNG:
                         ImageHelpers.SavePNG(img, ms, pngBitDepth);
 
-                        if (Program.Settings.PNGStripColorSpaceInformation)
+                        if (Program.Settings?.PNGStripColorSpaceInformation == true)
                         {
                             using (ms)
                             {
@@ -494,12 +517,21 @@ namespace ShareX
                     case EImageFormat.TIFF:
                         img.Save(ms, ImageFormat.Tiff);
                         break;
+                    case EImageFormat.AVIF:
+                        SdrAvifImageCodec.Encode(img, ms, avifQuality, avifSpeed);
+                        break;
+                    case EImageFormat.EXR:
+                        SdrImageCodecs.EncodeOpenExr(img, ms);
+                        break;
+                    default:
+                        throw new ArgumentOutOfRangeException(nameof(imageFormat));
                 }
             }
             catch (Exception e)
             {
                 DebugHelper.WriteException(e);
-                e.ShowError();
+                ms.Dispose();
+                throw;
             }
 
             return ms;
@@ -1317,7 +1349,8 @@ namespace ShareX
             string extension = Path.GetExtension(filePath);
             if (extension.Equals(".exr", StringComparison.OrdinalIgnoreCase))
             {
-                return new OpenExrHdrImageDecoder().IsSupportedFile(filePath);
+                var decoder = new OpenExrHdrImageDecoder();
+                return decoder.IsSupportedFile(filePath) && !decoder.IsSdrFile(filePath);
             }
 
             if (extension.Equals(".png", StringComparison.OrdinalIgnoreCase))
@@ -1789,9 +1822,30 @@ namespace ShareX
             {
                 OpenImageRequested = newFilePath =>
                 {
-                    if (!IsSupportedHdrEditorFile(newFilePath)) return false;
-                    AnnotateHdrImageFromFileAsync(newFilePath, taskSettings);
-                    return true;
+                    if (IsSupportedHdrEditorFile(newFilePath))
+                    {
+                        AnnotateHdrImageFromFileAsync(newFilePath, taskSettings);
+                        return true;
+                    }
+                    string extension = Path.GetExtension(newFilePath);
+                    if (extension.Equals(".avif", StringComparison.OrdinalIgnoreCase) ||
+                        extension.Equals(".exr", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // The host loader handles our SDR codec subset; Skia/GDI
+                        // must not silently interpret an unsupported variant.
+                        using Bitmap loadedImage = ImageHelpers.LoadImage(newFilePath);
+                        if (loadedImage != null)
+                        {
+                            AnnotateImageAsync((Bitmap)loadedImage.Clone(), newFilePath, taskSettings);
+                        }
+                        else
+                        {
+                            MessageBox.Show("This image uses an unsupported AVIF/OpenEXR encoding.",
+                                "ShareX", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        }
+                        return true;
+                    }
+                    return false;
                 },
                 CopyImageRequested = (skBitmap) =>
                 {

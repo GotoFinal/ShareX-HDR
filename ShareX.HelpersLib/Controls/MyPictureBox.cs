@@ -28,6 +28,7 @@ using System;
 using System.ComponentModel;
 using System.Drawing;
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace ShareX.HelpersLib
@@ -271,7 +272,44 @@ namespace ShareX.HelpersLib
         {
             if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
             {
-                LoadImageAsync(filePath);
+                string extension = FileHelpers.GetFileNameExtension(filePath);
+                if (extension.Equals("avif", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals("exr", StringComparison.OrdinalIgnoreCase))
+                {
+                    LoadCodecImageAsync(filePath);
+                }
+                else
+                {
+                    LoadImageAsync(filePath);
+                }
+            }
+        }
+
+        private async void LoadCodecImageAsync(string filePath)
+        {
+            lock (imageLoadLock)
+            {
+                if (isImageLoading) return;
+                Reset();
+                isImageLoading = true;
+                Text = Resources.MyPictureBox_LoadImageAsync_Loading_image___;
+            }
+            Bitmap bitmap = null;
+            try
+            {
+                bitmap = await Task.Run(() => ImageHelpers.LoadImage(filePath));
+                if (!IsDisposed && !Disposing)
+                {
+                    Image = bitmap;
+                    bitmap = null;
+                    Text = null;
+                    AutoSetSizeMode();
+                }
+            }
+            finally
+            {
+                bitmap?.Dispose();
+                isImageLoading = false;
             }
         }
 
