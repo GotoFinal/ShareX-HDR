@@ -91,7 +91,6 @@ namespace ShareX.Setup
         private static string MicrosoftStoreDebugAppxPath => Path.Combine(OutputDir, $"ShareX-{AppVersion}-MicrosoftStore-debug-{Platform}.appx");
         private static string FFmpegPath => Path.Combine(OutputDir, "ffmpeg.exe");
         private static string RecorderDevicesSetupPath => Path.Combine(OutputDir, $"recorder-devices-{RecorderDevicesVersion}-setup.exe");
-        private static string ExifToolPath => Path.Combine(OutputDir, "exiftool.exe");
         private static string MakeAppxPath => Path.Combine(WindowsKitsDir, "x64", "makeappx.exe");
 
         private const string InnoSetupCompilerPath = @"C:\Program Files (x86)\Inno Setup 6\ISCC.exe";
@@ -99,8 +98,6 @@ namespace ShareX.Setup
         private static string FFmpegDownloadURL => $"https://github.com/ShareX/FFmpeg/releases/download/v{FFmpegVersion}/ffmpeg-{FFmpegVersion}-win-{Platform}.zip";
         private const string RecorderDevicesVersion = "0.12.10";
         private static string RecorderDevicesDownloadURL = $"https://github.com/ShareX/RecorderDevices/releases/download/v{RecorderDevicesVersion}/recorder-devices-{RecorderDevicesVersion}-setup.exe";
-        private const string ExifToolVersion = "13.29";
-        private static string ExifToolDownloadURL = $"https://github.com/ShareX/ExifTool/releases/download/v{ExifToolVersion}/exiftool-{ExifToolVersion}-win64.zip";
 
         private static void Main(string[] args)
         {
@@ -123,7 +120,6 @@ namespace ShareX.Setup
             {
                 DownloadFFmpeg();
                 DownloadRecorderDevices();
-                DownloadExifTool();
             }
 
             if (Job.HasFlag(SetupJobs.CreateSetup))
@@ -367,7 +363,7 @@ namespace ShareX.Setup
 
             Directory.CreateDirectory(destination);
 
-            FileHelpers.CopyFiles(source, destination, "*.exe");
+            FileHelpers.CopyFiles(source, destination, "*.exe", new[] { "exiftool.exe" });
             FileHelpers.CopyFiles(source, destination, "*.dll");
             FileHelpers.CopyFiles(source, destination, "*.json");
 
@@ -401,12 +397,6 @@ namespace ShareX.Setup
             if (File.Exists(FFmpegPath))
             {
                 FileHelpers.CopyFile(FFmpegPath, destination, overwrite: true);
-            }
-
-            if (File.Exists(ExifToolPath))
-            {
-                FileHelpers.CopyFile(ExifToolPath, destination, overwrite: true);
-                FileHelpers.CopyAll(Path.Combine(OutputDir, "exiftool_files"), Path.Combine(destination, "exiftool_files"));
             }
 
             if (job == SetupJobs.CreatePortable)
@@ -471,21 +461,6 @@ namespace ShareX.Setup
 
                 Console.WriteLine("Downloading: " + RecorderDevicesDownloadURL);
                 WebHelpers.DownloadFileAsync(RecorderDevicesDownloadURL, filePath).GetAwaiter().GetResult();
-            }
-        }
-
-        private static void DownloadExifTool()
-        {
-            if (!File.Exists(ExifToolPath))
-            {
-                string fileName = Path.GetFileName(ExifToolDownloadURL);
-                string filePath = Path.Combine(OutputDir, fileName);
-
-                Console.WriteLine("Downloading: " + ExifToolDownloadURL);
-                WebHelpers.DownloadFileAsync(ExifToolDownloadURL, filePath).GetAwaiter().GetResult();
-
-                Console.WriteLine("Extracting: " + filePath);
-                ZipManager.Extract(filePath, OutputDir);
             }
         }
 

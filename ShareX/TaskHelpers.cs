@@ -2684,12 +2684,14 @@ namespace ShareX
 
         public static bool CheckExifTool()
         {
-            string exifToolPath = FileHelpers.GetAbsolutePath("exiftool.exe");
+            string exifToolPath = MetadataForm.ExifToolPath;
 
             if (!File.Exists(exifToolPath))
             {
                 // TODO: Translate
-                MessageBox.Show("ExifTool does not exist at the following path:" + "\r\n" + exifToolPath,
+                MessageBox.Show("ExifTool is optional and is not included with ShareX. To use the metadata tools, " +
+                    "place exiftool.exe and its accompanying exiftool_files folder (if supplied) beside ShareX.exe." +
+                    "\r\n\r\nExpected executable path:\r\n" + exifToolPath,
                     "ShareX - " + "ExifTool is missing", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 
                 return false;
